@@ -1,8 +1,11 @@
----
+# permissions for end users to edit finbackups.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: manager-role
+  labels:
+    app.kubernetes.io/name: fin
+    app.kubernetes.io/managed-by: kustomize
+  name: finbackup-editor-role
 rules:
 - apiGroups:
   - fin.cybozu.io
@@ -19,14 +22,6 @@ rules:
 - apiGroups:
   - fin.cybozu.io
   resources:
-  - finbackups/finalizers
-  verbs:
-  - update
-- apiGroups:
-  - fin.cybozu.io
-  resources:
   - finbackups/status
   verbs:
   - get
-  - patch
-  - update
