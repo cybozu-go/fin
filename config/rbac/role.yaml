@@ -1,0 +1,44 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: manager-role
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - persistentvolumeclaims
+  verbs:
+  - get
+- apiGroups:
+  - ""
+  resources:
+  - persistentvolumes
+  verbs:
+  - get
+- apiGroups:
+  - fin.cybozu.io
+  resources:
+  - finbackups
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - fin.cybozu.io
+  resources:
+  - finbackups/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - fin.cybozu.io
+  resources:
+  - finbackups/status
+  verbs:
+  - get
+  - patch
+  - update

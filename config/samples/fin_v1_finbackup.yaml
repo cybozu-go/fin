@@ -1,0 +1,9 @@
+apiVersion: fin.cybozu.io/v1
+kind: FinBackup
+metadata:
+  labels:
+    app.kubernetes.io/name: fin
+    app.kubernetes.io/managed-by: kustomize
+  name: finbackup-sample
+spec:
+  # TODO(user): Add fields here
