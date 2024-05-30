@@ -22,7 +22,7 @@ var _ = Describe("FinBackup Controller", func() {
 
 		typeNamespacedName := types.NamespacedName{
 			Name:      resourceName,
-			Namespace: "default", // TODO(user):Modify as needed
+			Namespace: "default",
 		}
 		finbackup := &finv1.FinBackup{}
 
@@ -35,7 +35,13 @@ var _ = Describe("FinBackup Controller", func() {
 						Name:      resourceName,
 						Namespace: "default",
 					},
-					// TODO(user): Specify other spec details if needed.
+					Spec: finv1.FinBackupSpec{
+						Replicas:     1,
+						PVC:          "test-pvc",
+						PVCNamespace: "test-ns",
+						Snapshot:     "test-ss",
+						Nodes:        []string{"test-node"},
+					},
 				}
 				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
 			}
