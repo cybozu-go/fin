@@ -16,6 +16,9 @@ func TestE2E(t *testing.T) {
 	}
 
 	RegisterFailHandler(Fail)
-	fmt.Fprintf(GinkgoWriter, "Starting fin suite\n")
+	_, err := fmt.Fprintf(GinkgoWriter, "Starting fin suite\n")
+	if err != nil {
+		panic(err)
+	}
 	RunSpecs(t, "e2e suite")
 }
