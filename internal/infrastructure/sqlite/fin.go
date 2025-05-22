@@ -141,6 +141,9 @@ func (fr *FinRepository) GetActionPrivateData(uid string) ([]byte, error) {
 		if isSQLiteBusy(err) {
 			return nil, model.ErrBusy
 		}
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, model.ErrNotFound
+		}
 		return nil, err
 	}
 	return privateData, nil
