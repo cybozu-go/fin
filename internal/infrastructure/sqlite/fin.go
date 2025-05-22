@@ -15,6 +15,8 @@ type FinRepository struct {
 	db *sql.DB
 }
 
+var _ model.FinRepository = &FinRepository{}
+
 func isSQLiteBusy(err error) bool {
 	var sqliteErr sqlite3.Error
 	if errors.As(err, &sqliteErr) {
