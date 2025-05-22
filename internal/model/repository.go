@@ -31,4 +31,11 @@ type FinRepository interface {
 	// CompleteAction marks the action with the given UID as complete.
 	// If the repository is busy and temporarily unavailable, it returns `ErrBusy`.
 	CompleteAction(uid string) error
+
+	// GetBackupMetadata retrieves the backup metadata.
+	// If the metadata is not found, it returns model.ErrNotFound.
+	GetBackupMetadata() ([]byte, error)
+
+	// SetBackupMetadata sets the backup metadata.
+	SetBackupMetadata(metadata []byte) error
 }

@@ -50,6 +50,12 @@ func New(dataSourceName string) (*FinRepository, error) {
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 		updated_at DATETIME
 	);
+	CREATE TABLE IF NOT EXISTS backup_metadata (
+		id INTEGER PRIMARY KEY,
+		data BLOB,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		updated_at DATETIME
+	);
 	`
 	_, err = tx.Exec(createTableStmt)
 	if err != nil {
@@ -213,6 +219,57 @@ func (fr *FinRepository) CompleteAction(uid string) error {
 
 func (fr *FinRepository) Close() error {
 	err := fr.db.Close()
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (fr *FinRepository) GetBackupMetadata() ([]byte, error) {
+	stmt, err := fr.db.Prepare("SELECT data FROM backup_metadata")
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = stmt.Close() }()
+
+	var data []byte
+	err = stmt.QueryRow().Scan(&data)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, model.ErrNotFound
+		}
+		return nil, fmt.Errorf("failed to scan: %w", err)
+	}
+	return data, nil
+}
+
+func (fr *FinRepository) SetBackupMetadata(data []byte) error {
+	tx, err := fr.db.Begin()
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	stmt, err := tx.Prepare("INSERT INTO backup_metadata (id, data, created_at) VALUES (1, ?, ?)" +
+		" ON CONFLICT(id) DO UPDATE SET data = excluded.data, updated_at = excluded.created_at")
+	if err != nil {
+		return fmt.Errorf("failed to prepare statement: %w", err)
+	}
+	defer func() { _ = stmt.Close() }()
+
+	result, err := stmt.Exec(data, time.Now())
+	if err != nil {
+		return err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return fmt.Errorf("backup_metadata was not updated")
+	}
+
+	err = tx.Commit()
 	if err != nil {
 		return err
 	}
