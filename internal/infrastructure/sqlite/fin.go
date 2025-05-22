@@ -30,7 +30,7 @@ func isSQLiteBusy(err error) bool {
 func New(dataSourceName string) (*FinRepository, error) {
 	db, err := sql.Open("sqlite3", dataSourceName)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
 
 	tx, err := db.Begin()
@@ -38,7 +38,7 @@ func New(dataSourceName string) (*FinRepository, error) {
 		if isSQLiteBusy(err) {
 			return nil, model.ErrBusy
 		}
-		return nil, err
+		return nil, fmt.Errorf("failed to begin transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 
@@ -53,12 +53,12 @@ func New(dataSourceName string) (*FinRepository, error) {
 	`
 	_, err = db.Exec(createTableStmt)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to create tables: %w", err)
 	}
 
 	err = tx.Commit()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
 	return &FinRepository{
