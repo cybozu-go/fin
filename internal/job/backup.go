@@ -1,0 +1,374 @@
+package job
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"math"
+	"path/filepath"
+	"slices"
+	"time"
+
+	"github.com/cybozu-go/fin/internal/model"
+	"sigs.k8s.io/yaml"
+)
+
+const (
+	modeFull        = "full"
+	modeIncremental = "incremental"
+)
+
+var ErrCantLock = errors.New("can't lock")
+
+type Backup struct {
+	repo                      model.FinRepository
+	kubernetesRepo            model.KubernetesRepository
+	rbdRepo                   model.RBDRepository
+	nodeLocalVolumeRepo       model.NodeLocalVolumeRepository
+	retryInterval             time.Duration
+	processUID                string
+	targetFinBackupUID        string
+	targetRBDPool             string
+	targetRBDImageName        string
+	targetSnapshotID          int
+	sourceCandidateSnapshotID *int
+	targetPVCName             string
+	targetPVCNamespace        string
+	targetPVCUID              string
+	maxPartSize               int
+}
+
+type BackupInput struct {
+	Repo                      model.FinRepository
+	KubernetesRepo            model.KubernetesRepository
+	RBDRepo                   model.RBDRepository
+	NodeLocalVolumeRepo       model.NodeLocalVolumeRepository
+	RetryInterval             time.Duration
+	ProcessUID                string
+	TargetFinBackupUID        string
+	TargetRBDPoolName         string
+	TargetRBDImageName        string
+	TargetSnapshotID          int
+	SourceCandidateSnapshotID *int
+	TargetPVCName             string
+	TargetPVCNamespace        string
+	TargetPVCUID              string
+	MaxPartSize               int
+}
+
+func NewBackup(in *BackupInput) *Backup {
+	return &Backup{
+		repo:                      in.Repo,
+		kubernetesRepo:            in.KubernetesRepo,
+		rbdRepo:                   in.RBDRepo,
+		nodeLocalVolumeRepo:       in.NodeLocalVolumeRepo,
+		retryInterval:             in.RetryInterval,
+		processUID:                in.ProcessUID,
+		targetFinBackupUID:        in.TargetFinBackupUID,
+		targetRBDPool:             in.TargetRBDPoolName,
+		targetRBDImageName:        in.TargetRBDImageName,
+		targetSnapshotID:          in.TargetSnapshotID,
+		sourceCandidateSnapshotID: in.SourceCandidateSnapshotID,
+		targetPVCName:             in.TargetPVCName,
+		targetPVCNamespace:        in.TargetPVCNamespace,
+		targetPVCUID:              in.TargetPVCUID,
+		maxPartSize:               in.MaxPartSize,
+	}
+}
+
+// Perform executes the backup process. If it can't get lock, it returns ErrCantLock.
+func (b *Backup) Perform() error {
+	err := b.repo.StartOrRestartAction(b.processUID, model.Backup)
+	if err != nil {
+		if errors.Is(err, model.ErrBusy) {
+			return ErrCantLock
+		}
+		return fmt.Errorf("failed to start or restart action: %w", err)
+	}
+	if err := b.doBackup(); err != nil {
+		return fmt.Errorf("failed to perform backup: %w", err)
+	}
+	if err := b.repo.CompleteAction(b.processUID); err != nil {
+		return fmt.Errorf("failed to complete action: %w", err)
+	}
+	return nil
+}
+
+func (b *Backup) doBackup() error {
+	privateData, err := getBackupPrivateData(b.repo, b.processUID)
+	if err != nil {
+		return fmt.Errorf("failed to get private data: %w", err)
+	}
+
+	if privateData.Mode == "" {
+		tmpMode, err := b.decideBackupMode()
+		if err != nil {
+			return fmt.Errorf("failed to decide backup mode: %w", err)
+		}
+
+		switch tmpMode {
+		case modeFull:
+			if err := b.prepareFullBackup(); err != nil {
+				return fmt.Errorf("failed to prepare full backup: %w", err)
+			}
+		case modeIncremental:
+			if err := b.prepareIncrementalBackup(); err != nil {
+				return fmt.Errorf("failed to prepare incremental backup: %w", err)
+			}
+		}
+
+		privateData.Mode = tmpMode
+		if err := setBackupPrivateData(b.repo, b.processUID, privateData); err != nil {
+			return fmt.Errorf("failed to set private data: %w", err)
+		}
+	}
+
+	targetSnapshot, err := getSnapshot(b.rbdRepo, b.targetRBDPool, b.targetRBDImageName, b.targetSnapshotID)
+	if err != nil {
+		return fmt.Errorf("failed to get target snapshot: %w", err)
+	}
+
+	if err := createDiffDir(b.nodeLocalVolumeRepo, b.targetSnapshotID); err != nil {
+		return fmt.Errorf("failed to create diff directory: %w", err)
+	}
+
+	if err := b.loopExportDiff(privateData, targetSnapshot); err != nil {
+		return fmt.Errorf("failed to loop export diff: %w", err)
+	}
+
+	if err := b.declareStoringCompleted(targetSnapshot); err != nil {
+		return fmt.Errorf("failed to declare storing finished: %w", err)
+	}
+
+	// FIXME: We need to verify the backup.
+
+	if privateData.Mode == modeFull {
+		if err := b.prepareRawImageFile(targetSnapshot); err != nil {
+			return fmt.Errorf("failed to prepare raw image file: %w", err)
+		}
+		if err := b.loopApplyDiff(privateData, targetSnapshot); err != nil {
+			return fmt.Errorf("failed to loop apply diff: %w", err)
+		}
+		if err := b.declareFullBackupApplicationCompleted(targetSnapshot); err != nil {
+			return fmt.Errorf("failed to declare full backup application completed: %w", err)
+		}
+		if err := b.nodeLocalVolumeRepo.RemoveDirRecursively(getDiffDirPath(b.targetSnapshotID)); err != nil {
+			return fmt.Errorf("failed to remove diff directory: %w", err)
+		}
+	}
+
+	return nil
+}
+
+func (b *Backup) decideBackupMode() (string, error) {
+	if b.sourceCandidateSnapshotID == nil {
+		return modeFull, nil
+	}
+	if _, err := getBackupMetadata(b.repo); err != nil {
+		if !errors.Is(err, model.ErrNotFound) {
+			return "", fmt.Errorf("failed to get backup metadata: %w", err)
+		}
+		return modeFull, nil
+	}
+	return modeIncremental, nil
+}
+
+func (b *Backup) prepareFullBackup() error {
+	if _, err := getBackupMetadata(b.repo); err == nil {
+		return fmt.Errorf("backup metadata already exists: %w", err)
+	} else if !errors.Is(err, model.ErrNotFound) {
+		return fmt.Errorf("failed to get backup metadata: %w", err)
+	}
+
+	targetPVC, err := b.kubernetesRepo.GetPVC(b.targetPVCName, b.targetPVCNamespace)
+	if err != nil {
+		return fmt.Errorf("failed to get target PVC: %w", err)
+	}
+	if string(targetPVC.GetUID()) != b.targetPVCUID {
+		return fmt.Errorf("target PVC UID (%s) does not match the expected one (%s)", targetPVC.GetUID(), b.targetPVCUID)
+	}
+
+	targetPV, err := b.kubernetesRepo.GetPV(targetPVC.Spec.VolumeName)
+	if err != nil {
+		return fmt.Errorf("failed to get target PV: %w", err)
+	}
+	if targetPV.Spec.CSI.VolumeAttributes["imageName"] != b.targetRBDImageName {
+		return fmt.Errorf("target PV image name (%s) does not match the expected one %s",
+			targetPV.Spec.CSI.VolumeAttributes["imageName"], b.targetRBDImageName)
+	}
+
+	data, err := yaml.Marshal(targetPVC)
+	if err != nil {
+		return fmt.Errorf("failed to marshal target PVC: %w", err)
+	}
+	if err := b.nodeLocalVolumeRepo.WriteFile("pvc.yaml", data); err != nil {
+		return fmt.Errorf("failed to write target PVC file: %w", err)
+	}
+
+	data, err = yaml.Marshal(targetPV)
+	if err != nil {
+		return fmt.Errorf("failed to marshal target PV: %w", err)
+	}
+	if err := b.nodeLocalVolumeRepo.WriteFile("pv.yaml", data); err != nil {
+		return fmt.Errorf("failed to write target PV file: %w", err)
+	}
+
+	return nil
+}
+
+func (b *Backup) prepareIncrementalBackup() error {
+	return errors.New("not implemented")
+}
+
+func getSnapshot(repo model.RBDRepository, poolName, imageName string, snapshotID int) (*model.RBDSnapshot, error) {
+	snapshots, err := repo.ListSnapshots(poolName, imageName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list snapshots: %w", err)
+	}
+	targetSnapshotIndex := slices.IndexFunc(snapshots, func(s *model.RBDSnapshot) bool {
+		return s.ID == snapshotID
+	})
+	if targetSnapshotIndex == -1 {
+		return nil, fmt.Errorf("target snapshot ID %d not found", snapshotID)
+	}
+	return snapshots[targetSnapshotIndex], nil
+}
+
+func (b *Backup) loopExportDiff(privateData *backupPrivateData, targetSnapshot *model.RBDSnapshot) error {
+	partCount := int(math.Ceil(float64(targetSnapshot.Size) / float64(b.maxPartSize)))
+	for i := privateData.NextStorePart; i < partCount; i++ {
+		if err := b.rbdRepo.ExportDiff(&model.ExportDiffInput{
+			PoolName:       b.targetRBDPool,
+			ReadOffset:     b.maxPartSize * i,
+			ReadLength:     b.maxPartSize,
+			FromSnap:       nil, // FIXME: We assume full backup for now.
+			MidSnapPrefix:  b.targetFinBackupUID,
+			ImageName:      b.targetRBDImageName,
+			TargetSnapName: targetSnapshot.Name,
+			OutputFile:     filepath.Join(b.nodeLocalVolumeRepo.GetRootPath(), getDiffPartPath(b.targetSnapshotID, i)),
+		}); err != nil {
+			return fmt.Errorf("failed to export diff: %w", err)
+		}
+
+		privateData.NextStorePart = i + 1
+		if err := setBackupPrivateData(b.repo, b.processUID, privateData); err != nil {
+			return fmt.Errorf("failed to set nextStorePart to %d: %w", privateData.NextStorePart, err)
+		}
+	}
+	return nil
+}
+
+func (b *Backup) declareStoringCompleted(targetSnapshot *model.RBDSnapshot) error {
+	createdAt, err := time.Parse("Mon Jan  2 15:04:05 2006", targetSnapshot.Timestamp)
+	if err != nil {
+		return fmt.Errorf("failed to parse snapshot timestamp: %w", err)
+	}
+
+	var metadata *backupMetadata
+	metadata, err = getBackupMetadata(b.repo)
+	if err != nil {
+		if !errors.Is(err, model.ErrNotFound) {
+			return fmt.Errorf("failed to get backup metadata: %w", err)
+		}
+		metadata = &backupMetadata{}
+	}
+
+	metadata.PVCUID = b.targetPVCUID
+	metadata.RBDImageName = b.targetRBDImageName
+	if len(metadata.Diff) == 0 {
+		metadata.Diff = []*backupMetadataEntry{{}}
+	}
+	metadata.Diff[0].SnapID = targetSnapshot.ID
+	metadata.Diff[0].SnapName = targetSnapshot.Name
+	metadata.Diff[0].SnapSize = targetSnapshot.Size
+	metadata.Diff[0].CreatedAt = createdAt
+
+	return setBackupMetadata(b.repo, metadata)
+}
+
+func (b *Backup) prepareRawImageFile(targetSnapshot *model.RBDSnapshot) error {
+	err := b.rbdRepo.CreateEmptyRawImage(
+		filepath.Join(b.nodeLocalVolumeRepo.GetRootPath(), "raw.img"),
+		targetSnapshot.Size,
+	)
+	if err != nil && !errors.Is(err, model.ErrAlreadyExists) {
+		return fmt.Errorf("failed to allocate space for raw image: %w", err)
+	}
+	return nil
+}
+
+func (b *Backup) loopApplyDiff(privateData *backupPrivateData, targetSnapshot *model.RBDSnapshot) error {
+	partCount := int(math.Ceil(float64(targetSnapshot.Size) / float64(b.maxPartSize)))
+	for i := privateData.NextPatchPart; i < partCount; i++ {
+		if err := b.rbdRepo.ApplyDiff(
+			filepath.Join(b.nodeLocalVolumeRepo.GetRootPath(), getRawImagePath()),
+			filepath.Join(b.nodeLocalVolumeRepo.GetRootPath(), getDiffPartPath(b.targetSnapshotID, i)),
+		); err != nil {
+			return fmt.Errorf("failed to apply diff: %w", err)
+		}
+
+		privateData.NextPatchPart = i + 1
+		if err := setBackupPrivateData(b.repo, b.processUID, privateData); err != nil {
+			return fmt.Errorf("failed to set nextPatchPart to %d: %w", privateData.NextPatchPart, err)
+		}
+	}
+	return nil
+}
+
+func (b *Backup) declareFullBackupApplicationCompleted(targetSnapshot *model.RBDSnapshot) error {
+	createdAt, err := time.Parse("Mon Jan  2 15:04:05 2006", targetSnapshot.Timestamp)
+	if err != nil {
+		return fmt.Errorf("failed to parse snapshot timestamp: %w", err)
+	}
+
+	metadata, err := getBackupMetadata(b.repo)
+	if err != nil {
+		return fmt.Errorf("failed to get backup metadata: %w", err)
+	}
+
+	metadata.PVCUID = b.targetPVCUID
+	metadata.RBDImageName = b.targetRBDImageName
+	metadata.Diff = []*backupMetadataEntry{}
+	metadata.Raw = &backupMetadataEntry{
+		SnapID:    targetSnapshot.ID,
+		SnapName:  targetSnapshot.Name,
+		SnapSize:  targetSnapshot.Size,
+		CreatedAt: createdAt,
+	}
+
+	return setBackupMetadata(b.repo, metadata)
+}
+
+type backupPrivateData struct {
+	NextStorePart int    `json:"nextStorePart,omitempty"`
+	NextPatchPart int    `json:"nextPatchPart,omitempty"`
+	Mode          string `json:"mode,omitempty"`
+}
+
+func getBackupPrivateData(repo model.FinRepository, processUID string) (*backupPrivateData, error) {
+	privateData, err := repo.GetActionPrivateData(processUID)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(privateData) == 0 {
+		return &backupPrivateData{}, nil
+	}
+
+	var data backupPrivateData
+	if err := json.Unmarshal(privateData, &data); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal private data: %w", err)
+	}
+	return &data, nil
+}
+
+func setBackupPrivateData(repo model.FinRepository, processUID string, data *backupPrivateData) error {
+	privateData, err := json.Marshal(data)
+	if err != nil {
+		return fmt.Errorf("failed to marshal private data: %w", err)
+	}
+	if err := repo.UpdateActionPrivateData(processUID, privateData); err != nil {
+		return fmt.Errorf("failed to update private data: %w", err)
+	}
+	return nil
+}
