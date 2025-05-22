@@ -51,7 +51,7 @@ func New(dataSourceName string) (*FinRepository, error) {
 		updated_at DATETIME
 	);
 	`
-	_, err = db.Exec(createTableStmt)
+	_, err = tx.Exec(createTableStmt)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create tables: %w", err)
 	}
