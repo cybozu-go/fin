@@ -111,13 +111,13 @@ func (fr *FinRepository) StartOrRestartAction(uid string, action model.ActionKin
 	}
 
 	if !foundMyEntry {
-		stmt, err := tx.Prepare("INSERT INTO action_status VALUES(?, ?, ?, ?, ?)")
+		stmt, err := tx.Prepare("INSERT INTO action_status (uid, action) VALUES(?, ?)")
 		if err != nil {
 			return err
 		}
 		defer func() { _ = stmt.Close() }()
 
-		_, err = stmt.Exec(uid, action, nil, time.Now(), nil)
+		_, err = stmt.Exec(uid, action)
 		if err != nil {
 			return err
 		}
