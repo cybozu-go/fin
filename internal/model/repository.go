@@ -10,7 +10,8 @@ type ActionKind string
 
 const (
 	// TODO: Add required actions here.
-	Backup ActionKind = "Backup"
+	Backup  ActionKind = "Backup"
+	Restore ActionKind = "Restore"
 )
 
 var (

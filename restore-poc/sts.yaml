@@ -1,0 +1,44 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: restore-poc
+  namespace: ceph-ssd
+spec:
+  serviceName: restore-poc
+  replicas: 1
+  selector:
+    matchLabels:
+      app: restore-poc
+  template:
+    metadata:
+      labels:
+        app: restore-poc
+    spec:
+      containers:
+      - name: mantle
+        image: ghcr.io/cybozu/ubuntu:24.04
+        volumeMounts:
+        - name: data
+          mountPath: /data
+        command: ["sleep", "infinity"]
+        securityContext:
+          runAsUser: 0
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      storageClassName: ceph-ssd-block
+      resources:
+        requests:
+          storage: 500Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: restore-poc
+  namespace: ceph-ssd
+spec:
+  clusterIP: None
+  selector:
+    app: restore-poc
