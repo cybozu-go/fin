@@ -123,6 +123,17 @@ func TestBackup_Success(t *testing.T) {
 		assert.Equal(t, targetSnapshotSize, diff.SnapSize)
 		assert.Equal(t, targetSnapshotTimestamp, diff.SnapTimestamp)
 	}
+
+	metadata, err := job.GetBackupMetadata(finRepo)
+	require.NoError(t, err)
+	assert.Equal(t, targetPVCUID, metadata.PVCUID)
+	assert.Equal(t, targetRBDImageName, metadata.RBDImageName)
+	assert.NotNil(t, metadata.Raw)
+	assert.Equal(t, targetSnapshotID, metadata.Raw.SnapID)
+	assert.Equal(t, targetSnapshotName, metadata.Raw.SnapName)
+	assert.Equal(t, targetSnapshotSize, metadata.Raw.SnapSize)
+	assert.Equal(t, targetSnapshotTimestamp, metadata.Raw.CreatedAt.Format(time.ANSIC))
+	assert.Empty(t, metadata.Diff)
 }
 
 func TestBackup_ErrorBusy(t *testing.T) {

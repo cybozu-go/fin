@@ -164,7 +164,7 @@ func (b *Backup) decideBackupMode() (string, error) {
 	if b.sourceCandidateSnapshotID == nil {
 		return modeFull, nil
 	}
-	if _, err := getBackupMetadata(b.repo); err != nil {
+	if _, err := GetBackupMetadata(b.repo); err != nil {
 		if !errors.Is(err, model.ErrNotFound) {
 			return "", fmt.Errorf("failed to get backup metadata: %w", err)
 		}
@@ -174,7 +174,7 @@ func (b *Backup) decideBackupMode() (string, error) {
 }
 
 func (b *Backup) prepareFullBackup() error {
-	if _, err := getBackupMetadata(b.repo); err == nil {
+	if _, err := GetBackupMetadata(b.repo); err == nil {
 		return fmt.Errorf("backup metadata already exists: %w", err)
 	} else if !errors.Is(err, model.ErrNotFound) {
 		return fmt.Errorf("failed to get backup metadata: %w", err)
@@ -264,19 +264,19 @@ func (b *Backup) declareStoringCompleted(targetSnapshot *model.RBDSnapshot) erro
 		return fmt.Errorf("failed to parse snapshot timestamp: %w", err)
 	}
 
-	var metadata *backupMetadata
-	metadata, err = getBackupMetadata(b.repo)
+	var metadata *BackupMetadata
+	metadata, err = GetBackupMetadata(b.repo)
 	if err != nil {
 		if !errors.Is(err, model.ErrNotFound) {
 			return fmt.Errorf("failed to get backup metadata: %w", err)
 		}
-		metadata = &backupMetadata{}
+		metadata = &BackupMetadata{}
 	}
 
 	metadata.PVCUID = b.targetPVCUID
 	metadata.RBDImageName = b.targetRBDImageName
 	if len(metadata.Diff) == 0 {
-		metadata.Diff = []*backupMetadataEntry{{}}
+		metadata.Diff = []*BackupMetadataEntry{{}}
 	}
 	metadata.Diff[0].SnapID = targetSnapshot.ID
 	metadata.Diff[0].SnapName = targetSnapshot.Name
@@ -321,15 +321,15 @@ func (b *Backup) declareFullBackupApplicationCompleted(targetSnapshot *model.RBD
 		return fmt.Errorf("failed to parse snapshot timestamp: %w", err)
 	}
 
-	metadata, err := getBackupMetadata(b.repo)
+	metadata, err := GetBackupMetadata(b.repo)
 	if err != nil {
 		return fmt.Errorf("failed to get backup metadata: %w", err)
 	}
 
 	metadata.PVCUID = b.targetPVCUID
 	metadata.RBDImageName = b.targetRBDImageName
-	metadata.Diff = []*backupMetadataEntry{}
-	metadata.Raw = &backupMetadataEntry{
+	metadata.Diff = []*BackupMetadataEntry{}
+	metadata.Raw = &BackupMetadataEntry{
 		SnapID:    targetSnapshot.ID,
 		SnapName:  targetSnapshot.Name,
 		SnapSize:  targetSnapshot.Size,

@@ -32,34 +32,34 @@ func createDiffDir(nlv model.NodeLocalVolumeRepository, snapshotID int) error {
 	return nil
 }
 
-type backupMetadata struct {
+type BackupMetadata struct {
 	PVCUID       string                 `json:"pvcUID,omitempty"`
 	RBDImageName string                 `json:"rbdImageName,omitempty"`
-	Raw          *backupMetadataEntry   `json:"raw,omitempty"`
-	Diff         []*backupMetadataEntry `json:"diff,omitempty"`
+	Raw          *BackupMetadataEntry   `json:"raw,omitempty"`
+	Diff         []*BackupMetadataEntry `json:"diff,omitempty"`
 }
 
-type backupMetadataEntry struct {
+type BackupMetadataEntry struct {
 	SnapID    int       `json:"snapID"`
 	SnapName  string    `json:"snapName"`
 	SnapSize  int       `json:"snapSize"`
 	CreatedAt time.Time `json:"createdAt"`
 }
 
-func getBackupMetadata(repo model.FinRepository) (*backupMetadata, error) {
+func GetBackupMetadata(repo model.FinRepository) (*BackupMetadata, error) {
 	metadata, err := repo.GetBackupMetadata()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get backup metadata: %w", err)
 	}
 
-	var data backupMetadata
+	var data BackupMetadata
 	if err := json.Unmarshal(metadata, &data); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal backup metadata: %w", err)
 	}
 	return &data, nil
 }
 
-func setBackupMetadata(repo model.FinRepository, metadata *backupMetadata) error {
+func setBackupMetadata(repo model.FinRepository, metadata *BackupMetadata) error {
 	metadataBytes, err := json.Marshal(metadata)
 	if err != nil {
 		return fmt.Errorf("failed to marshal backup metadata: %w", err)
