@@ -132,7 +132,16 @@ func (b *Backup) doBackup() error {
 		return fmt.Errorf("failed to create diff directory: %w", err)
 	}
 
-	if err := b.loopExportDiff(privateData, targetSnapshot); err != nil {
+	var sourceSnapshotName *string
+	if privateData.Mode == modeIncremental {
+		sourceSnapshot, err := getSnapshot(b.rbdRepo, b.targetRBDPool, b.targetRBDImageName, *b.sourceCandidateSnapshotID)
+		if err != nil {
+			return fmt.Errorf("failed to get source snapshot: %w", err)
+		}
+		sourceSnapshotName = &sourceSnapshot.Name
+	}
+
+	if err := b.loopExportDiff(privateData, targetSnapshot, sourceSnapshotName); err != nil {
 		return fmt.Errorf("failed to loop export diff: %w", err)
 	}
 
@@ -217,7 +226,30 @@ func (b *Backup) prepareFullBackup() error {
 }
 
 func (b *Backup) prepareIncrementalBackup() error {
-	return errors.New("not implemented")
+	metadata, err := GetBackupMetadata(b.repo)
+	if err != nil {
+		return fmt.Errorf("failed to get backup metadata: %w", err)
+	}
+	if metadata.PVCUID != b.targetPVCUID {
+		return fmt.Errorf("PVC UID in metadata table (%s) does not match the expected one (%s)",
+			metadata.PVCUID, b.targetPVCUID)
+	}
+	if metadata.RBDImageName != b.targetRBDImageName {
+		return fmt.Errorf("RBD image name in metadata table (%s) does not match the expected one (%s)",
+			metadata.RBDImageName, b.targetRBDImageName)
+	}
+	if len(metadata.Diff) != 0 {
+		return fmt.Errorf("diff metadata already exists for PVC %s", b.targetPVCUID)
+	}
+	if metadata.Raw == nil {
+		return fmt.Errorf("raw backup metadata does not exist for PVC %s", b.targetPVCUID)
+	}
+	if metadata.Raw.SnapID != *b.sourceCandidateSnapshotID {
+		return fmt.Errorf("snapshot ID in metadata table (%d) does not match the expected one (%d)",
+			metadata.Raw.SnapID, *b.sourceCandidateSnapshotID)
+	}
+
+	return nil
 }
 
 func getSnapshot(repo model.RBDRepository, poolName, imageName string, snapshotID int) (*model.RBDSnapshot, error) {
@@ -234,14 +266,18 @@ func getSnapshot(repo model.RBDRepository, poolName, imageName string, snapshotI
 	return snapshots[targetSnapshotIndex], nil
 }
 
-func (b *Backup) loopExportDiff(privateData *backupPrivateData, targetSnapshot *model.RBDSnapshot) error {
+func (b *Backup) loopExportDiff(
+	privateData *backupPrivateData,
+	targetSnapshot *model.RBDSnapshot,
+	sourceSnapshotName *string,
+) error {
 	partCount := int(math.Ceil(float64(targetSnapshot.Size) / float64(b.maxPartSize)))
 	for i := privateData.NextStorePart; i < partCount; i++ {
 		if err := b.rbdRepo.ExportDiff(&model.ExportDiffInput{
 			PoolName:       b.targetRBDPool,
 			ReadOffset:     b.maxPartSize * i,
 			ReadLength:     b.maxPartSize,
-			FromSnap:       nil, // FIXME: We assume full backup for now.
+			FromSnap:       sourceSnapshotName,
 			MidSnapPrefix:  b.targetFinBackupUID,
 			ImageName:      b.targetRBDImageName,
 			TargetSnapName: targetSnapshot.Name,
