@@ -38,17 +38,6 @@ type FinBackupSpec struct {
 	Nodes []string `json:"nodes"`
 }
 
-type Node struct {
-	// 'name' specifies the node name
-	Name string `json:"name,omitempty"`
-
-	// 'backupStatus' specifies the status of the backup on the node
-	BackupStatus string `json:"backupStatus,omitempty"`
-
-	// 'progress' specifies the backup progress
-	Progress int64 `json:"progress,omitempty"`
-}
-
 // FinBackupStatus defines the observed state of FinBackup
 type FinBackupStatus struct {
 	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
@@ -57,14 +46,8 @@ type FinBackupStatus struct {
 	// 'createdAt' specifies the creation date and time
 	CreatedAt metav1.Time `json:"createdAt,omitempty"`
 
-	// 'pvManifest' specifies the manifest of the backup target PV
-	PVManifest metav1.Time `json:"pvManifest,omitempty"`
-
 	// 'pvcManifest' specifies the manifest of the backup target PVC
 	PVCManifest metav1.Time `json:"pvcManifest,omitempty"`
-
-	// 'nodes' specifies the status of backup replicas
-	Nodes []Node `json:"nodes,omitempty"`
 
 	// 'conditions' specifies current backup conditions
 	Conditions []metav1.Condition `json:"conditions,omitempty"`

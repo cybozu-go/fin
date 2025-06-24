@@ -165,28 +165,6 @@ spec:
                 description: '''createdAt'' specifies the creation date and time'
                 format: date-time
                 type: string
-              nodes:
-                description: '''nodes'' specifies the status of backup replicas'
-                items:
-                  properties:
-                    backupStatus:
-                      description: '''backupStatus'' specifies the status of the backup
-                        on the node'
-                      type: string
-                    name:
-                      description: '''name'' specifies the node name'
-                      type: string
-                    progress:
-                      description: '''progress'' specifies the backup progress'
-                      format: int64
-                      type: integer
-                  type: object
-                type: array
-              pvManifest:
-                description: '''pvManifest'' specifies the manifest of the backup
-                  target PV'
-                format: date-time
-                type: string
               pvcManifest:
                 description: '''pvcManifest'' specifies the manifest of the backup
                   target PVC'
