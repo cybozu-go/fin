@@ -114,6 +114,11 @@ func TestFullBackup_Success(t *testing.T) {
 	assert.Equal(t, maxPartSize, rawImage.AppliedDiffs[1].ReadOffset)
 	assert.Equal(t, maxPartSize, rawImage.AppliedDiffs[1].ReadLength)
 
+	_, err = os.Stat(filepath.Join(nlvRepo.GetRootPath(), "pvc.yaml"))
+	assert.NoError(t, err)
+	_, err = os.Stat(filepath.Join(nlvRepo.GetRootPath(), "pv.yaml"))
+	assert.NoError(t, err)
+
 	for _, diff := range rawImage.AppliedDiffs {
 		assert.Equal(t, targetRBDPoolName, diff.PoolName)
 		assert.Nil(t, diff.FromSnap)
