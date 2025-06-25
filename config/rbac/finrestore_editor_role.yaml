@@ -1,0 +1,27 @@
+# permissions for end users to edit finrestores.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/name: fin
+    app.kubernetes.io/managed-by: kustomize
+  name: finrestore-editor-role
+rules:
+- apiGroups:
+  - fin.cybozu.io
+  resources:
+  - finrestores
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - fin.cybozu.io
+  resources:
+  - finrestores/status
+  verbs:
+  - get

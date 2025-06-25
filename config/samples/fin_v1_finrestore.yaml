@@ -1,0 +1,9 @@
+apiVersion: fin.cybozu.io/v1
+kind: FinRestore
+metadata:
+  labels:
+    app.kubernetes.io/name: fin
+    app.kubernetes.io/managed-by: kustomize
+  name: finrestore-sample
+spec:
+  # TODO(user): Add fields here
