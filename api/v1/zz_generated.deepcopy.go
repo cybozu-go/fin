@@ -87,7 +87,6 @@ func (in *FinBackupSpec) DeepCopy() *FinBackupSpec {
 func (in *FinBackupStatus) DeepCopyInto(out *FinBackupStatus) {
 	*out = *in
 	in.CreatedAt.DeepCopyInto(&out.CreatedAt)
-	in.PVCManifest.DeepCopyInto(&out.PVCManifest)
 	if in.Conditions != nil {
 		in, out := &in.Conditions, &out.Conditions
 		*out = make([]metav1.Condition, len(*in))
