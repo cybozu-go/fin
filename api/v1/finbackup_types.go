@@ -12,11 +12,6 @@ type FinBackupSpec struct {
 	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
 
-	// 'replicas' specifies the number of backup replicas
-	// +kubebuilder:validation:Required
-	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="replicas is immutable"
-	Replicas int64 `json:"replicas"`
-
 	// 'pvc' specifies backup target PVC
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="pvc is immutable"
@@ -26,11 +21,6 @@ type FinBackupSpec struct {
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="pvcNamespace is immutable"
 	PVCNamespace string `json:"pvcNamespace"`
-
-	// 'snapshot' specifies the snapshot from which the backup is created
-	// +kubebuilder:validation:Required
-	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="snapshot is immutable"
-	Snapshot string `json:"snapshot"`
 
 	// 'nodes' specifies the list of node names where the backup replicas are created
 	// +kubebuilder:validation:Required

@@ -36,10 +36,8 @@ var _ = Describe("FinBackup Controller", func() {
 						Namespace: "default",
 					},
 					Spec: finv1.FinBackupSpec{
-						Replicas:     1,
 						PVC:          "test-pvc",
 						PVCNamespace: "test-ns",
-						Snapshot:     "test-ss",
 						Nodes:        []string{"test-node"},
 					},
 				}

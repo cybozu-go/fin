@@ -67,26 +67,10 @@ spec:
                 x-kubernetes-validations:
                 - message: pvcNamespace is immutable
                   rule: self == oldSelf
-              replicas:
-                description: '''replicas'' specifies the number of backup replicas'
-                format: int64
-                type: integer
-                x-kubernetes-validations:
-                - message: replicas is immutable
-                  rule: self == oldSelf
-              snapshot:
-                description: '''snapshot'' specifies the snapshot from which the backup
-                  is created'
-                type: string
-                x-kubernetes-validations:
-                - message: snapshot is immutable
-                  rule: self == oldSelf
             required:
             - nodes
             - pvc
             - pvcNamespace
-            - replicas
-            - snapshot
             type: object
           status:
             description: FinBackupStatus defines the observed state of FinBackup
