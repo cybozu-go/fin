@@ -316,6 +316,7 @@ func (b *Backup) declareStoringCompleted(targetSnapshot *model.RBDSnapshot) erro
 	metadata.Diff[0].SnapID = targetSnapshot.ID
 	metadata.Diff[0].SnapName = targetSnapshot.Name
 	metadata.Diff[0].SnapSize = targetSnapshot.Size
+	metadata.Diff[0].PartSize = b.maxPartSize
 	metadata.Diff[0].CreatedAt = createdAt
 
 	return job.SetBackupMetadata(b.repo, metadata)
@@ -368,6 +369,7 @@ func (b *Backup) declareFullBackupApplicationCompleted(targetSnapshot *model.RBD
 		SnapID:    targetSnapshot.ID,
 		SnapName:  targetSnapshot.Name,
 		SnapSize:  targetSnapshot.Size,
+		PartSize:  b.maxPartSize,
 		CreatedAt: createdAt,
 	}
 

@@ -139,6 +139,7 @@ func TestFullBackup_Success(t *testing.T) {
 	assert.Equal(t, targetSnapshotID, metadata.Raw.SnapID)
 	assert.Equal(t, targetSnapshotName, metadata.Raw.SnapName)
 	assert.Equal(t, targetSnapshotSize, metadata.Raw.SnapSize)
+	assert.Equal(t, maxPartSize, metadata.Raw.PartSize)
 	assert.Equal(t, targetSnapshotTimestamp, metadata.Raw.CreatedAt.Format(time.ANSIC))
 	assert.Empty(t, metadata.Diff)
 }
@@ -282,12 +283,14 @@ func TestIncrementalBackup_Success(t *testing.T) {
 	assert.Equal(t, previousSnapshotID, metadata.Raw.SnapID)
 	assert.Equal(t, previousSnapshotName, metadata.Raw.SnapName)
 	assert.Equal(t, previousSnapshotSize, metadata.Raw.SnapSize)
+	assert.Equal(t, maxPartSize, metadata.Raw.PartSize)
 	assert.Equal(t, previousSnapshotTimestamp, metadata.Raw.CreatedAt.Format(time.ANSIC))
 	assert.NotNil(t, metadata.Diff)
 	assert.Len(t, metadata.Diff, 1)
 	assert.Equal(t, targetSnapshotID, metadata.Diff[0].SnapID)
 	assert.Equal(t, targetSnapshotName, metadata.Diff[0].SnapName)
 	assert.Equal(t, targetSnapshotSize, metadata.Diff[0].SnapSize)
+	assert.Equal(t, maxPartSize, metadata.Diff[0].PartSize)
 	assert.Equal(t, targetSnapshotTimestamp, metadata.Diff[0].CreatedAt.Format(time.ANSIC))
 }
 
