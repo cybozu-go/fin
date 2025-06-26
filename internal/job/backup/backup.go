@@ -1,4 +1,4 @@
-package job
+package backup
 
 import (
 	"encoding/json"
@@ -9,6 +9,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/cybozu-go/fin/internal/job"
 	"github.com/cybozu-go/fin/internal/model"
 	"sigs.k8s.io/yaml"
 )
@@ -17,8 +18,6 @@ const (
 	modeFull        = "full"
 	modeIncremental = "incremental"
 )
-
-var ErrCantLock = errors.New("can't lock")
 
 type Backup struct {
 	repo                      model.FinRepository
@@ -81,7 +80,7 @@ func (b *Backup) Perform() error {
 	err := b.repo.StartOrRestartAction(b.processUID, model.Backup)
 	if err != nil {
 		if errors.Is(err, model.ErrBusy) {
-			return ErrCantLock
+			return job.ErrCantLock
 		}
 		return fmt.Errorf("failed to start or restart action: %w", err)
 	}
@@ -128,7 +127,7 @@ func (b *Backup) doBackup() error {
 		return fmt.Errorf("failed to get target snapshot: %w", err)
 	}
 
-	if err := createDiffDir(b.nodeLocalVolumeRepo, b.targetSnapshotID); err != nil {
+	if err := job.CreateDiffDir(b.nodeLocalVolumeRepo, b.targetSnapshotID); err != nil {
 		return fmt.Errorf("failed to create diff directory: %w", err)
 	}
 
@@ -161,7 +160,7 @@ func (b *Backup) doBackup() error {
 		if err := b.declareFullBackupApplicationCompleted(targetSnapshot); err != nil {
 			return fmt.Errorf("failed to declare full backup application completed: %w", err)
 		}
-		if err := b.nodeLocalVolumeRepo.RemoveDirRecursively(getDiffDirPath(b.targetSnapshotID)); err != nil {
+		if err := b.nodeLocalVolumeRepo.RemoveDirRecursively(job.GetDiffDirPath(b.targetSnapshotID)); err != nil {
 			return fmt.Errorf("failed to remove diff directory: %w", err)
 		}
 	}
@@ -173,7 +172,7 @@ func (b *Backup) decideBackupMode() (string, error) {
 	if b.sourceCandidateSnapshotID == nil {
 		return modeFull, nil
 	}
-	if _, err := GetBackupMetadata(b.repo); err != nil {
+	if _, err := job.GetBackupMetadata(b.repo); err != nil {
 		if !errors.Is(err, model.ErrNotFound) {
 			return "", fmt.Errorf("failed to get backup metadata: %w", err)
 		}
@@ -183,7 +182,7 @@ func (b *Backup) decideBackupMode() (string, error) {
 }
 
 func (b *Backup) prepareFullBackup() error {
-	if _, err := GetBackupMetadata(b.repo); err == nil {
+	if _, err := job.GetBackupMetadata(b.repo); err == nil {
 		return fmt.Errorf("backup metadata already exists: %w", err)
 	} else if !errors.Is(err, model.ErrNotFound) {
 		return fmt.Errorf("failed to get backup metadata: %w", err)
@@ -226,7 +225,7 @@ func (b *Backup) prepareFullBackup() error {
 }
 
 func (b *Backup) prepareIncrementalBackup() error {
-	metadata, err := GetBackupMetadata(b.repo)
+	metadata, err := job.GetBackupMetadata(b.repo)
 	if err != nil {
 		return fmt.Errorf("failed to get backup metadata: %w", err)
 	}
@@ -281,7 +280,7 @@ func (b *Backup) loopExportDiff(
 			MidSnapPrefix:  b.targetFinBackupUID,
 			ImageName:      b.targetRBDImageName,
 			TargetSnapName: targetSnapshot.Name,
-			OutputFile:     filepath.Join(b.nodeLocalVolumeRepo.GetRootPath(), getDiffPartPath(b.targetSnapshotID, i)),
+			OutputFile:     filepath.Join(b.nodeLocalVolumeRepo.GetRootPath(), job.GetDiffPartPath(b.targetSnapshotID, i)),
 		}); err != nil {
 			return fmt.Errorf("failed to export diff: %w", err)
 		}
@@ -300,26 +299,26 @@ func (b *Backup) declareStoringCompleted(targetSnapshot *model.RBDSnapshot) erro
 		return fmt.Errorf("failed to parse snapshot timestamp: %w", err)
 	}
 
-	var metadata *BackupMetadata
-	metadata, err = GetBackupMetadata(b.repo)
+	var metadata *job.BackupMetadata
+	metadata, err = job.GetBackupMetadata(b.repo)
 	if err != nil {
 		if !errors.Is(err, model.ErrNotFound) {
 			return fmt.Errorf("failed to get backup metadata: %w", err)
 		}
-		metadata = &BackupMetadata{}
+		metadata = &job.BackupMetadata{}
 	}
 
 	metadata.PVCUID = b.targetPVCUID
 	metadata.RBDImageName = b.targetRBDImageName
 	if len(metadata.Diff) == 0 {
-		metadata.Diff = []*BackupMetadataEntry{{}}
+		metadata.Diff = []*job.BackupMetadataEntry{{}}
 	}
 	metadata.Diff[0].SnapID = targetSnapshot.ID
 	metadata.Diff[0].SnapName = targetSnapshot.Name
 	metadata.Diff[0].SnapSize = targetSnapshot.Size
 	metadata.Diff[0].CreatedAt = createdAt
 
-	return setBackupMetadata(b.repo, metadata)
+	return job.SetBackupMetadata(b.repo, metadata)
 }
 
 func (b *Backup) prepareRawImageFile(targetSnapshot *model.RBDSnapshot) error {
@@ -337,8 +336,8 @@ func (b *Backup) loopApplyDiff(privateData *backupPrivateData, targetSnapshot *m
 	partCount := int(math.Ceil(float64(targetSnapshot.Size) / float64(b.maxPartSize)))
 	for i := privateData.NextPatchPart; i < partCount; i++ {
 		if err := b.rbdRepo.ApplyDiff(
-			filepath.Join(b.nodeLocalVolumeRepo.GetRootPath(), getRawImagePath()),
-			filepath.Join(b.nodeLocalVolumeRepo.GetRootPath(), getDiffPartPath(b.targetSnapshotID, i)),
+			filepath.Join(b.nodeLocalVolumeRepo.GetRootPath(), job.GetRawImagePath()),
+			filepath.Join(b.nodeLocalVolumeRepo.GetRootPath(), job.GetDiffPartPath(b.targetSnapshotID, i)),
 		); err != nil {
 			return fmt.Errorf("failed to apply diff: %w", err)
 		}
@@ -357,22 +356,22 @@ func (b *Backup) declareFullBackupApplicationCompleted(targetSnapshot *model.RBD
 		return fmt.Errorf("failed to parse snapshot timestamp: %w", err)
 	}
 
-	metadata, err := GetBackupMetadata(b.repo)
+	metadata, err := job.GetBackupMetadata(b.repo)
 	if err != nil {
 		return fmt.Errorf("failed to get backup metadata: %w", err)
 	}
 
 	metadata.PVCUID = b.targetPVCUID
 	metadata.RBDImageName = b.targetRBDImageName
-	metadata.Diff = []*BackupMetadataEntry{}
-	metadata.Raw = &BackupMetadataEntry{
+	metadata.Diff = []*job.BackupMetadataEntry{}
+	metadata.Raw = &job.BackupMetadataEntry{
 		SnapID:    targetSnapshot.ID,
 		SnapName:  targetSnapshot.Name,
 		SnapSize:  targetSnapshot.Size,
 		CreatedAt: createdAt,
 	}
 
-	return setBackupMetadata(b.repo, metadata)
+	return job.SetBackupMetadata(b.repo, metadata)
 }
 
 type backupPrivateData struct {

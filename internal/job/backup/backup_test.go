@@ -1,4 +1,4 @@
-package job_test
+package backup_test
 
 import (
 	"fmt"
@@ -12,6 +12,7 @@ import (
 	"github.com/cybozu-go/fin/internal/infrastructure/nlv"
 	"github.com/cybozu-go/fin/internal/infrastructure/sqlite"
 	"github.com/cybozu-go/fin/internal/job"
+	"github.com/cybozu-go/fin/internal/job/backup"
 	"github.com/cybozu-go/fin/internal/model"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -81,7 +82,7 @@ func TestFullBackup_Success(t *testing.T) {
 	t.Cleanup(func() { _ = finRepo.Close() })
 
 	// Act
-	backup := job.NewBackup(&job.BackupInput{
+	backup := backup.NewBackup(&backup.BackupInput{
 		Repo:                      finRepo,
 		KubernetesRepo:            k8sRepo,
 		RBDRepo:                   rbdRepo,
@@ -215,7 +216,7 @@ func TestIncrementalBackup_Success(t *testing.T) {
 	t.Cleanup(func() { _ = finRepo.Close() })
 
 	// Create a previous backup to simulate an incremental backup scenario
-	previousBackup := job.NewBackup(&job.BackupInput{
+	previousBackup := backup.NewBackup(&backup.BackupInput{
 		Repo:                      finRepo,
 		KubernetesRepo:            k8sRepo,
 		RBDRepo:                   rbdRepo,
@@ -236,7 +237,7 @@ func TestIncrementalBackup_Success(t *testing.T) {
 	require.NoError(t, err)
 
 	// Act
-	backup := job.NewBackup(&job.BackupInput{
+	backup := backup.NewBackup(&backup.BackupInput{
 		Repo:                      finRepo,
 		KubernetesRepo:            k8sRepo,
 		RBDRepo:                   rbdRepo,
@@ -305,7 +306,7 @@ func TestBackup_ErrorBusy(t *testing.T) {
 	require.NoError(t, err)
 
 	// Act
-	backup := job.NewBackup(&job.BackupInput{
+	backup := backup.NewBackup(&backup.BackupInput{
 		Repo:       finRepo,
 		ProcessUID: processUID,
 	})

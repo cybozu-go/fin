@@ -10,24 +10,26 @@ import (
 	"github.com/cybozu-go/fin/internal/model"
 )
 
-func getRawImagePath() string {
+var ErrCantLock = errors.New("can't lock")
+
+func GetRawImagePath() string {
 	return "raw.img"
 }
 
-func getDiffDirPath(snapshotID int) string {
+func GetDiffDirPath(snapshotID int) string {
 	return filepath.Join("diff", fmt.Sprintf("%d", snapshotID))
 }
 
-func getDiffPartPath(snapshotID, partIndex int) string {
-	return filepath.Join(getDiffDirPath(snapshotID), fmt.Sprintf("part-%d", partIndex))
+func GetDiffPartPath(snapshotID, partIndex int) string {
+	return filepath.Join(GetDiffDirPath(snapshotID), fmt.Sprintf("part-%d", partIndex))
 }
 
-func createDiffDir(nlv model.NodeLocalVolumeRepository, snapshotID int) error {
+func CreateDiffDir(nlv model.NodeLocalVolumeRepository, snapshotID int) error {
 	if err := nlv.Mkdir("diff"); err != nil && !errors.Is(err, model.ErrAlreadyExists) {
 		return fmt.Errorf("failed to create base diff directory 'diff': %w", err)
 	}
-	if err := nlv.Mkdir(getDiffDirPath(snapshotID)); err != nil && !errors.Is(err, model.ErrAlreadyExists) {
-		return fmt.Errorf("failed to create snapshot-specific diff directory '%s': %w", getDiffDirPath(snapshotID), err)
+	if err := nlv.Mkdir(GetDiffDirPath(snapshotID)); err != nil && !errors.Is(err, model.ErrAlreadyExists) {
+		return fmt.Errorf("failed to create snapshot-specific diff directory '%s': %w", GetDiffDirPath(snapshotID), err)
 	}
 	return nil
 }
@@ -59,7 +61,7 @@ func GetBackupMetadata(repo model.FinRepository) (*BackupMetadata, error) {
 	return &data, nil
 }
 
-func setBackupMetadata(repo model.FinRepository, metadata *BackupMetadata) error {
+func SetBackupMetadata(repo model.FinRepository, metadata *BackupMetadata) error {
 	metadataBytes, err := json.Marshal(metadata)
 	if err != nil {
 		return fmt.Errorf("failed to marshal backup metadata: %w", err)
