@@ -40,7 +40,7 @@ type FinBackupStatus struct {
 	PVCManifest string `json:"pvcManifest,omitempty"`
 
 	// 'snapID' specifies the unique identifier for the snapshot
-	SnapID string `json:"snapID,omitempty"`
+	SnapID int64 `json:"snapID,omitempty"`
 
 	// 'snapSize' specifies the size of the snapshot
 	SnapSize int64 `json:"snapSize,omitempty"`
