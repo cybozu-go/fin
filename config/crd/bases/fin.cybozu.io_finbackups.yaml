@@ -46,14 +46,12 @@ spec:
           spec:
             description: FinBackupSpec defines the desired state of FinBackup
             properties:
-              nodes:
-                description: '''nodes'' specifies the list of node names where the
-                  backup replicas are created'
-                items:
-                  type: string
-                type: array
+              node:
+                description: '''node'' specifies the node name where the backup is
+                  created'
+                type: string
                 x-kubernetes-validations:
-                - message: nodes is immutable
+                - message: node is immutable
                   rule: self == oldSelf
               pvc:
                 description: '''pvc'' specifies backup target PVC'
@@ -67,26 +65,10 @@ spec:
                 x-kubernetes-validations:
                 - message: pvcNamespace is immutable
                   rule: self == oldSelf
-              replicas:
-                description: '''replicas'' specifies the number of backup replicas'
-                format: int64
-                type: integer
-                x-kubernetes-validations:
-                - message: replicas is immutable
-                  rule: self == oldSelf
-              snapshot:
-                description: '''snapshot'' specifies the snapshot from which the backup
-                  is created'
-                type: string
-                x-kubernetes-validations:
-                - message: snapshot is immutable
-                  rule: self == oldSelf
             required:
-            - nodes
+            - node
             - pvc
             - pvcNamespace
-            - replicas
-            - snapshot
             type: object
           status:
             description: FinBackupStatus defines the observed state of FinBackup
@@ -165,33 +147,18 @@ spec:
                 description: '''createdAt'' specifies the creation date and time'
                 format: date-time
                 type: string
-              nodes:
-                description: '''nodes'' specifies the status of backup replicas'
-                items:
-                  properties:
-                    backupStatus:
-                      description: '''backupStatus'' specifies the status of the backup
-                        on the node'
-                      type: string
-                    name:
-                      description: '''name'' specifies the node name'
-                      type: string
-                    progress:
-                      description: '''progress'' specifies the backup progress'
-                      format: int64
-                      type: integer
-                  type: object
-                type: array
-              pvManifest:
-                description: '''pvManifest'' specifies the manifest of the backup
-                  target PV'
-                format: date-time
-                type: string
               pvcManifest:
                 description: '''pvcManifest'' specifies the manifest of the backup
                   target PVC'
                 format: date-time
                 type: string
+              snapID:
+                description: '''snapID'' specifies the unique identifier for the snapshot'
+                type: string
+              snapSize:
+                description: '''snapSize'' specifies the size of the snapshot'
+                format: int64
+                type: integer
             type: object
         required:
         - spec

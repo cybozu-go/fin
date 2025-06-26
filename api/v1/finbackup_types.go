@@ -12,11 +12,6 @@ type FinBackupSpec struct {
 	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
 
-	// 'replicas' specifies the number of backup replicas
-	// +kubebuilder:validation:Required
-	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="replicas is immutable"
-	Replicas int64 `json:"replicas"`
-
 	// 'pvc' specifies backup target PVC
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="pvc is immutable"
@@ -27,26 +22,10 @@ type FinBackupSpec struct {
 	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="pvcNamespace is immutable"
 	PVCNamespace string `json:"pvcNamespace"`
 
-	// 'snapshot' specifies the snapshot from which the backup is created
+	// 'node' specifies the node name where the backup is created
 	// +kubebuilder:validation:Required
-	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="snapshot is immutable"
-	Snapshot string `json:"snapshot"`
-
-	// 'nodes' specifies the list of node names where the backup replicas are created
-	// +kubebuilder:validation:Required
-	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="nodes is immutable"
-	Nodes []string `json:"nodes"`
-}
-
-type Node struct {
-	// 'name' specifies the node name
-	Name string `json:"name,omitempty"`
-
-	// 'backupStatus' specifies the status of the backup on the node
-	BackupStatus string `json:"backupStatus,omitempty"`
-
-	// 'progress' specifies the backup progress
-	Progress int64 `json:"progress,omitempty"`
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="node is immutable"
+	Node string `json:"node"`
 }
 
 // FinBackupStatus defines the observed state of FinBackup
@@ -57,14 +36,14 @@ type FinBackupStatus struct {
 	// 'createdAt' specifies the creation date and time
 	CreatedAt metav1.Time `json:"createdAt,omitempty"`
 
-	// 'pvManifest' specifies the manifest of the backup target PV
-	PVManifest metav1.Time `json:"pvManifest,omitempty"`
-
 	// 'pvcManifest' specifies the manifest of the backup target PVC
 	PVCManifest metav1.Time `json:"pvcManifest,omitempty"`
 
-	// 'nodes' specifies the status of backup replicas
-	Nodes []Node `json:"nodes,omitempty"`
+	// 'snapID' specifies the unique identifier for the snapshot
+	SnapID string `json:"snapID,omitempty"`
+
+	// 'snapSize' specifies the size of the snapshot
+	SnapSize int64 `json:"snapSize,omitempty"`
 
 	// 'conditions' specifies current backup conditions
 	Conditions []metav1.Condition `json:"conditions,omitempty"`

@@ -36,11 +36,9 @@ var _ = Describe("FinBackup Controller", func() {
 						Namespace: "default",
 					},
 					Spec: finv1.FinBackupSpec{
-						Replicas:     1,
 						PVC:          "test-pvc",
 						PVCNamespace: "test-ns",
-						Snapshot:     "test-ss",
-						Nodes:        []string{"test-node"},
+						Node:         "test-node",
 					},
 				}
 				Expect(k8sClient.Create(ctx, resource)).To(Succeed())

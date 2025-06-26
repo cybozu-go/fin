@@ -3,9 +3,6 @@ kind: FinBackup
 metadata:
   name: finbackup-sample
 spec:
-  replicas: 1
   pvc: foo
   pvcNamespace: fooNS
-  snapshot: fooSS
-  nodes:
-  - fooNode
+  node: fooNode
