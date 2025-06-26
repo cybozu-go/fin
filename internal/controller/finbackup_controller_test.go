@@ -38,7 +38,7 @@ var _ = Describe("FinBackup Controller", func() {
 					Spec: finv1.FinBackupSpec{
 						PVC:          "test-pvc",
 						PVCNamespace: "test-ns",
-						Nodes:        []string{"test-node"},
+						Node:         "test-node",
 					},
 				}
 				Expect(k8sClient.Create(ctx, resource)).To(Succeed())

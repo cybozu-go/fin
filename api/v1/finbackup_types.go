@@ -22,10 +22,10 @@ type FinBackupSpec struct {
 	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="pvcNamespace is immutable"
 	PVCNamespace string `json:"pvcNamespace"`
 
-	// 'nodes' specifies the list of node names where the backup replicas are created
+	// 'node' specifies the node name where the backup is created
 	// +kubebuilder:validation:Required
-	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="nodes is immutable"
-	Nodes []string `json:"nodes"`
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="node is immutable"
+	Node string `json:"node"`
 }
 
 // FinBackupStatus defines the observed state of FinBackup

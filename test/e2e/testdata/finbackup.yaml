@@ -5,5 +5,4 @@ metadata:
 spec:
   pvc: foo
   pvcNamespace: fooNS
-  nodes:
-  - fooNode
+  node: fooNode

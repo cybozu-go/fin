@@ -46,14 +46,12 @@ spec:
           spec:
             description: FinBackupSpec defines the desired state of FinBackup
             properties:
-              nodes:
-                description: '''nodes'' specifies the list of node names where the
-                  backup replicas are created'
-                items:
-                  type: string
-                type: array
+              node:
+                description: '''node'' specifies the node name where the backup is
+                  created'
+                type: string
                 x-kubernetes-validations:
-                - message: nodes is immutable
+                - message: node is immutable
                   rule: self == oldSelf
               pvc:
                 description: '''pvc'' specifies backup target PVC'
@@ -68,7 +66,7 @@ spec:
                 - message: pvcNamespace is immutable
                   rule: self == oldSelf
             required:
-            - nodes
+            - node
             - pvc
             - pvcNamespace
             type: object
