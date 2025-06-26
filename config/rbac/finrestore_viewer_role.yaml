@@ -1,0 +1,23 @@
+# permissions for end users to view finrestores.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/name: fin
+    app.kubernetes.io/managed-by: kustomize
+  name: finrestore-viewer-role
+rules:
+- apiGroups:
+  - fin.cybozu.io
+  resources:
+  - finrestores
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - fin.cybozu.io
+  resources:
+  - finrestores/status
+  verbs:
+  - get

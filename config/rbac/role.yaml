@@ -42,3 +42,29 @@ rules:
   - get
   - patch
   - update
+- apiGroups:
+  - fin.cybozu.io
+  resources:
+  - finrestores
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - fin.cybozu.io
+  resources:
+  - finrestores/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - fin.cybozu.io
+  resources:
+  - finrestores/status
+  verbs:
+  - get
+  - patch
+  - update
