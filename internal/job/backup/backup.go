@@ -122,7 +122,8 @@ func (b *Backup) doBackup() error {
 		}
 	}
 
-	targetSnapshot, err := getSnapshot(b.rbdRepo, b.targetRBDPool, b.targetRBDImageName, b.targetSnapshotID)
+	targetSnapshot, err := getSnapshot(
+		b.rbdRepo, b.targetRBDPool, b.targetRBDImageName, b.targetSnapshotID)
 	if err != nil {
 		return fmt.Errorf("failed to get target snapshot: %w", err)
 	}

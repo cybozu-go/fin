@@ -1,8 +1,8 @@
-package backup_test
+package restore_test
 
 import (
-	"fmt"
-	"math"
+	"bytes"
+	"crypto/rand"
 	"os"
 	"path/filepath"
 	"testing"
@@ -12,31 +12,50 @@ import (
 	"github.com/cybozu-go/fin/internal/infrastructure/sqlite"
 	"github.com/cybozu-go/fin/internal/job"
 	"github.com/cybozu-go/fin/internal/job/backup"
+	"github.com/cybozu-go/fin/internal/job/restore"
 	"github.com/cybozu-go/fin/internal/job/testutil"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+
 	"github.com/cybozu-go/fin/internal/model"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
 )
 
-func TestFullBackup_Success(t *testing.T) {
+func TestRestoreFromFullBackup_Success(t *testing.T) {
+	// Description:
+	//  Restore from the full backup to the restore file.
+	//
+	// Arrange:
+	//   - A full backup, `backup`, consists of two chunks.
+	//   - raw.img filled with the random data.
+	//   - The restore file.
+	// Act:
+	//   Run the restore process.
+	//
+	// Assert:
+	//   Check if the contents of the restore file is
+	//   the same as raw.img.
+
 	// Arrange
+
+	// Create a full backup data.
 	processUID := uuid.New().String()
 	targetFinBackupUID := uuid.New().String()
 	targetRBDPoolName := "test-pool"
 	targetRBDImageName := "test-image"
 	targetSnapshotID := 1
 	targetSnapshotName := "test-snap"
-	targetSnapshotSize := 1000
+	rawImageChunkSize := 4096
+	targetSnapshotSize := rawImageChunkSize * 2
 	targetSnapshotTimestamp := "Mon Jan  2 15:04:05 2006"
 	targetPVCName := "test-pvc"
 	targetPVCNamespace := "test-namespace"
 	targetPVCUID := uuid.New().String()
 	targetPVName := "test-pv"
-	maxPartSize := 512
+	maxPartSize := 4096
 
 	k8sRepo := fake.NewKubernetesRepository(
 		map[types.NamespacedName]*corev1.PersistentVolumeClaim{
@@ -81,7 +100,6 @@ func TestFullBackup_Success(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = finRepo.Close() })
 
-	// Act
 	backup := backup.NewBackup(&backup.BackupInput{
 		Repo:                      finRepo,
 		KubernetesRepo:            k8sRepo,
@@ -102,49 +120,77 @@ func TestFullBackup_Success(t *testing.T) {
 	err = backup.Perform()
 	assert.NoError(t, err)
 
-	// Assert
-	testutil.AssertActionPrivateDataIsEmpty(t, finRepo, processUID)
-	testutil.AssertDiffDirDoesNotExist(t, nlvRepo, testutil.GetDiffDirPath(targetSnapshotID))
-
-	rawImage, err := fake.ReadRawImage(filepath.Join(nlvRepo.GetRootPath(), testutil.GetRawImagePath()))
-	assert.NoError(t, err)
-	assert.Equal(t, targetSnapshotSize, rawImage.Size)
-	assert.Equal(t, 2, len(rawImage.AppliedDiffs))
-	assert.Equal(t, 0, rawImage.AppliedDiffs[0].ReadOffset)
-	assert.Equal(t, maxPartSize, rawImage.AppliedDiffs[0].ReadLength)
-	assert.Equal(t, maxPartSize, rawImage.AppliedDiffs[1].ReadOffset)
-	assert.Equal(t, maxPartSize, rawImage.AppliedDiffs[1].ReadLength)
-
-	_, err = os.Stat(filepath.Join(nlvRepo.GetRootPath(), "pvc.yaml"))
-	assert.NoError(t, err)
-	_, err = os.Stat(filepath.Join(nlvRepo.GetRootPath(), "pv.yaml"))
-	assert.NoError(t, err)
-
-	for _, diff := range rawImage.AppliedDiffs {
-		assert.Equal(t, targetRBDPoolName, diff.PoolName)
-		assert.Nil(t, diff.FromSnap)
-		assert.Equal(t, targetFinBackupUID, diff.MidSnapPrefix)
-		assert.Equal(t, targetRBDImageName, diff.ImageName)
-		assert.Equal(t, targetSnapshotID, diff.SnapID)
-		assert.Equal(t, targetSnapshotName, diff.SnapName)
-		assert.Equal(t, targetSnapshotSize, diff.SnapSize)
-		assert.Equal(t, targetSnapshotTimestamp, diff.SnapTimestamp)
-	}
-
-	metadata, err := job.GetBackupMetadata(finRepo)
+	// Update raw.img filled with random data. Although this file has some data
+	// stored by fake backup process, we can replace them here because we won't
+	// use the original data in the restore process.
+	buf := make([]byte, targetSnapshotSize)
+	_, err = rand.Read(buf)
 	require.NoError(t, err)
-	assert.Equal(t, targetPVCUID, metadata.PVCUID)
-	assert.Equal(t, targetRBDImageName, metadata.RBDImageName)
-	assert.NotNil(t, metadata.Raw)
-	assert.Equal(t, targetSnapshotID, metadata.Raw.SnapID)
-	assert.Equal(t, targetSnapshotName, metadata.Raw.SnapName)
-	assert.Equal(t, targetSnapshotSize, metadata.Raw.SnapSize)
-	assert.Equal(t, maxPartSize, metadata.Raw.PartSize)
-	assert.Equal(t, targetSnapshotTimestamp, metadata.Raw.CreatedAt.Format(time.ANSIC))
-	assert.Empty(t, metadata.Diff)
+	raw, err := os.Create(filepath.Join(nlvRepo.GetRootPath(), job.GetRawImagePath()))
+	require.NoError(t, err)
+	defer func() { _ = raw.Close() }()
+	_, err = raw.Write(buf)
+	require.NoError(t, err)
+	err = raw.Close()
+	require.NoError(t, err)
+
+	// Create the restore file
+	restorePath := testutil.CreateRestoreFileForTest(t, int64(targetSnapshotSize))
+	rRepo := fake.NewRestoreRepository(restorePath)
+
+	// Act
+	r := restore.NewRestore(&restore.RestoreInput{
+		Repo:                finRepo,
+		KubernetesRepo:      k8sRepo,
+		RBDRepo:             rbdRepo,
+		NodeLocalVolumeRepo: nlvRepo,
+		RestoreRepo:         rRepo,
+		RetryInterval:       1 * time.Second,
+		ProcessUID:          processUID,
+		TargetSnapshotID:    targetSnapshotID,
+		RawImageChunkSize:   int64(rawImageChunkSize),
+		TargetPVCName:       targetPVCName,
+		TargetPVCNamespace:  targetPVCNamespace,
+	})
+	err = r.Perform()
+	assert.NoError(t, err)
+
+	// Assert
+
+	// Verify the contents of the restore file.
+	buf2 := make([]byte, targetSnapshotSize)
+	restoreFile, err := os.Open(restorePath)
+	require.NoError(t, err)
+	rn, err := restoreFile.Read(buf2)
+	require.NoError(t, err)
+	require.Equal(t, targetSnapshotSize, rn)
+	require.True(t, bytes.Equal(buf, buf2))
+
+	// Verify the contents of the metadata
+	testutil.AssertActionPrivateDataIsEmpty(t, finRepo, processUID)
+	require.Zero(t, len(rRepo.AppliedDiffs()))
 }
 
-func TestIncrementalBackup_Success(t *testing.T) {
+func TestRestoreFromIncrementalBackup_Success(t *testing.T) {
+	// Description:
+	//   Restore from the incremental backup to the restore file.
+	//
+	// Arrange:
+	//   - A full backup, `backup`, consists of 2 chunks.
+	//   - An incremental backup, `previousBackup`, consists of 3 chunks.
+	//   - raw.img filled with the random data.
+	//     It's size is the same as the full backup's one.
+	//   - The restore file. It's size is the same
+	//     as the incremental backup's one.
+	//
+	// Act:
+	//   Run the restore process about the incremental backup.
+	//
+	// Assert:
+	//   Check if the contents of the restore target file is as follows.
+	//     chunk0, 1: the same as the fake raw.img.
+	//     chunk2: zero filled.
+
 	// Arrange
 	processUID := uuid.New().String()
 	targetRBDPoolName := "test-pool"
@@ -153,19 +199,20 @@ func TestIncrementalBackup_Success(t *testing.T) {
 	targetPVCNamespace := "test-namespace"
 	targetPVCUID := uuid.New().String()
 	targetPVName := "test-pv"
-	maxPartSize := 512
+	maxPartSize := 4096
 
 	previousFinBackupUID := uuid.New().String()
 	previousSnapshotID := 1
 	previousSnapshotName := "test-snap1"
-	previousSnapshotSize := 900
+	previousSnapshotSize := 4096 * 2
 	previousSnapshotTimestamp := "Mon Jan  2 15:03:05 2006"
 
 	targetFinBackupUID := uuid.New().String()
 	targetSnapshotID := 2
 	targetSnapshotName := "test-snap2"
-	targetSnapshotSize := 1000
+	targetSnapshotSize := 4096 * 3
 	targetSnapshotTimestamp := "Mon Jan  2 15:04:05 2006"
+	var rawImageChunkSize int64 = 4096
 
 	k8sRepo := fake.NewKubernetesRepository(
 		map[types.NamespacedName]*corev1.PersistentVolumeClaim{
@@ -216,7 +263,7 @@ func TestIncrementalBackup_Success(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = finRepo.Close() })
 
-	// Create a previous backup to simulate an incremental backup scenario
+	// Create a full backup
 	previousBackup := backup.NewBackup(&backup.BackupInput{
 		Repo:                      finRepo,
 		KubernetesRepo:            k8sRepo,
@@ -237,7 +284,7 @@ func TestIncrementalBackup_Success(t *testing.T) {
 	err = previousBackup.Perform()
 	require.NoError(t, err)
 
-	// Act
+	// Create an incremental backup
 	backup := backup.NewBackup(&backup.BackupInput{
 		Repo:                      finRepo,
 		KubernetesRepo:            k8sRepo,
@@ -258,44 +305,64 @@ func TestIncrementalBackup_Success(t *testing.T) {
 	err = backup.Perform()
 	require.NoError(t, err)
 
+	// Update raw.img filled with random data. Although this file has some data
+	// stored by fake backup process, we can replace them here because we won't
+	// use the original data in the restore process.
+	buf := make([]byte, previousSnapshotSize)
+	_, err = rand.Read(buf)
+	require.NoError(t, err)
+	raw, err := os.Create(filepath.Join(nlvRepo.GetRootPath(), job.GetRawImagePath()))
+	require.NoError(t, err)
+	defer func() { _ = raw.Close() }()
+	_, err = raw.Write(buf)
+	require.NoError(t, err)
+	err = raw.Close()
+	require.NoError(t, err)
+
+	// Create the restore file. It's size must be the same as the incremental backup's one.
+	restorePath := testutil.CreateRestoreFileForTest(t, int64(targetSnapshotSize))
+	rRepo := fake.NewRestoreRepository(restorePath)
+
+	// Act
+	r := restore.NewRestore(&restore.RestoreInput{
+		Repo:                finRepo,
+		KubernetesRepo:      k8sRepo,
+		RBDRepo:             rbdRepo,
+		NodeLocalVolumeRepo: nlvRepo,
+		RestoreRepo:         rRepo,
+		RetryInterval:       1 * time.Second,
+		ProcessUID:          processUID,
+		TargetSnapshotID:    targetSnapshotID,
+		RawImageChunkSize:   rawImageChunkSize,
+		TargetPVCName:       targetPVCName,
+		TargetPVCNamespace:  targetPVCNamespace,
+	})
+	err = r.Perform()
+	assert.NoError(t, err)
+
 	// Assert
 	testutil.AssertActionPrivateDataIsEmpty(t, finRepo, processUID)
-	numDiffParts := int(math.Ceil(float64(targetSnapshotSize) / float64(maxPartSize)))
-	for i := range numDiffParts {
-		diffFilePath := filepath.Join(nlvRepo.GetRootPath(),
-			testutil.GetDiffDirPath(targetSnapshotID), fmt.Sprintf("part-%d", i))
-		diff, err := fake.ReadDiff(diffFilePath)
-		require.NoError(t, err)
-		assert.Equal(t, targetRBDPoolName, diff.PoolName)
-		assert.Equal(t, previousSnapshotName, *diff.FromSnap)
-		assert.Equal(t, targetFinBackupUID, diff.MidSnapPrefix)
-		assert.Equal(t, targetRBDImageName, diff.ImageName)
-		assert.Equal(t, targetSnapshotID, diff.SnapID)
-		assert.Equal(t, targetSnapshotName, diff.SnapName)
-		assert.Equal(t, targetSnapshotSize, diff.SnapSize)
-		assert.Equal(t, targetSnapshotTimestamp, diff.SnapTimestamp)
-	}
 
-	metadata, err := job.GetBackupMetadata(finRepo)
+	buf2 := make([]byte, targetSnapshotSize)
+	restoreFile, err := os.Open(rRepo.GetPath())
 	require.NoError(t, err)
-	assert.Equal(t, targetPVCUID, metadata.PVCUID)
-	assert.Equal(t, targetRBDImageName, metadata.RBDImageName)
-	assert.NotNil(t, metadata.Raw)
-	assert.Equal(t, previousSnapshotID, metadata.Raw.SnapID)
-	assert.Equal(t, previousSnapshotName, metadata.Raw.SnapName)
-	assert.Equal(t, previousSnapshotSize, metadata.Raw.SnapSize)
-	assert.Equal(t, maxPartSize, metadata.Raw.PartSize)
-	assert.Equal(t, previousSnapshotTimestamp, metadata.Raw.CreatedAt.Format(time.ANSIC))
-	assert.NotNil(t, metadata.Diff)
-	assert.Len(t, metadata.Diff, 1)
-	assert.Equal(t, targetSnapshotID, metadata.Diff[0].SnapID)
-	assert.Equal(t, targetSnapshotName, metadata.Diff[0].SnapName)
-	assert.Equal(t, targetSnapshotSize, metadata.Diff[0].SnapSize)
-	assert.Equal(t, maxPartSize, metadata.Diff[0].PartSize)
-	assert.Equal(t, targetSnapshotTimestamp, metadata.Diff[0].CreatedAt.Format(time.ANSIC))
+	rn, err := restoreFile.Read(buf2)
+	require.NoError(t, err)
+	require.Equal(t, targetSnapshotSize, rn)
+	require.True(t, bytes.Equal(buf, buf2[:previousSnapshotSize]))
+	zeroBuf := make([]byte, targetSnapshotSize-previousSnapshotSize)
+	require.True(t, bytes.Equal(buf2[previousSnapshotSize:], zeroBuf))
+
+	assert.Equal(t, 3, len(rRepo.AppliedDiffs()))
+	assert.Equal(t, 0, rRepo.AppliedDiffs()[0].ReadOffset)
+	assert.Equal(t, maxPartSize, rRepo.AppliedDiffs()[0].ReadLength)
+	assert.Equal(t, maxPartSize, rRepo.AppliedDiffs()[1].ReadOffset)
+	assert.Equal(t, maxPartSize, rRepo.AppliedDiffs()[1].ReadLength)
+	assert.Equal(t, maxPartSize*2, rRepo.AppliedDiffs()[2].ReadOffset)
+	assert.Equal(t, maxPartSize, rRepo.AppliedDiffs()[2].ReadLength)
 }
 
-func TestBackup_ErrorBusy(t *testing.T) {
+func TestRestore_ErrorBusy(t *testing.T) {
 	// Arrange
 	processUID := uuid.New().String()
 	differentProcessUID := uuid.New().String()
@@ -310,11 +377,11 @@ func TestBackup_ErrorBusy(t *testing.T) {
 	require.NoError(t, err)
 
 	// Act
-	backup := backup.NewBackup(&backup.BackupInput{
+	restore := restore.NewRestore(&restore.RestoreInput{
 		Repo:       finRepo,
 		ProcessUID: processUID,
 	})
-	err = backup.Perform()
+	err = restore.Perform()
 
 	// Assert
 	assert.ErrorIs(t, err, job.ErrCantLock)

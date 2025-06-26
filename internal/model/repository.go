@@ -10,7 +10,8 @@ type ActionKind string
 
 const (
 	// TODO: Add required actions here.
-	Backup ActionKind = "Backup"
+	Backup  ActionKind = "Backup"
+	Restore ActionKind = "Restore"
 )
 
 var (
@@ -109,4 +110,16 @@ type NodeLocalVolumeRepository interface {
 
 	// RemoveDirRecursively removes a directory and its contents at the specified path.
 	RemoveDirRecursively(dirPath string) error
+}
+
+// RestoreRepository is an interface for managing a restore volume as a block device file.
+type RestoreRepository interface {
+	// GetPath return the path of the block device file.
+	GetPath() string
+
+	// BlkDiscard issues `blkdiscard <bdev file>`.
+	BlkDiscard() error
+
+	// Apply diff applies diff to the block device file
+	ApplyDiff(diffFilePath string) error
 }
