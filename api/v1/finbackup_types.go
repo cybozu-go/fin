@@ -40,10 +40,10 @@ type FinBackupStatus struct {
 	PVCManifest string `json:"pvcManifest,omitempty"`
 
 	// 'snapID' specifies the unique identifier for the snapshot
-	SnapID int64 `json:"snapID,omitempty"`
+	SnapID *int `json:"snapID,omitempty"`
 
 	// 'snapSize' specifies the size of the snapshot
-	SnapSize int64 `json:"snapSize,omitempty"`
+	SnapSize *int64 `json:"snapSize,omitempty"`
 
 	// 'conditions' specifies current backup conditions
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
