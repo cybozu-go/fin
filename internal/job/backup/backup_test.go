@@ -1,4 +1,4 @@
-package job_test
+package backup_test
 
 import (
 	"fmt"
@@ -12,6 +12,7 @@ import (
 	"github.com/cybozu-go/fin/internal/infrastructure/nlv"
 	"github.com/cybozu-go/fin/internal/infrastructure/sqlite"
 	"github.com/cybozu-go/fin/internal/job"
+	"github.com/cybozu-go/fin/internal/job/backup"
 	"github.com/cybozu-go/fin/internal/model"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -81,7 +82,7 @@ func TestFullBackup_Success(t *testing.T) {
 	t.Cleanup(func() { _ = finRepo.Close() })
 
 	// Act
-	backup := job.NewBackup(&job.BackupInput{
+	backup := backup.NewBackup(&backup.BackupInput{
 		Repo:                      finRepo,
 		KubernetesRepo:            k8sRepo,
 		RBDRepo:                   rbdRepo,
@@ -138,6 +139,7 @@ func TestFullBackup_Success(t *testing.T) {
 	assert.Equal(t, targetSnapshotID, metadata.Raw.SnapID)
 	assert.Equal(t, targetSnapshotName, metadata.Raw.SnapName)
 	assert.Equal(t, targetSnapshotSize, metadata.Raw.SnapSize)
+	assert.Equal(t, maxPartSize, metadata.Raw.PartSize)
 	assert.Equal(t, targetSnapshotTimestamp, metadata.Raw.CreatedAt.Format(time.ANSIC))
 	assert.Empty(t, metadata.Diff)
 }
@@ -215,7 +217,7 @@ func TestIncrementalBackup_Success(t *testing.T) {
 	t.Cleanup(func() { _ = finRepo.Close() })
 
 	// Create a previous backup to simulate an incremental backup scenario
-	previousBackup := job.NewBackup(&job.BackupInput{
+	previousBackup := backup.NewBackup(&backup.BackupInput{
 		Repo:                      finRepo,
 		KubernetesRepo:            k8sRepo,
 		RBDRepo:                   rbdRepo,
@@ -236,7 +238,7 @@ func TestIncrementalBackup_Success(t *testing.T) {
 	require.NoError(t, err)
 
 	// Act
-	backup := job.NewBackup(&job.BackupInput{
+	backup := backup.NewBackup(&backup.BackupInput{
 		Repo:                      finRepo,
 		KubernetesRepo:            k8sRepo,
 		RBDRepo:                   rbdRepo,
@@ -281,12 +283,14 @@ func TestIncrementalBackup_Success(t *testing.T) {
 	assert.Equal(t, previousSnapshotID, metadata.Raw.SnapID)
 	assert.Equal(t, previousSnapshotName, metadata.Raw.SnapName)
 	assert.Equal(t, previousSnapshotSize, metadata.Raw.SnapSize)
+	assert.Equal(t, maxPartSize, metadata.Raw.PartSize)
 	assert.Equal(t, previousSnapshotTimestamp, metadata.Raw.CreatedAt.Format(time.ANSIC))
 	assert.NotNil(t, metadata.Diff)
 	assert.Len(t, metadata.Diff, 1)
 	assert.Equal(t, targetSnapshotID, metadata.Diff[0].SnapID)
 	assert.Equal(t, targetSnapshotName, metadata.Diff[0].SnapName)
 	assert.Equal(t, targetSnapshotSize, metadata.Diff[0].SnapSize)
+	assert.Equal(t, maxPartSize, metadata.Diff[0].PartSize)
 	assert.Equal(t, targetSnapshotTimestamp, metadata.Diff[0].CreatedAt.Format(time.ANSIC))
 }
 
@@ -305,7 +309,7 @@ func TestBackup_ErrorBusy(t *testing.T) {
 	require.NoError(t, err)
 
 	// Act
-	backup := job.NewBackup(&job.BackupInput{
+	backup := backup.NewBackup(&backup.BackupInput{
 		Repo:       finRepo,
 		ProcessUID: processUID,
 	})
