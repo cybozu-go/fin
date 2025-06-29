@@ -87,7 +87,16 @@ func (in *FinBackupSpec) DeepCopy() *FinBackupSpec {
 func (in *FinBackupStatus) DeepCopyInto(out *FinBackupStatus) {
 	*out = *in
 	in.CreatedAt.DeepCopyInto(&out.CreatedAt)
-	in.PVCManifest.DeepCopyInto(&out.PVCManifest)
+	if in.SnapID != nil {
+		in, out := &in.SnapID, &out.SnapID
+		*out = new(int)
+		**out = **in
+	}
+	if in.SnapSize != nil {
+		in, out := &in.SnapSize, &out.SnapSize
+		*out = new(int64)
+		**out = **in
+	}
 	if in.Conditions != nil {
 		in, out := &in.Conditions, &out.Conditions
 		*out = make([]metav1.Condition, len(*in))

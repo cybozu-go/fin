@@ -37,13 +37,13 @@ type FinBackupStatus struct {
 	CreatedAt metav1.Time `json:"createdAt,omitempty"`
 
 	// 'pvcManifest' specifies the manifest of the backup target PVC
-	PVCManifest metav1.Time `json:"pvcManifest,omitempty"`
+	PVCManifest string `json:"pvcManifest,omitempty"`
 
 	// 'snapID' specifies the unique identifier for the snapshot
-	SnapID string `json:"snapID,omitempty"`
+	SnapID *int `json:"snapID,omitempty"`
 
 	// 'snapSize' specifies the size of the snapshot
-	SnapSize int64 `json:"snapSize,omitempty"`
+	SnapSize *int64 `json:"snapSize,omitempty"`
 
 	// 'conditions' specifies current backup conditions
 	Conditions []metav1.Condition `json:"conditions,omitempty"`

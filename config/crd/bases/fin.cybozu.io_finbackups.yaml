@@ -150,11 +150,10 @@ spec:
               pvcManifest:
                 description: '''pvcManifest'' specifies the manifest of the backup
                   target PVC'
-                format: date-time
                 type: string
               snapID:
                 description: '''snapID'' specifies the unique identifier for the snapshot'
-                type: string
+                type: integer
               snapSize:
                 description: '''snapSize'' specifies the size of the snapshot'
                 format: int64
