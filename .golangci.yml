@@ -24,6 +24,10 @@ linters:
     - unconvert
     - unparam
     - unused
+  exclusions:
+    rules:
+      - linters: ["errcheck"]
+        source: "^\\s*defer\\s+"
 formatters:
   enable:
     - gofmt

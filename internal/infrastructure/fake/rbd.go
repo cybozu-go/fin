@@ -68,7 +68,7 @@ func (r *RBDRepository) ExportDiff(input *model.ExportDiffInput) error {
 	if err != nil {
 		return fmt.Errorf("failed to create output file: %w", err)
 	}
-	defer func() { _ = file.Close() }()
+	defer file.Close()
 
 	encoder := json.NewEncoder(file)
 	diff := ExportedDiff{
@@ -100,7 +100,7 @@ func (r *RBDRepository) CreateEmptyRawImage(filePath string, size int) error {
 	if err != nil {
 		return fmt.Errorf("failed to create raw image file: %w", err)
 	}
-	defer func() { _ = file.Close() }()
+	defer file.Close()
 
 	encoder := json.NewEncoder(file)
 	rawImage := RawImage{
@@ -131,7 +131,7 @@ func (r *RBDRepository) ApplyDiff(rawImageFilePath, diffFilePath string) error {
 	if err != nil {
 		return fmt.Errorf("failed to open raw image file for writing: %w", err)
 	}
-	defer func() { _ = rawImageFile.Close() }()
+	defer rawImageFile.Close()
 	encoder := json.NewEncoder(rawImageFile)
 	if err := encoder.Encode(rawImage); err != nil {
 		return fmt.Errorf("failed to encode updated raw image: %w", err)
@@ -145,7 +145,7 @@ func ReadRawImage(filePath string) (*RawImage, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to open raw image file: %w", err)
 	}
-	defer func() { _ = file.Close() }()
+	defer file.Close()
 
 	decoder := json.NewDecoder(file)
 	var rawImage RawImage
@@ -160,7 +160,7 @@ func ReadDiff(filePath string) (*ExportedDiff, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to open diff file: %w", err)
 	}
-	defer func() { _ = file.Close() }()
+	defer file.Close()
 
 	decoder := json.NewDecoder(file)
 	var diff ExportedDiff

@@ -17,7 +17,7 @@ const (
 
 func TestStartOrRestartAction_success(t *testing.T) {
 	repo, err := New(testDatasource)
-	defer func() { _ = os.Remove(testDatasource) }()
+	defer os.Remove(testDatasource)
 	require.NoError(t, err)
 	assert.NotNil(t, repo)
 
@@ -34,7 +34,7 @@ func TestStartOrRestartAction_success(t *testing.T) {
 
 func TestStartOrRestartAction_successToReopenDB(t *testing.T) {
 	repo, err := New(testDatasource)
-	defer func() { _ = os.Remove(testDatasource) }()
+	defer os.Remove(testDatasource)
 	require.NoError(t, err)
 
 	err = repo.StartOrRestartAction(testUID, testAction)
@@ -63,7 +63,7 @@ func TestStartOrRestartAction_successToReopenDB(t *testing.T) {
 
 func TestUpdateAndCompleteAction_success(t *testing.T) {
 	repo, err := New(testDatasource)
-	defer func() { _ = os.Remove(testDatasource) }()
+	defer os.Remove(testDatasource)
 	require.NoError(t, err)
 
 	err = repo.StartOrRestartAction(testUID, testAction)
@@ -94,7 +94,7 @@ func TestUpdateAndCompleteAction_success(t *testing.T) {
 
 func TestStartOrRestartAction_anotherActionCanStartAfterComplete(t *testing.T) {
 	repo, err := New(testDatasource)
-	defer func() { _ = os.Remove(testDatasource) }()
+	defer os.Remove(testDatasource)
 	require.NoError(t, err)
 
 	err = repo.StartOrRestartAction(testUID, testAction)
@@ -122,7 +122,7 @@ func TestStartOrRestartAction_anotherActionCanStartAfterComplete(t *testing.T) {
 
 func TestStartOrRestartAction_busyError(t *testing.T) {
 	repo, err := New(testDatasource)
-	defer func() { _ = os.Remove(testDatasource) }()
+	defer os.Remove(testDatasource)
 	require.NoError(t, err)
 
 	err = repo.StartOrRestartAction(testUID, testAction)
@@ -143,7 +143,7 @@ func TestStartOrRestartAction_busyError(t *testing.T) {
 
 func TestUpdateActionPrivateData_failToUpdateBeforeStart(t *testing.T) {
 	repo, err := New(testDatasource)
-	defer func() { _ = os.Remove(testDatasource) }()
+	defer os.Remove(testDatasource)
 	require.NoError(t, err)
 
 	err = repo.UpdateActionPrivateData(testUID, []byte("test-private-data"))

@@ -37,12 +37,12 @@ func (r *NodeLocalVolumeRepository) WriteFile(filePath string, data []byte) erro
 	if err != nil {
 		return fmt.Errorf("failed to open node local volume root directory: %w", err)
 	}
-	defer func() { _ = root.Close() }()
+	defer root.Close()
 	file, err := root.Create(filePath)
 	if err != nil {
 		return fmt.Errorf("failed to create or open file: %w", err)
 	}
-	defer func() { _ = file.Close() }()
+	defer file.Close()
 
 	_, err = file.Write(data)
 	if err != nil {
@@ -56,7 +56,7 @@ func (r *NodeLocalVolumeRepository) Mkdir(dirPath string) error {
 	if err != nil {
 		return fmt.Errorf("failed to open node local volume root directory: %w", err)
 	}
-	defer func() { _ = root.Close() }()
+	defer root.Close()
 
 	if err := root.Mkdir(dirPath, 0755); err != nil {
 		if os.IsExist(err) {
@@ -72,7 +72,7 @@ func (r *NodeLocalVolumeRepository) RemoveDirRecursively(dirPath string) error {
 	if err != nil {
 		return fmt.Errorf("failed to open root directory: %w", err)
 	}
-	defer func() { _ = root.Close() }()
+	defer root.Close()
 
 	entries := []string{}
 	if err := fs.WalkDir(root.FS(), dirPath, func(path string, d fs.DirEntry, err error) error {

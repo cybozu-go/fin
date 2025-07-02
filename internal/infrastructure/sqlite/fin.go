@@ -40,7 +40,7 @@ func New(dataSourceName string) (*FinRepository, error) {
 		}
 		return nil, fmt.Errorf("failed to begin transaction: %w", err)
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer tx.Rollback()
 
 	createTableStmt := `
 	CREATE TABLE IF NOT EXISTS action_status (
@@ -80,13 +80,13 @@ func (fr *FinRepository) StartOrRestartAction(uid string, action model.ActionKin
 		}
 		return err
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer tx.Rollback()
 
 	rows, err := tx.Query("SELECT uid, action, private_data FROM action_status")
 	if err != nil {
 		return err
 	}
-	defer func() { _ = rows.Close() }()
+	defer rows.Close()
 
 	foundMyEntry := false
 	rowCount := 0
@@ -123,7 +123,7 @@ func (fr *FinRepository) StartOrRestartAction(uid string, action model.ActionKin
 		if err != nil {
 			return err
 		}
-		defer func() { _ = stmt.Close() }()
+		defer stmt.Close()
 
 		_, err = stmt.Exec(uid, action)
 		if err != nil {
@@ -139,7 +139,7 @@ func (fr *FinRepository) GetActionPrivateData(uid string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = stmt.Close() }()
+	defer stmt.Close()
 
 	var privateData []byte
 	err = stmt.QueryRow(uid).Scan(&privateData)
@@ -163,13 +163,13 @@ func (fr *FinRepository) UpdateActionPrivateData(uid string, privateData []byte)
 		}
 		return err
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer tx.Rollback()
 
 	stmt, err := tx.Prepare("UPDATE action_status SET private_data = ?, updated_at = ? WHERE uid = ?")
 	if err != nil {
 		return err
 	}
-	defer func() { _ = stmt.Close() }()
+	defer stmt.Close()
 
 	result, err := stmt.Exec(privateData, time.Now(), uid)
 	if err != nil {
@@ -198,13 +198,13 @@ func (fr *FinRepository) CompleteAction(uid string) error {
 		}
 		return err
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer tx.Rollback()
 
 	stmt, err := tx.Prepare("DELETE FROM action_status WHERE uid = ?")
 	if err != nil {
 		return err
 	}
-	defer func() { _ = stmt.Close() }()
+	defer stmt.Close()
 
 	_, err = stmt.Exec(uid)
 	if err != nil {
@@ -230,7 +230,7 @@ func (fr *FinRepository) GetBackupMetadata() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = stmt.Close() }()
+	defer stmt.Close()
 
 	var data []byte
 	err = stmt.QueryRow().Scan(&data)
@@ -248,14 +248,14 @@ func (fr *FinRepository) SetBackupMetadata(data []byte) error {
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer tx.Rollback()
 
 	stmt, err := tx.Prepare("INSERT INTO backup_metadata (id, data, created_at) VALUES (1, ?, ?)" +
 		" ON CONFLICT(id) DO UPDATE SET data = excluded.data, updated_at = excluded.created_at")
 	if err != nil {
 		return fmt.Errorf("failed to prepare statement: %w", err)
 	}
-	defer func() { _ = stmt.Close() }()
+	defer stmt.Close()
 
 	result, err := stmt.Exec(data, time.Now())
 	if err != nil {
