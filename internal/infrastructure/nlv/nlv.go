@@ -15,8 +15,9 @@ import (
 )
 
 const (
-	pvcFilePath = "pvc.yaml"
-	pvFilePath  = "pv.yaml"
+	pvcFilePath   = "pvc.yaml"
+	pvFilePath    = "pv.yaml"
+	imageFilePath = "raw.img"
 )
 
 type NodeLocalVolumeRepository struct {
@@ -183,6 +184,14 @@ func (r *NodeLocalVolumeRepository) RemoveDiffDirRecursively(snapshotID int) err
 		if err := r.root.Remove(entry); err != nil {
 			return fmt.Errorf("failed to remove entry %s: %w", entry, err)
 		}
+	}
+
+	return nil
+}
+
+func (r *NodeLocalVolumeRepository) RemoveRawImage() error {
+	if err := r.root.Remove(imageFilePath); err != nil {
+		return fmt.Errorf("failed to remove file %s: %w", imageFilePath, err)
 	}
 
 	return nil
