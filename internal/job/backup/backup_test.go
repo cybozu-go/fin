@@ -106,7 +106,7 @@ func TestFullBackup_Success(t *testing.T) {
 	testutil.AssertActionPrivateDataIsEmpty(t, finRepo, processUID)
 	testutil.AssertDiffDirDoesNotExist(t, nlvRepo, testutil.GetDiffDirPath(targetSnapshotID))
 
-	rawImage, err := fake.ReadRawImage(filepath.Join(nlvRepo.GetRootPath(), testutil.GetRawImagePath()))
+	rawImage, err := fake.ReadRawImage(nlvRepo.GetRawImagePath())
 	assert.NoError(t, err)
 	assert.Equal(t, targetSnapshotSize, rawImage.Size)
 	assert.Equal(t, 2, len(rawImage.AppliedDiffs))

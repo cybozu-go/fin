@@ -12,10 +12,6 @@ import (
 
 var ErrCantLock = errors.New("can't lock")
 
-func GetRawImagePath() string {
-	return "raw.img"
-}
-
 func GetDiffDirPath(snapshotID int) string {
 	return filepath.Join("diff", fmt.Sprintf("%d", snapshotID))
 }

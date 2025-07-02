@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"crypto/rand"
 	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -118,7 +117,7 @@ func TestRestoreFromFullBackup_Success(t *testing.T) {
 		MaxPartSize:               maxPartSize,
 	})
 	err = backup.Perform()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	// Update raw.img filled with random data. Although this file has some data
 	// stored by fake backup process, we can replace them here because we won't
@@ -126,7 +125,7 @@ func TestRestoreFromFullBackup_Success(t *testing.T) {
 	buf := make([]byte, targetSnapshotSize)
 	_, err = rand.Read(buf)
 	require.NoError(t, err)
-	raw, err := os.Create(filepath.Join(nlvRepo.GetRootPath(), job.GetRawImagePath()))
+	raw, err := os.Create(nlvRepo.GetRawImagePath())
 	require.NoError(t, err)
 	defer func() { _ = raw.Close() }()
 	_, err = raw.Write(buf)
@@ -142,7 +141,6 @@ func TestRestoreFromFullBackup_Success(t *testing.T) {
 	r := restore.NewRestore(&restore.RestoreInput{
 		Repo:                finRepo,
 		KubernetesRepo:      k8sRepo,
-		RBDRepo:             rbdRepo,
 		NodeLocalVolumeRepo: nlvRepo,
 		RestoreRepo:         rRepo,
 		RetryInterval:       1 * time.Second,
@@ -153,7 +151,7 @@ func TestRestoreFromFullBackup_Success(t *testing.T) {
 		TargetPVCNamespace:  targetPVCNamespace,
 	})
 	err = r.Perform()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	// Assert
 
@@ -192,6 +190,7 @@ func TestRestoreFromIncrementalBackup_Success(t *testing.T) {
 	//     chunk2: zero filled.
 
 	// Arrange
+	rawImageChunkSize := 4096
 	processUID := uuid.New().String()
 	targetRBDPoolName := "test-pool"
 	targetRBDImageName := "test-image"
@@ -199,20 +198,19 @@ func TestRestoreFromIncrementalBackup_Success(t *testing.T) {
 	targetPVCNamespace := "test-namespace"
 	targetPVCUID := uuid.New().String()
 	targetPVName := "test-pv"
-	maxPartSize := 4096
+	maxPartSize := rawImageChunkSize
 
 	previousFinBackupUID := uuid.New().String()
 	previousSnapshotID := 1
 	previousSnapshotName := "test-snap1"
-	previousSnapshotSize := 4096 * 2
+	previousSnapshotSize := rawImageChunkSize * 2
 	previousSnapshotTimestamp := "Mon Jan  2 15:03:05 2006"
 
 	targetFinBackupUID := uuid.New().String()
 	targetSnapshotID := 2
 	targetSnapshotName := "test-snap2"
-	targetSnapshotSize := 4096 * 3
+	targetSnapshotSize := rawImageChunkSize * 3
 	targetSnapshotTimestamp := "Mon Jan  2 15:04:05 2006"
-	var rawImageChunkSize int64 = 4096
 
 	k8sRepo := fake.NewKubernetesRepository(
 		map[types.NamespacedName]*corev1.PersistentVolumeClaim{
@@ -311,7 +309,7 @@ func TestRestoreFromIncrementalBackup_Success(t *testing.T) {
 	buf := make([]byte, previousSnapshotSize)
 	_, err = rand.Read(buf)
 	require.NoError(t, err)
-	raw, err := os.Create(filepath.Join(nlvRepo.GetRootPath(), job.GetRawImagePath()))
+	raw, err := os.Create(nlvRepo.GetRawImagePath())
 	require.NoError(t, err)
 	defer func() { _ = raw.Close() }()
 	_, err = raw.Write(buf)
@@ -327,18 +325,17 @@ func TestRestoreFromIncrementalBackup_Success(t *testing.T) {
 	r := restore.NewRestore(&restore.RestoreInput{
 		Repo:                finRepo,
 		KubernetesRepo:      k8sRepo,
-		RBDRepo:             rbdRepo,
 		NodeLocalVolumeRepo: nlvRepo,
 		RestoreRepo:         rRepo,
 		RetryInterval:       1 * time.Second,
 		ProcessUID:          processUID,
 		TargetSnapshotID:    targetSnapshotID,
-		RawImageChunkSize:   rawImageChunkSize,
+		RawImageChunkSize:   int64(rawImageChunkSize),
 		TargetPVCName:       targetPVCName,
 		TargetPVCNamespace:  targetPVCNamespace,
 	})
 	err = r.Perform()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	// Assert
 	testutil.AssertActionPrivateDataIsEmpty(t, finRepo, processUID)

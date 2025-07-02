@@ -338,7 +338,7 @@ func (b *Backup) loopApplyDiff(privateData *backupPrivateData, targetSnapshot *m
 	partCount := int(math.Ceil(float64(targetSnapshot.Size) / float64(b.maxPartSize)))
 	for i := privateData.NextPatchPart; i < partCount; i++ {
 		if err := b.rbdRepo.ApplyDiff(
-			filepath.Join(b.nodeLocalVolumeRepo.GetRootPath(), job.GetRawImagePath()),
+			b.nodeLocalVolumeRepo.GetRawImagePath(),
 			filepath.Join(b.nodeLocalVolumeRepo.GetRootPath(), job.GetDiffPartPath(b.targetSnapshotID, i)),
 		); err != nil {
 			return fmt.Errorf("failed to apply diff: %w", err)

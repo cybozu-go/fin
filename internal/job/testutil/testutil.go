@@ -29,10 +29,6 @@ func GetDiffDirPath(snapshotID int) string {
 	return filepath.Join("diff", fmt.Sprintf("%d", snapshotID))
 }
 
-func GetRawImagePath() string {
-	return "raw.img"
-}
-
 func GetFinSqlite3DSN(rootPath string) string {
 	return fmt.Sprintf("file:%s?_txlock=exclusive", filepath.Join(rootPath, "fin.sqlite3"))
 }

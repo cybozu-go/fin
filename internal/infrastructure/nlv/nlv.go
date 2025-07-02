@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"slices"
 
 	"github.com/cybozu-go/fin/internal/model"
@@ -30,6 +31,10 @@ func (r *NodeLocalVolumeRepository) Cleanup() {
 
 func (r *NodeLocalVolumeRepository) GetRootPath() string {
 	return r.rootPath
+}
+
+func (r *NodeLocalVolumeRepository) GetRawImagePath() string {
+	return filepath.Join(r.GetRootPath(), "raw.img")
 }
 
 func (r *NodeLocalVolumeRepository) WriteFile(filePath string, data []byte) error {

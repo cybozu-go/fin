@@ -3,11 +3,12 @@ package fake
 import (
 	"fmt"
 
+	r "github.com/cybozu-go/fin/internal/infrastructure/restore"
 	"github.com/cybozu-go/fin/internal/model"
 )
 
 type restoreRepository struct {
-	path         string
+	real         *r.RestoreRepository
 	appliedDiffs []*ExportedDiff
 }
 
@@ -17,7 +18,7 @@ func NewRestoreRepository(
 	path string,
 ) *restoreRepository {
 	return &restoreRepository{
-		path:         path,
+		real:         r.NewRestoreRepository(path),
 		appliedDiffs: make([]*ExportedDiff, 0),
 	}
 }
@@ -35,7 +36,7 @@ func (r *restoreRepository) ApplyDiff(diffFilePath string) error {
 }
 
 func (r *restoreRepository) GetPath() string {
-	return r.path
+	return r.real.GetPath()
 }
 
 func (r *restoreRepository) BlkDiscard() error {
@@ -44,4 +45,8 @@ func (r *restoreRepository) BlkDiscard() error {
 
 func (r *restoreRepository) AppliedDiffs() []*ExportedDiff {
 	return r.appliedDiffs
+}
+
+func (r *restoreRepository) CopyChunk(rawPath string, index int, chunkSize int64) error {
+	return r.real.CopyChunk(rawPath, index, chunkSize)
 }

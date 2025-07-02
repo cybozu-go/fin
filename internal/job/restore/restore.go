@@ -4,9 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"math"
-	"os"
 	"path/filepath"
 	"time"
 
@@ -17,7 +15,6 @@ import (
 type Restore struct {
 	repo                model.FinRepository
 	kubernetesRepo      model.KubernetesRepository
-	rbdRepo             model.RBDRepository
 	nodeLocalVolumeRepo model.NodeLocalVolumeRepository
 	restoreRepo         model.RestoreRepository
 	retryInterval       time.Duration
@@ -31,7 +28,6 @@ type Restore struct {
 type RestoreInput struct {
 	Repo                model.FinRepository
 	KubernetesRepo      model.KubernetesRepository
-	RBDRepo             model.RBDRepository
 	NodeLocalVolumeRepo model.NodeLocalVolumeRepository
 	RestoreRepo         model.RestoreRepository
 	RetryInterval       time.Duration
@@ -46,7 +42,6 @@ func NewRestore(in *RestoreInput) *Restore {
 	return &Restore{
 		repo:                in.Repo,
 		kubernetesRepo:      in.KubernetesRepo,
-		rbdRepo:             in.RBDRepo,
 		nodeLocalVolumeRepo: in.NodeLocalVolumeRepo,
 		restoreRepo:         in.RestoreRepo,
 		retryInterval:       in.RetryInterval,
@@ -89,20 +84,11 @@ func (r *Restore) doRestore() error {
 				metadata.Raw.SnapID, r.targetSnapshotID)
 		}
 	case 1:
-		found := false
-		if r.targetSnapshotID == metadata.Raw.SnapID {
+		if r.targetSnapshotID == metadata.Raw.SnapID ||
+			r.targetSnapshotID == metadata.Diff[0].SnapID {
 			break
 		}
-		for _, diff := range metadata.Diff {
-			if r.targetSnapshotID == diff.SnapID {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return fmt.Errorf("the target snapshot ID is invalid %d",
-				r.targetSnapshotID)
-		}
+		return fmt.Errorf("the target snapshot ID is invalid %d", r.targetSnapshotID)
 	default:
 		return fmt.Errorf("the number of diffs is %d but must be <= 1", len(metadata.Diff))
 	}
@@ -120,7 +106,7 @@ func (r *Restore) doRestore() error {
 		return fmt.Errorf("discard phase failed: %w", err)
 	}
 
-	if err := r.doRestoreRawImagePhase(d, metadata.Raw.SnapSize); err != nil {
+	if err := r.doRestoreRawImagePhase(d, metadata.Raw); err != nil {
 		return fmt.Errorf("restore raw image phase failed: %w", err)
 	}
 
@@ -150,13 +136,18 @@ func (r *Restore) doDiscardPhase(privateData *restorePrivateData) error {
 	return setRestorePrivateData(r.repo, r.processUID, privateData)
 }
 
-func (r *Restore) doRestoreRawImagePhase(privateData *restorePrivateData, rawImageSize int) error {
+func (r *Restore) doRestoreRawImagePhase(privateData *restorePrivateData, raw *job.BackupMetadataEntry) error {
 	if privateData.Phase != RestoreRawImage {
 		return nil
 	}
-	err := r.loopCopyChunk(privateData, rawImageSize)
+	err := r.loopCopyChunk(privateData, raw.SnapSize)
 	if err != nil {
 		return fmt.Errorf("failed to restore raw image: %w", err)
+	}
+
+	if r.targetSnapshotID == raw.SnapID {
+		privateData.Phase = Completed
+		return setRestorePrivateData(r.repo, r.processUID, privateData)
 	}
 
 	privateData.Phase = RestoreDiff
@@ -166,7 +157,7 @@ func (r *Restore) doRestoreRawImagePhase(privateData *restorePrivateData, rawIma
 func (r *Restore) loopCopyChunk(privateData *restorePrivateData, rawImageSize int) error {
 	chunkCount := int(math.Ceil(float64(rawImageSize) / float64(r.rawImageChunkSize)))
 	for i := privateData.NextRawImageChunk; i < chunkCount; i++ {
-		if err := r.CopyChunk(i, r.rawImageChunkSize); err != nil {
+		if err := r.restoreRepo.CopyChunk(r.nodeLocalVolumeRepo.GetRawImagePath(), i, r.rawImageChunkSize); err != nil {
 			return fmt.Errorf("failed to copy chunk %d: %w", i, err)
 		}
 
@@ -194,7 +185,7 @@ func (r *Restore) doRestoreDiffPhase(privateData *restorePrivateData, diffs []*j
 		}
 	}
 
-	privateData.Phase = RestoreCompleted
+	privateData.Phase = Completed
 	return setRestorePrivateData(r.repo, r.processUID, privateData)
 }
 
@@ -216,10 +207,10 @@ func (r *Restore) loopApplyDiff(privateData *restorePrivateData, diff *job.Backu
 }
 
 const (
-	Discard          = "discard"
-	RestoreRawImage  = "restore_raw_image"
-	RestoreDiff      = "restore_diff"
-	RestoreCompleted = "restore_completed"
+	Discard         = "discard"
+	RestoreRawImage = "restore_raw_image"
+	RestoreDiff     = "restore_diff"
+	Completed       = "completed"
 )
 
 type restorePrivateData struct {
@@ -253,52 +244,5 @@ func setRestorePrivateData(repo model.FinRepository, processUID string, data *re
 	if err := repo.UpdateActionPrivateData(processUID, privateData); err != nil {
 		return fmt.Errorf("failed to update private data: %w", err)
 	}
-	return nil
-}
-
-func (r *Restore) CopyChunk(index int, chunkSize int64) error {
-	rawPath := filepath.Join(r.nodeLocalVolumeRepo.GetRootPath(), job.GetRawImagePath())
-
-	rawFile, err := os.Open(rawPath)
-	if err != nil {
-		return fmt.Errorf("failed to open `%s`: %w", rawPath, err)
-	}
-	defer func() { _ = rawFile.Close() }()
-
-	resVol, err := os.OpenFile(r.restoreRepo.GetPath(), os.O_RDWR, 0600)
-	if err != nil {
-		return fmt.Errorf("failed to open `%s`: %w", rawPath, err)
-	}
-	defer func() { _ = resVol.Close() }()
-
-	if _, err := rawFile.Seek(int64(index)*chunkSize, io.SeekStart); err != nil {
-		return fmt.Errorf("failed to seek `%s` to %d: %w", rawPath, int64(index)*chunkSize, err)
-	}
-	if _, err = resVol.Seek(int64(index)*chunkSize, io.SeekStart); err != nil {
-		return fmt.Errorf("failed to seek `%s` to %d: %w", rawPath, int64(index)*chunkSize, err)
-	}
-
-	buf := make([]byte, chunkSize)
-	for {
-		rn, err := rawFile.Read(buf)
-		if err != nil {
-			if err == io.EOF {
-				break
-			}
-			return fmt.Errorf("failed to read: %w", err)
-		}
-
-		if rn > 0 {
-			wn, err := resVol.Write(buf[:rn])
-			if err != nil {
-				return fmt.Errorf("failed to write: %w", err)
-			}
-			if wn != rn {
-				return fmt.Errorf("short write: wrote %d bytes, expected %d", wn, rn)
-			}
-			// FIXME: calculate and store the checksum of `buf` here.
-		}
-	}
-
 	return nil
 }

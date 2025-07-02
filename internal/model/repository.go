@@ -9,7 +9,6 @@ import (
 type ActionKind string
 
 const (
-	// TODO: Add required actions here.
 	Backup  ActionKind = "Backup"
 	Restore ActionKind = "Restore"
 )
@@ -101,6 +100,9 @@ type NodeLocalVolumeRepository interface {
 	// GetRootPath returns the root path of the node local volume repository.
 	GetRootPath() string
 
+	// GetRawImagePath returns the path of raw.img
+	GetRawImagePath() string
+
 	// WriteFile writes data to a file at the specified path.
 	WriteFile(filePath string, data []byte) error
 
@@ -122,4 +124,7 @@ type RestoreRepository interface {
 
 	// Apply diff applies diff to the block device file
 	ApplyDiff(diffFilePath string) error
+
+	// CopyChunk copy a chunk from raw.img to the restore volume
+	CopyChunk(rawPath string, index int, chunkSize int64) error
 }
