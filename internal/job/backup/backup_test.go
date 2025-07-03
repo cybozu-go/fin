@@ -20,6 +20,18 @@ import (
 )
 
 func TestFullBackup_Success(t *testing.T) {
+	// Description:
+	//   Create a full backup with no error.
+	//
+	// Arrange:
+	//   None
+	//
+	// Act:
+	//   Run the backup process to create a full backup.
+	//
+	// Assert:
+	//   Check if the contents of the node local volume is correct.
+
 	// Arrange
 	backupInput := testutil.NewBackupInputTemplate(1, 512)
 	targetSnapshotName := "test-snap"
@@ -123,6 +135,19 @@ func TestFullBackup_Success(t *testing.T) {
 }
 
 func TestIncrementalBackup_Success(t *testing.T) {
+	// Description:
+	//   Create an incremental backup with no error.
+	//
+	// Arrange:
+	//   A full backup, `fullBackup`.
+	//
+	// Act:
+	//   Run the backup process to create an incremental backup,
+	//   `incrementalBackup`. It's size is larger than full backup.
+	//
+	// Assert:
+	//   Check if the contents of the incremental backup is correct.
+
 	// Arrange
 	fullBackupInput := testutil.NewBackupInputTemplate(1, 512)
 	fullSnapshotName := "test-snap1"

@@ -22,7 +22,8 @@ import (
 
 func TestRestoreFromFullBackup_Success(t *testing.T) {
 	// Description:
-	//   Restore from the full backup to the restore file.
+	//   Restore from the full backup to the restore file
+	//   with no error.
 	//
 	// Arrange:
 	//   - A full backup, `backup`, consists of two chunks.
@@ -127,13 +128,14 @@ func TestRestoreFromFullBackup_Success(t *testing.T) {
 
 func TestRestoreFromIncrementalBackup_Success(t *testing.T) {
 	// Description:
-	//   Restore from the incremental backup to the restore file.
+	//   Restore from the incremental backup to the restore file
+	//   with no error.
 	//
 	// Arrange:
-	//   - A full backup, `backup`, consists of 2 chunks.
-	//   - An incremental backup, `previousBackup`, consists of 3 chunks.
+	//   - A full backup, `fullBackup`, consists of 2 chunks.
+	//   - An incremental backup, `incrementalBackup`, consists of 3 chunks.
 	//   - raw.img filled with the random data.
-	//     It's size is the same as the full backup's one.
+	//     It's size is the same as the full backup.
 	//   - The restore file. It's size is the same
 	//     as the incremental backup's one.
 	//
