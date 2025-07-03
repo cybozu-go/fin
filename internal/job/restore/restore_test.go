@@ -2,10 +2,8 @@ package restore_test
 
 import (
 	"bytes"
-	"crypto/rand"
 	"os"
 	"testing"
-	"time"
 
 	"github.com/cybozu-go/fin/internal/infrastructure/fake"
 	"github.com/cybozu-go/fin/internal/job"
@@ -95,38 +93,19 @@ func TestRestoreFromFullBackup_Success(t *testing.T) {
 	err := backup.Perform()
 	require.NoError(t, err)
 
-	// Update raw.img filled with random data. Although this file has some data
+	// Fill raw.img with random data. Although this file has some data
 	// stored by fake backup process, we can replace them here because we won't
 	// use the original data in the restore process.
-	buf := make([]byte, targetSnapshotSize)
-	_, err = rand.Read(buf)
-	require.NoError(t, err)
-	raw, err := os.Create(nlvRepo.GetRawImagePath())
-	require.NoError(t, err)
-	defer func() { _ = raw.Close() }()
-	_, err = raw.Write(buf)
-	require.NoError(t, err)
-	err = raw.Close()
-	require.NoError(t, err)
+	buf := testutil.FillRawImageWithRandomData(t, nlvRepo.GetRawImagePath(), targetSnapshotSize)
 
 	// Create the restore file
 	restorePath := testutil.CreateRestoreFileForTest(t, int64(targetSnapshotSize))
 	rVol := fake.NewRestoreVolume(restorePath)
 
 	// Act
-	r := restore.NewRestore(&restore.RestoreInput{
-		Repo:                finRepo,
-		KubernetesRepo:      k8sRepo,
-		NodeLocalVolumeRepo: nlvRepo,
-		RestoreVol:          rVol,
-		RetryInterval:       1 * time.Second,
-		ProcessUID:          backupInput.ProcessUID,
-		TargetSnapshotID:    backupInput.TargetSnapshotID,
-		RawImageChunkSize:   int64(rawImageChunkSize),
-		TargetPVCName:       backupInput.TargetPVCName,
-		TargetPVCNamespace:  backupInput.TargetPVCNamespace,
-		TargetPVCUID:        backupInput.TargetPVCUID,
-	})
+	r := restore.NewRestore(testutil.NewRestoreInputTemplate(
+		backupInput, rVol, rawImageChunkSize, backupInput.TargetSnapshotID))
+
 	err = r.Perform()
 	require.NoError(t, err)
 
@@ -245,38 +224,18 @@ func TestRestoreFromIncrementalBackup_Success(t *testing.T) {
 	err = incrementalBackup.Perform()
 	require.NoError(t, err)
 
-	// Update raw.img filled with random data. Although this file has some data
+	// Fill raw.img with random data. Although this file has some data
 	// stored by fake backup process, we can replace them here because we won't
 	// use the original data in the restore process.
-	buf := make([]byte, fullSnapshotSize)
-	_, err = rand.Read(buf)
-	require.NoError(t, err)
-	raw, err := os.Create(nlvRepo.GetRawImagePath())
-	require.NoError(t, err)
-	defer func() { _ = raw.Close() }()
-	_, err = raw.Write(buf)
-	require.NoError(t, err)
-	err = raw.Close()
-	require.NoError(t, err)
+	buf := testutil.FillRawImageWithRandomData(t, nlvRepo.GetRawImagePath(), fullSnapshotSize)
 
 	// Create the restore file
 	restorePath := testutil.CreateRestoreFileForTest(t, int64(incrementalSnapshotSize))
 	rVol := fake.NewRestoreVolume(restorePath)
 
 	// Act
-	r := restore.NewRestore(&restore.RestoreInput{
-		Repo:                finRepo,
-		KubernetesRepo:      k8sRepo,
-		NodeLocalVolumeRepo: nlvRepo,
-		RestoreVol:          rVol,
-		RetryInterval:       1 * time.Second,
-		ProcessUID:          incrementalBackupInput.ProcessUID,
-		TargetSnapshotID:    incrementalBackupInput.TargetSnapshotID,
-		RawImageChunkSize:   int64(rawImageChunkSize),
-		TargetPVCName:       incrementalBackupInput.TargetPVCName,
-		TargetPVCNamespace:  incrementalBackupInput.TargetPVCNamespace,
-		TargetPVCUID:        incrementalBackupInput.TargetPVCUID,
-	})
+	r := restore.NewRestore(testutil.NewRestoreInputTemplate(
+		incrementalBackupInput, rVol, rawImageChunkSize, incrementalBackupInput.TargetSnapshotID))
 	err = r.Perform()
 	require.NoError(t, err)
 

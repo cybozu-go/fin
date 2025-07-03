@@ -11,6 +11,7 @@ import (
 	"github.com/cybozu-go/fin/internal/infrastructure/nlv"
 	"github.com/cybozu-go/fin/internal/infrastructure/sqlite"
 	"github.com/cybozu-go/fin/internal/job/backup"
+	"github.com/cybozu-go/fin/internal/job/restore"
 	"github.com/cybozu-go/fin/internal/model"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -41,6 +42,35 @@ func NewIncrementalBackupInputTemplate(src *backup.BackupInput, snapID int) *bac
 	ret.ProcessUID = uuid.New().String()
 	ret.TargetFinBackupUID = uuid.New().String()
 	return &ret
+}
+
+func NewRestoreInputTemplate(bi *backup.BackupInput, rVol model.RestoreVolume, chunkSize, snapID int) *restore.RestoreInput {
+	return &restore.RestoreInput{
+		Repo:                bi.Repo,
+		KubernetesRepo:      bi.KubernetesRepo,
+		NodeLocalVolumeRepo: bi.NodeLocalVolumeRepo,
+		RestoreVol:          rVol,
+		RawImageChunkSize:   int64(chunkSize),
+		TargetSnapshotID:    snapID,
+		RetryInterval:       bi.RetryInterval,
+		ProcessUID:          bi.ProcessUID,
+		TargetPVCName:       bi.TargetPVCName,
+		TargetPVCNamespace:  bi.TargetPVCNamespace,
+		TargetPVCUID:        bi.TargetPVCUID,
+	}
+}
+
+func FillRawImageWithRandomData(t *testing.T, rawImagePath string, size int) []byte {
+	t.Helper()
+	buf := make([]byte, size)
+	_, err := rand.Read(buf)
+	require.NoError(t, err)
+	raw, err := os.Create(rawImagePath)
+	require.NoError(t, err)
+	defer func() { _ = raw.Close() }()
+	_, err = raw.Write(buf)
+	require.NoError(t, err)
+	return buf
 }
 
 func AssertActionPrivateDataIsEmpty(t *testing.T, finRepo model.FinRepository, processUID string) {
