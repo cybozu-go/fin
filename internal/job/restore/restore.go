@@ -23,6 +23,7 @@ type Restore struct {
 	rawImageChunkSize   int64
 	targetPVCName       string
 	targetPVCNamespace  string
+	targetPVCUID        string
 }
 
 type RestoreInput struct {
@@ -36,6 +37,7 @@ type RestoreInput struct {
 	RawImageChunkSize   int64
 	TargetPVCName       string
 	TargetPVCNamespace  string
+	TargetPVCUID        string
 }
 
 func NewRestore(in *RestoreInput) *Restore {
@@ -50,6 +52,7 @@ func NewRestore(in *RestoreInput) *Restore {
 		rawImageChunkSize:   in.RawImageChunkSize,
 		targetPVCName:       in.TargetPVCName,
 		targetPVCNamespace:  in.TargetPVCNamespace,
+		targetPVCUID:        in.TargetPVCUID,
 	}
 }
 
@@ -75,6 +78,11 @@ func (r *Restore) doRestore() error {
 	metadata, err := job.GetBackupMetadata(r.repo)
 	if err != nil {
 		return fmt.Errorf("failed to get backup metadata: %w", err)
+	}
+
+	if metadata.PVCUID != r.targetPVCUID {
+		return fmt.Errorf("PVC UID in metadata table (%s) does not match the expected one (%s)",
+			metadata.PVCUID, r.targetPVCUID)
 	}
 
 	switch len(metadata.Diff) {
