@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/cybozu-go/fin/internal/infrastructure/fake"
-	"github.com/cybozu-go/fin/internal/infrastructure/sqlite"
 	"github.com/cybozu-go/fin/internal/job"
 	"github.com/cybozu-go/fin/internal/job/backup"
 	"github.com/cybozu-go/fin/internal/job/restore"
@@ -25,7 +24,7 @@ import (
 
 func TestRestoreFromFullBackup_Success(t *testing.T) {
 	// Description:
-	//  Restore from the full backup to the restore file.
+	//   Restore from the full backup to the restore file.
 	//
 	// Arrange:
 	//   - A full backup, `backup`, consists of two chunks.
@@ -93,11 +92,7 @@ func TestRestoreFromFullBackup_Success(t *testing.T) {
 		},
 	})
 
-	nlvRepo := testutil.CreateNLVForTest(t)
-
-	finRepo, err := sqlite.New(testutil.GetFinSqlite3DSN(nlvRepo.GetRootPath()))
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = finRepo.Close() })
+	nlvRepo, finRepo := testutil.CreateNLVAndFinRepoForTest(t)
 
 	backup := backup.NewBackup(&backup.BackupInput{
 		Repo:                      finRepo,
@@ -116,7 +111,7 @@ func TestRestoreFromFullBackup_Success(t *testing.T) {
 		TargetPVCUID:              targetPVCUID,
 		MaxPartSize:               maxPartSize,
 	})
-	err = backup.Perform()
+	err := backup.Perform()
 	require.NoError(t, err)
 
 	// Update raw.img filled with random data. Although this file has some data
@@ -256,11 +251,7 @@ func TestRestoreFromIncrementalBackup_Success(t *testing.T) {
 		},
 	})
 
-	nlvRepo := testutil.CreateNLVForTest(t)
-
-	finRepo, err := sqlite.New(testutil.GetFinSqlite3DSN(nlvRepo.GetRootPath()))
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = finRepo.Close() })
+	nlvRepo, finRepo := testutil.CreateNLVAndFinRepoForTest(t)
 
 	// Create a full backup
 	previousBackup := backup.NewBackup(&backup.BackupInput{
@@ -280,7 +271,7 @@ func TestRestoreFromIncrementalBackup_Success(t *testing.T) {
 		TargetPVCUID:              targetPVCUID,
 		MaxPartSize:               maxPartSize,
 	})
-	err = previousBackup.Perform()
+	err := previousBackup.Perform()
 	require.NoError(t, err)
 
 	// Create an incremental backup
@@ -366,13 +357,9 @@ func TestRestore_ErrorBusy(t *testing.T) {
 	processUID := uuid.New().String()
 	differentProcessUID := uuid.New().String()
 
-	nlvRepo := testutil.CreateNLVForTest(t)
+	_, finRepo := testutil.CreateNLVAndFinRepoForTest(t)
 
-	finRepo, err := sqlite.New(testutil.GetFinSqlite3DSN(nlvRepo.GetRootPath()))
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = finRepo.Close() })
-
-	err = finRepo.StartOrRestartAction(differentProcessUID, model.Backup)
+	err := finRepo.StartOrRestartAction(differentProcessUID, model.Backup)
 	require.NoError(t, err)
 
 	// Act

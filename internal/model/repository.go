@@ -97,21 +97,33 @@ type RBDRepository interface {
 // NodeLocalVolumeRepository is an interface for directly managing a filesystem
 // on the node local volume. The root path is supposed to be `/volume/<PVC's namespace>/<PVC's name>`.
 type NodeLocalVolumeRepository interface {
-	// GetRootPath returns the root path of the node local volume repository.
-	GetRootPath() string
+	// GetDiffPartPath returns the diff part path.
+	GetDiffPartPath(snapshotID, partIndex int) string
 
 	// GetRawImagePath returns the path of raw.img
 	GetRawImagePath() string
 
-	// WriteFile writes data to a file at the specified path.
-	WriteFile(filePath string, data []byte) error
+	// PutPVC puts PVC's manifest into this repository.
+	PutPVC(pvc *corev1.PersistentVolumeClaim) error
 
-	// Mkdir creates a directory at the specified path. It uses 0755 as the permission.
+	// PutPV puts PV's manifest into this repository.
+	PutPV(pv *corev1.PersistentVolume) error
+
+	// GetPVC gets PVC's manifest.
+	GetPVC() (*corev1.PersistentVolumeClaim, error)
+
+	// GetPV gets PV's manifest.
+	GetPV() (*corev1.PersistentVolume, error)
+
+	// GetDBPath return the path of database.
+	GetDBPath() string
+
+	// MakeDiffPartDir creates a diff directory. It uses 0755 as the permission.
 	// If the directory already exists, it returns `ErrAlreadyExists`.
-	Mkdir(dirPath string) error
+	MakeDiffDir(snapshotID int) error
 
-	// RemoveDirRecursively removes a directory and its contents at the specified path.
-	RemoveDirRecursively(dirPath string) error
+	// RemoveDiffDirRecursively removes a diff directory and its contents.
+	RemoveDiffDirRecursively(snapshotID int) error
 }
 
 // RestoreRepository is an interface for managing a restore volume as a block device file.

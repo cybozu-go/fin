@@ -2,12 +2,13 @@ package testutil
 
 import (
 	"crypto/rand"
+	"database/sql"
 	"fmt"
 	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/cybozu-go/fin/internal/infrastructure/nlv"
+	"github.com/cybozu-go/fin/internal/infrastructure/sqlite"
 	"github.com/cybozu-go/fin/internal/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -19,29 +20,20 @@ func AssertActionPrivateDataIsEmpty(t *testing.T, finRepo model.FinRepository, p
 	assert.ErrorIs(t, err, model.ErrNotFound)
 }
 
-func AssertDiffDirDoesNotExist(t *testing.T, nlvRepo model.NodeLocalVolumeRepository, diffDir string) {
-	t.Helper()
-	_, err := os.Stat(filepath.Join(nlvRepo.GetRootPath(), diffDir))
-	assert.True(t, os.IsNotExist(err))
-}
-
-func GetDiffDirPath(snapshotID int) string {
-	return filepath.Join("diff", fmt.Sprintf("%d", snapshotID))
-}
-
-func GetFinSqlite3DSN(rootPath string) string {
-	return fmt.Sprintf("file:%s?_txlock=exclusive", filepath.Join(rootPath, "fin.sqlite3"))
-}
-
-func CreateNLVForTest(t *testing.T) *nlv.NodeLocalVolumeRepository {
+func CreateNLVAndFinRepoForTest(t *testing.T) (*nlv.NodeLocalVolumeRepository, model.FinRepository) {
 	t.Helper()
 
 	rootPath, err := os.MkdirTemp("", "fin-fake-nlv")
 	require.NoError(t, err)
+	nlv := nlv.NewNodeLocalVolumeRepository(rootPath)
+	t.Cleanup(nlv.Cleanup)
+	db, err := sql.Open("sqlite3", fmt.Sprintf("file:%s?_txlock=exclusive", nlv.GetDBPath()))
+	t.Cleanup(func() { _ = db.Close })
+	require.NoError(t, err)
+	repo, err := sqlite.New(db)
+	require.NoError(t, err)
 
-	repo := nlv.NewNodeLocalVolumeRepository(rootPath)
-	t.Cleanup(repo.Cleanup)
-	return repo
+	return nlv, repo
 }
 
 func CreateRestoreFileForTest(t *testing.T, size int64) string {

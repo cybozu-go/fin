@@ -27,12 +27,7 @@ func isSQLiteBusy(err error) bool {
 	return false
 }
 
-func New(dataSourceName string) (*FinRepository, error) {
-	db, err := sql.Open("sqlite3", dataSourceName)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open database: %w", err)
-	}
-
+func New(db *sql.DB) (*FinRepository, error) {
 	tx, err := db.Begin()
 	if err != nil {
 		if isSQLiteBusy(err) {
@@ -211,14 +206,6 @@ func (fr *FinRepository) CompleteAction(uid string) error {
 		return err
 	}
 	err = tx.Commit()
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-func (fr *FinRepository) Close() error {
-	err := fr.db.Close()
 	if err != nil {
 		return err
 	}

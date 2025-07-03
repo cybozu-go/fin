@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"path/filepath"
 	"time"
 
 	"github.com/cybozu-go/fin/internal/job"
@@ -201,7 +200,7 @@ func (r *Restore) loopApplyDiff(privateData *restorePrivateData, diff *job.Backu
 	partCount := int(math.Ceil(float64(diff.SnapSize) / float64(diff.PartSize)))
 	for i := privateData.NextDiffPart; i < partCount; i++ {
 		if err := r.restoreRepo.ApplyDiff(
-			filepath.Join(r.nodeLocalVolumeRepo.GetRootPath(), job.GetDiffPartPath(diff.SnapID, i)),
+			r.nodeLocalVolumeRepo.GetDiffPartPath(diff.SnapID, i),
 		); err != nil {
 			return fmt.Errorf("failed to apply diff: %w", err)
 		}

@@ -11,7 +11,6 @@ import (
 
 	"github.com/cybozu-go/fin/internal/job"
 	"github.com/cybozu-go/fin/internal/model"
-	"sigs.k8s.io/yaml"
 )
 
 const (
@@ -128,7 +127,7 @@ func (b *Backup) doBackup() error {
 		return fmt.Errorf("failed to get target snapshot: %w", err)
 	}
 
-	if err := job.CreateDiffDir(b.nodeLocalVolumeRepo, b.targetSnapshotID); err != nil {
+	if err := b.nodeLocalVolumeRepo.MakeDiffDir(b.targetSnapshotID); err != nil {
 		return fmt.Errorf("failed to create diff directory: %w", err)
 	}
 
@@ -161,7 +160,7 @@ func (b *Backup) doBackup() error {
 		if err := b.declareFullBackupApplicationCompleted(targetSnapshot); err != nil {
 			return fmt.Errorf("failed to declare full backup application completed: %w", err)
 		}
-		if err := b.nodeLocalVolumeRepo.RemoveDirRecursively(job.GetDiffDirPath(b.targetSnapshotID)); err != nil {
+		if err := b.nodeLocalVolumeRepo.RemoveDiffDirRecursively(b.targetSnapshotID); err != nil {
 			return fmt.Errorf("failed to remove diff directory: %w", err)
 		}
 	}
@@ -206,20 +205,12 @@ func (b *Backup) prepareFullBackup() error {
 			targetPV.Spec.CSI.VolumeAttributes["imageName"], b.targetRBDImageName)
 	}
 
-	data, err := yaml.Marshal(targetPVC)
-	if err != nil {
-		return fmt.Errorf("failed to marshal target PVC: %w", err)
-	}
-	if err := b.nodeLocalVolumeRepo.WriteFile("pvc.yaml", data); err != nil {
-		return fmt.Errorf("failed to write target PVC file: %w", err)
+	if err = b.nodeLocalVolumeRepo.PutPVC(targetPVC); err != nil {
+		return fmt.Errorf("failed to store target PVC: %w", err)
 	}
 
-	data, err = yaml.Marshal(targetPV)
-	if err != nil {
-		return fmt.Errorf("failed to marshal target PV: %w", err)
-	}
-	if err := b.nodeLocalVolumeRepo.WriteFile("pv.yaml", data); err != nil {
-		return fmt.Errorf("failed to write target PV file: %w", err)
+	if err = b.nodeLocalVolumeRepo.PutPV(targetPV); err != nil {
+		return fmt.Errorf("failed to store target PV: %w", err)
 	}
 
 	return nil
@@ -281,7 +272,7 @@ func (b *Backup) loopExportDiff(
 			MidSnapPrefix:  b.targetFinBackupUID,
 			ImageName:      b.targetRBDImageName,
 			TargetSnapName: targetSnapshot.Name,
-			OutputFile:     filepath.Join(b.nodeLocalVolumeRepo.GetRootPath(), job.GetDiffPartPath(b.targetSnapshotID, i)),
+			OutputFile:     b.nodeLocalVolumeRepo.GetDiffPartPath(b.targetSnapshotID, i),
 		}); err != nil {
 			return fmt.Errorf("failed to export diff: %w", err)
 		}
@@ -325,7 +316,7 @@ func (b *Backup) declareStoringCompleted(targetSnapshot *model.RBDSnapshot) erro
 
 func (b *Backup) prepareRawImageFile(targetSnapshot *model.RBDSnapshot) error {
 	err := b.rbdRepo.CreateEmptyRawImage(
-		filepath.Join(b.nodeLocalVolumeRepo.GetRootPath(), "raw.img"),
+		filepath.Join(b.nodeLocalVolumeRepo.GetRawImagePath()),
 		targetSnapshot.Size,
 	)
 	if err != nil && !errors.Is(err, model.ErrAlreadyExists) {
@@ -339,7 +330,7 @@ func (b *Backup) loopApplyDiff(privateData *backupPrivateData, targetSnapshot *m
 	for i := privateData.NextPatchPart; i < partCount; i++ {
 		if err := b.rbdRepo.ApplyDiff(
 			b.nodeLocalVolumeRepo.GetRawImagePath(),
-			filepath.Join(b.nodeLocalVolumeRepo.GetRootPath(), job.GetDiffPartPath(b.targetSnapshotID, i)),
+			b.nodeLocalVolumeRepo.GetDiffPartPath(b.targetSnapshotID, i),
 		); err != nil {
 			return fmt.Errorf("failed to apply diff: %w", err)
 		}

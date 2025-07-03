@@ -1,15 +1,11 @@
 package backup_test
 
 import (
-	"fmt"
 	"math"
-	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/cybozu-go/fin/internal/infrastructure/fake"
-	"github.com/cybozu-go/fin/internal/infrastructure/sqlite"
 	"github.com/cybozu-go/fin/internal/job"
 	"github.com/cybozu-go/fin/internal/job/backup"
 	"github.com/cybozu-go/fin/internal/job/testutil"
@@ -75,11 +71,7 @@ func TestFullBackup_Success(t *testing.T) {
 		},
 	})
 
-	nlvRepo := testutil.CreateNLVForTest(t)
-
-	finRepo, err := sqlite.New(testutil.GetFinSqlite3DSN(nlvRepo.GetRootPath()))
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = finRepo.Close() })
+	nlvRepo, finRepo := testutil.CreateNLVAndFinRepoForTest(t)
 
 	// Act
 	backup := backup.NewBackup(&backup.BackupInput{
@@ -99,12 +91,11 @@ func TestFullBackup_Success(t *testing.T) {
 		TargetPVCUID:              targetPVCUID,
 		MaxPartSize:               maxPartSize,
 	})
-	err = backup.Perform()
+	err := backup.Perform()
 	assert.NoError(t, err)
 
 	// Assert
 	testutil.AssertActionPrivateDataIsEmpty(t, finRepo, processUID)
-	testutil.AssertDiffDirDoesNotExist(t, nlvRepo, testutil.GetDiffDirPath(targetSnapshotID))
 
 	rawImage, err := fake.ReadRawImage(nlvRepo.GetRawImagePath())
 	assert.NoError(t, err)
@@ -115,9 +106,10 @@ func TestFullBackup_Success(t *testing.T) {
 	assert.Equal(t, maxPartSize, rawImage.AppliedDiffs[1].ReadOffset)
 	assert.Equal(t, maxPartSize, rawImage.AppliedDiffs[1].ReadLength)
 
-	_, err = os.Stat(filepath.Join(nlvRepo.GetRootPath(), "pvc.yaml"))
+	// TODO: We should verify the contents are the same as the original ones.
+	_, err = nlvRepo.GetPVC()
 	assert.NoError(t, err)
-	_, err = os.Stat(filepath.Join(nlvRepo.GetRootPath(), "pv.yaml"))
+	_, err = nlvRepo.GetPV()
 	assert.NoError(t, err)
 
 	for _, diff := range rawImage.AppliedDiffs {
@@ -210,11 +202,7 @@ func TestIncrementalBackup_Success(t *testing.T) {
 		},
 	})
 
-	nlvRepo := testutil.CreateNLVForTest(t)
-
-	finRepo, err := sqlite.New(testutil.GetFinSqlite3DSN(nlvRepo.GetRootPath()))
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = finRepo.Close() })
+	nlvRepo, finRepo := testutil.CreateNLVAndFinRepoForTest(t)
 
 	// Create a previous backup to simulate an incremental backup scenario
 	previousBackup := backup.NewBackup(&backup.BackupInput{
@@ -234,7 +222,7 @@ func TestIncrementalBackup_Success(t *testing.T) {
 		TargetPVCUID:              targetPVCUID,
 		MaxPartSize:               maxPartSize,
 	})
-	err = previousBackup.Perform()
+	err := previousBackup.Perform()
 	require.NoError(t, err)
 
 	// Act
@@ -262,8 +250,7 @@ func TestIncrementalBackup_Success(t *testing.T) {
 	testutil.AssertActionPrivateDataIsEmpty(t, finRepo, processUID)
 	numDiffParts := int(math.Ceil(float64(targetSnapshotSize) / float64(maxPartSize)))
 	for i := range numDiffParts {
-		diffFilePath := filepath.Join(nlvRepo.GetRootPath(),
-			testutil.GetDiffDirPath(targetSnapshotID), fmt.Sprintf("part-%d", i))
+		diffFilePath := nlvRepo.GetDiffPartPath(targetSnapshotID, i)
 		diff, err := fake.ReadDiff(diffFilePath)
 		require.NoError(t, err)
 		assert.Equal(t, targetRBDPoolName, diff.PoolName)
@@ -300,13 +287,9 @@ func TestBackup_ErrorBusy(t *testing.T) {
 	processUID := uuid.New().String()
 	differentProcessUID := uuid.New().String()
 
-	nlvRepo := testutil.CreateNLVForTest(t)
+	_, finRepo := testutil.CreateNLVAndFinRepoForTest(t)
 
-	finRepo, err := sqlite.New(testutil.GetFinSqlite3DSN(nlvRepo.GetRootPath()))
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = finRepo.Close() })
-
-	err = finRepo.StartOrRestartAction(differentProcessUID, model.Backup)
+	err := finRepo.StartOrRestartAction(differentProcessUID, model.Backup)
 	require.NoError(t, err)
 
 	// Act

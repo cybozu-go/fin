@@ -4,31 +4,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"path/filepath"
 	"time"
 
 	"github.com/cybozu-go/fin/internal/model"
 )
 
 var ErrCantLock = errors.New("can't lock")
-
-func GetDiffDirPath(snapshotID int) string {
-	return filepath.Join("diff", fmt.Sprintf("%d", snapshotID))
-}
-
-func GetDiffPartPath(snapshotID, partIndex int) string {
-	return filepath.Join(GetDiffDirPath(snapshotID), fmt.Sprintf("part-%d", partIndex))
-}
-
-func CreateDiffDir(nlv model.NodeLocalVolumeRepository, snapshotID int) error {
-	if err := nlv.Mkdir("diff"); err != nil && !errors.Is(err, model.ErrAlreadyExists) {
-		return fmt.Errorf("failed to create base diff directory 'diff': %w", err)
-	}
-	if err := nlv.Mkdir(GetDiffDirPath(snapshotID)); err != nil && !errors.Is(err, model.ErrAlreadyExists) {
-		return fmt.Errorf("failed to create snapshot-specific diff directory '%s': %w", GetDiffDirPath(snapshotID), err)
-	}
-	return nil
-}
 
 type BackupMetadata struct {
 	PVCUID       string                 `json:"pvcUID,omitempty"`
