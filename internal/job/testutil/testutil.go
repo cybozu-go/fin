@@ -6,13 +6,42 @@ import (
 	"fmt"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/cybozu-go/fin/internal/infrastructure/nlv"
 	"github.com/cybozu-go/fin/internal/infrastructure/sqlite"
+	"github.com/cybozu-go/fin/internal/job/backup"
 	"github.com/cybozu-go/fin/internal/model"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func NewBackupInputTemplate(snapID, maxPartSize int) *backup.BackupInput {
+	return &backup.BackupInput{
+		RetryInterval:             1 * time.Second,
+		ProcessUID:                uuid.New().String(),
+		TargetFinBackupUID:        uuid.New().String(),
+		TargetRBDPoolName:         "test-pool",
+		TargetRBDImageName:        "test-image",
+		TargetSnapshotID:          snapID,
+		SourceCandidateSnapshotID: nil,
+		TargetPVCName:             "test-pvc",
+		TargetPVCNamespace:        "test-namespace",
+		TargetPVCUID:              uuid.New().String(),
+		MaxPartSize:               maxPartSize,
+	}
+}
+
+func NewIncrementalBackupInputTemplate(src *backup.BackupInput, snapID int) *backup.BackupInput {
+	ret := *src
+	parentSnapID := ret.TargetSnapshotID
+	ret.TargetSnapshotID = snapID
+	ret.SourceCandidateSnapshotID = &parentSnapID
+	ret.ProcessUID = uuid.New().String()
+	ret.TargetFinBackupUID = uuid.New().String()
+	return &ret
+}
 
 func AssertActionPrivateDataIsEmpty(t *testing.T, finRepo model.FinRepository, processUID string) {
 	t.Helper()
