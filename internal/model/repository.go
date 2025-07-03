@@ -125,18 +125,3 @@ type NodeLocalVolumeRepository interface {
 	// RemoveDiffDirRecursively removes a diff directory and its contents.
 	RemoveDiffDirRecursively(snapshotID int) error
 }
-
-// RestoreRepository is an interface for managing a restore volume as a block device file.
-type RestoreRepository interface {
-	// GetPath return the path of the block device file.
-	GetPath() string
-
-	// BlkDiscard issues `blkdiscard <bdev file>`.
-	BlkDiscard() error
-
-	// Apply diff applies diff to the block device file
-	ApplyDiff(diffFilePath string) error
-
-	// CopyChunk copy a chunk from raw.img to the restore volume
-	CopyChunk(rawPath string, index int, chunkSize int64) error
-}

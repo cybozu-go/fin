@@ -130,14 +130,14 @@ func TestRestoreFromFullBackup_Success(t *testing.T) {
 
 	// Create the restore file
 	restorePath := testutil.CreateRestoreFileForTest(t, int64(targetSnapshotSize))
-	rRepo := fake.NewRestoreRepository(restorePath)
+	rVol := fake.NewRestoreVolume(restorePath)
 
 	// Act
 	r := restore.NewRestore(&restore.RestoreInput{
 		Repo:                finRepo,
 		KubernetesRepo:      k8sRepo,
 		NodeLocalVolumeRepo: nlvRepo,
-		RestoreRepo:         rRepo,
+		RestoreVol:          rVol,
 		RetryInterval:       1 * time.Second,
 		ProcessUID:          processUID,
 		TargetSnapshotID:    targetSnapshotID,
@@ -162,7 +162,7 @@ func TestRestoreFromFullBackup_Success(t *testing.T) {
 
 	// Verify the contents of the metadata
 	testutil.AssertActionPrivateDataIsEmpty(t, finRepo, processUID)
-	require.Zero(t, len(rRepo.AppliedDiffs()))
+	require.Zero(t, len(rVol.AppliedDiffs()))
 }
 
 func TestRestoreFromIncrementalBackup_Success(t *testing.T) {
@@ -311,14 +311,14 @@ func TestRestoreFromIncrementalBackup_Success(t *testing.T) {
 
 	// Create the restore file. It's size must be the same as the incremental backup's one.
 	restorePath := testutil.CreateRestoreFileForTest(t, int64(targetSnapshotSize))
-	rRepo := fake.NewRestoreRepository(restorePath)
+	rVol := fake.NewRestoreVolume(restorePath)
 
 	// Act
 	r := restore.NewRestore(&restore.RestoreInput{
 		Repo:                finRepo,
 		KubernetesRepo:      k8sRepo,
 		NodeLocalVolumeRepo: nlvRepo,
-		RestoreRepo:         rRepo,
+		RestoreVol:          rVol,
 		RetryInterval:       1 * time.Second,
 		ProcessUID:          processUID,
 		TargetSnapshotID:    targetSnapshotID,
@@ -334,7 +334,7 @@ func TestRestoreFromIncrementalBackup_Success(t *testing.T) {
 	testutil.AssertActionPrivateDataIsEmpty(t, finRepo, processUID)
 
 	buf2 := make([]byte, targetSnapshotSize)
-	restoreFile, err := os.Open(rRepo.GetPath())
+	restoreFile, err := os.Open(rVol.GetPath())
 	require.NoError(t, err)
 	rn, err := restoreFile.Read(buf2)
 	require.NoError(t, err)
@@ -343,13 +343,13 @@ func TestRestoreFromIncrementalBackup_Success(t *testing.T) {
 	zeroBuf := make([]byte, targetSnapshotSize-previousSnapshotSize)
 	require.True(t, bytes.Equal(buf2[previousSnapshotSize:], zeroBuf))
 
-	assert.Equal(t, 3, len(rRepo.AppliedDiffs()))
-	assert.Equal(t, 0, rRepo.AppliedDiffs()[0].ReadOffset)
-	assert.Equal(t, maxPartSize, rRepo.AppliedDiffs()[0].ReadLength)
-	assert.Equal(t, maxPartSize, rRepo.AppliedDiffs()[1].ReadOffset)
-	assert.Equal(t, maxPartSize, rRepo.AppliedDiffs()[1].ReadLength)
-	assert.Equal(t, maxPartSize*2, rRepo.AppliedDiffs()[2].ReadOffset)
-	assert.Equal(t, maxPartSize, rRepo.AppliedDiffs()[2].ReadLength)
+	assert.Equal(t, 3, len(rVol.AppliedDiffs()))
+	assert.Equal(t, 0, rVol.AppliedDiffs()[0].ReadOffset)
+	assert.Equal(t, maxPartSize, rVol.AppliedDiffs()[0].ReadLength)
+	assert.Equal(t, maxPartSize, rVol.AppliedDiffs()[1].ReadOffset)
+	assert.Equal(t, maxPartSize, rVol.AppliedDiffs()[1].ReadLength)
+	assert.Equal(t, maxPartSize*2, rVol.AppliedDiffs()[2].ReadOffset)
+	assert.Equal(t, maxPartSize, rVol.AppliedDiffs()[2].ReadLength)
 }
 
 func TestRestore_ErrorBusy(t *testing.T) {
