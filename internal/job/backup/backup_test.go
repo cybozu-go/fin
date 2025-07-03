@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 )
@@ -34,29 +35,32 @@ func TestFullBackup_Success(t *testing.T) {
 	targetPVName := "test-pv"
 	maxPartSize := 512
 
-	k8sRepo := fake.NewKubernetesRepository(
-		map[types.NamespacedName]*corev1.PersistentVolumeClaim{
-			{Name: targetPVCName, Namespace: targetPVCNamespace}: {
-				ObjectMeta: metav1.ObjectMeta{
-					UID: types.UID(targetPVCUID),
-				},
-				Spec: corev1.PersistentVolumeClaimSpec{
-					VolumeName: targetPVName,
-				},
-			},
+	fakePVC := corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{
+			UID: types.UID(targetPVCUID),
 		},
-		map[string]*corev1.PersistentVolume{
-			targetPVName: {
-				Spec: corev1.PersistentVolumeSpec{
-					PersistentVolumeSource: corev1.PersistentVolumeSource{
-						CSI: &corev1.CSIPersistentVolumeSource{
-							VolumeAttributes: map[string]string{
-								"imageName": targetRBDImageName,
-							},
-						},
+		Spec: corev1.PersistentVolumeClaimSpec{
+			VolumeName: targetPVName,
+		},
+	}
+	fakePV := corev1.PersistentVolume{
+		Spec: corev1.PersistentVolumeSpec{
+			PersistentVolumeSource: corev1.PersistentVolumeSource{
+				CSI: &corev1.CSIPersistentVolumeSource{
+					VolumeAttributes: map[string]string{
+						"imageName": targetRBDImageName,
 					},
 				},
 			},
+		},
+	}
+
+	k8sRepo := fake.NewKubernetesRepository(
+		map[types.NamespacedName]*corev1.PersistentVolumeClaim{
+			{Name: targetPVCName, Namespace: targetPVCNamespace}: &fakePVC,
+		},
+		map[string]*corev1.PersistentVolume{
+			targetPVName: &fakePV,
 		},
 	)
 
@@ -106,11 +110,12 @@ func TestFullBackup_Success(t *testing.T) {
 	assert.Equal(t, maxPartSize, rawImage.AppliedDiffs[1].ReadOffset)
 	assert.Equal(t, maxPartSize, rawImage.AppliedDiffs[1].ReadLength)
 
-	// TODO: We should verify the contents are the same as the original ones.
-	_, err = nlvRepo.GetPVC()
+	resPVC, err := nlvRepo.GetPVC()
 	assert.NoError(t, err)
-	_, err = nlvRepo.GetPV()
+	assert.True(t, equality.Semantic.DeepEqual(&fakePVC, resPVC))
+	resPV, err := nlvRepo.GetPV()
 	assert.NoError(t, err)
+	assert.True(t, equality.Semantic.DeepEqual(&fakePV, resPV))
 
 	for _, diff := range rawImage.AppliedDiffs {
 		assert.Equal(t, targetRBDPoolName, diff.PoolName)
