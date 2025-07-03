@@ -149,6 +149,7 @@ func TestRestoreFromFullBackup_Success(t *testing.T) {
 		RawImageChunkSize:   int64(rawImageChunkSize),
 		TargetPVCName:       targetPVCName,
 		TargetPVCNamespace:  targetPVCNamespace,
+		TargetPVCUID:        targetPVCUID,
 	})
 	err = r.Perform()
 	require.NoError(t, err)
@@ -333,6 +334,7 @@ func TestRestoreFromIncrementalBackup_Success(t *testing.T) {
 		RawImageChunkSize:   int64(rawImageChunkSize),
 		TargetPVCName:       targetPVCName,
 		TargetPVCNamespace:  targetPVCNamespace,
+		TargetPVCUID:        targetPVCUID,
 	})
 	err = r.Perform()
 	require.NoError(t, err)
