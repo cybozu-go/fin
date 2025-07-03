@@ -9,8 +9,8 @@ import (
 type ActionKind string
 
 const (
-	// TODO: Add required actions here.
-	Backup ActionKind = "Backup"
+	Backup  ActionKind = "Backup"
+	Restore ActionKind = "Restore"
 )
 
 var (
@@ -100,6 +100,9 @@ type NodeLocalVolumeRepository interface {
 	// GetRootPath returns the root path of the node local volume repository.
 	GetRootPath() string
 
+	// GetRawImagePath returns the path of raw.img
+	GetRawImagePath() string
+
 	// WriteFile writes data to a file at the specified path.
 	WriteFile(filePath string, data []byte) error
 
@@ -109,4 +112,19 @@ type NodeLocalVolumeRepository interface {
 
 	// RemoveDirRecursively removes a directory and its contents at the specified path.
 	RemoveDirRecursively(dirPath string) error
+}
+
+// RestoreRepository is an interface for managing a restore volume as a block device file.
+type RestoreRepository interface {
+	// GetPath return the path of the block device file.
+	GetPath() string
+
+	// BlkDiscard issues `blkdiscard <bdev file>`.
+	BlkDiscard() error
+
+	// Apply diff applies diff to the block device file
+	ApplyDiff(diffFilePath string) error
+
+	// CopyChunk copy a chunk from raw.img to the restore volume
+	CopyChunk(rawPath string, index int, chunkSize int64) error
 }
