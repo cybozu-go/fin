@@ -44,7 +44,8 @@ func NewIncrementalBackupInputTemplate(src *backup.BackupInput, snapID int) *bac
 	return &ret
 }
 
-func NewRestoreInputTemplate(bi *backup.BackupInput, rVol model.RestoreVolume, chunkSize, snapID int) *restore.RestoreInput {
+func NewRestoreInputTemplate(bi *backup.BackupInput,
+	rVol model.RestoreVolume, chunkSize, snapID int) *restore.RestoreInput {
 	return &restore.RestoreInput{
 		Repo:                bi.Repo,
 		KubernetesRepo:      bi.KubernetesRepo,

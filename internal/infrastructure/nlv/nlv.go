@@ -96,6 +96,8 @@ func (r *NodeLocalVolumeRepository) PutPV(pv *corev1.PersistentVolume) error {
 }
 
 // This function exist for testing.
+//
+//nolint:dupl
 func (r *NodeLocalVolumeRepository) GetPVC() (*corev1.PersistentVolumeClaim, error) {
 	root, err := os.OpenRoot(r.rootPath)
 	if err != nil {
@@ -125,6 +127,8 @@ func (r *NodeLocalVolumeRepository) GetPVC() (*corev1.PersistentVolumeClaim, err
 }
 
 // This function exist for testing.
+//
+//nolint:dupl
 func (r *NodeLocalVolumeRepository) GetPV() (*corev1.PersistentVolume, error) {
 	root, err := os.OpenRoot(r.rootPath)
 	if err != nil {
