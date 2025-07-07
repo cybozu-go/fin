@@ -20,8 +20,6 @@ type Restore struct {
 	processUID          string
 	targetSnapshotID    int
 	rawImageChunkSize   int64
-	targetPVCName       string
-	targetPVCNamespace  string
 	targetPVCUID        string
 }
 
@@ -34,8 +32,6 @@ type RestoreInput struct {
 	ProcessUID          string
 	TargetSnapshotID    int
 	RawImageChunkSize   int64
-	TargetPVCName       string
-	TargetPVCNamespace  string
 	TargetPVCUID        string
 }
 
@@ -49,8 +45,6 @@ func NewRestore(in *RestoreInput) *Restore {
 		processUID:          in.ProcessUID,
 		targetSnapshotID:    in.TargetSnapshotID,
 		rawImageChunkSize:   in.RawImageChunkSize,
-		targetPVCName:       in.TargetPVCName,
-		targetPVCNamespace:  in.TargetPVCNamespace,
 		targetPVCUID:        in.TargetPVCUID,
 	}
 }

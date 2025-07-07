@@ -55,8 +55,6 @@ func NewRestoreInputTemplate(bi *backup.BackupInput,
 		TargetSnapshotID:    snapID,
 		RetryInterval:       bi.RetryInterval,
 		ProcessUID:          bi.ProcessUID,
-		TargetPVCName:       bi.TargetPVCName,
-		TargetPVCNamespace:  bi.TargetPVCNamespace,
 		TargetPVCUID:        bi.TargetPVCUID,
 	}
 }
