@@ -168,7 +168,7 @@ func (r *NodeLocalVolumeRepository) MakeDiffDir(snapshotID int) error {
 		return fmt.Errorf("failed to create base diff directory 'diff': %w", err)
 	}
 	if err := root.Mkdir(getDiffRelPath(snapshotID), 0755); err != nil {
-		if os.IsExist(err) {
+		if errors.Is(err, fs.ErrExist) {
 			return model.ErrAlreadyExists
 		}
 		return fmt.Errorf("failed to create directory: %w", err)
