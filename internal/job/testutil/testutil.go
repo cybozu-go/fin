@@ -70,13 +70,13 @@ func FillRawImageWithRandomData(t *testing.T, rawImagePath string, size int) []b
 	return buf
 }
 
-func AssertActionPrivateDataIsEmpty(t *testing.T, finRepo model.FinRepository, processUID string) {
+func AssertActionPrivateDataIsEmpty(t *testing.T, finRepo model.SqliteRepository, processUID string) {
 	t.Helper()
 	_, err := finRepo.GetActionPrivateData(processUID)
 	assert.ErrorIs(t, err, model.ErrNotFound)
 }
 
-func CreateNLVAndFinRepoForTest(t *testing.T) (*nlv.NodeLocalVolumeRepository, model.FinRepository) {
+func CreateNLVAndFinRepoForTest(t *testing.T) (*nlv.NodeLocalVolumeRepository, model.SqliteRepository) {
 	t.Helper()
 
 	tempDir := t.TempDir()

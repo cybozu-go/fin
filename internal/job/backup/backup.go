@@ -19,7 +19,7 @@ const (
 )
 
 type Backup struct {
-	repo                      model.FinRepository
+	repo                      model.SqliteRepository
 	kubernetesRepo            model.KubernetesRepository
 	rbdRepo                   model.RBDRepository
 	nodeLocalVolumeRepo       model.NodeLocalVolumeRepository
@@ -37,7 +37,7 @@ type Backup struct {
 }
 
 type BackupInput struct {
-	Repo                      model.FinRepository
+	Repo                      model.SqliteRepository
 	KubernetesRepo            model.KubernetesRepository
 	RBDRepo                   model.RBDRepository
 	NodeLocalVolumeRepo       model.NodeLocalVolumeRepository
@@ -374,7 +374,7 @@ type backupPrivateData struct {
 	Mode          string `json:"mode,omitempty"`
 }
 
-func getBackupPrivateData(repo model.FinRepository, processUID string) (*backupPrivateData, error) {
+func getBackupPrivateData(repo model.SqliteRepository, processUID string) (*backupPrivateData, error) {
 	privateData, err := repo.GetActionPrivateData(processUID)
 	if err != nil {
 		return nil, err
@@ -391,7 +391,7 @@ func getBackupPrivateData(repo model.FinRepository, processUID string) (*backupP
 	return &data, nil
 }
 
-func setBackupPrivateData(repo model.FinRepository, processUID string, data *backupPrivateData) error {
+func setBackupPrivateData(repo model.SqliteRepository, processUID string, data *backupPrivateData) error {
 	privateData, err := json.Marshal(data)
 	if err != nil {
 		return fmt.Errorf("failed to marshal private data: %w", err)

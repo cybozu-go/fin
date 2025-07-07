@@ -12,7 +12,7 @@ import (
 )
 
 type Restore struct {
-	repo                model.FinRepository
+	repo                model.SqliteRepository
 	kubernetesRepo      model.KubernetesRepository
 	nodeLocalVolumeRepo model.NodeLocalVolumeRepository
 	restoreVol          model.RestoreVolume
@@ -24,7 +24,7 @@ type Restore struct {
 }
 
 type RestoreInput struct {
-	Repo                model.FinRepository
+	Repo                model.SqliteRepository
 	KubernetesRepo      model.KubernetesRepository
 	NodeLocalVolumeRepo model.NodeLocalVolumeRepository
 	RestoreVol          model.RestoreVolume
@@ -220,7 +220,7 @@ type restorePrivateData struct {
 	Phase             string `json:"phase,omitempty"`
 }
 
-func getRestorePrivateData(repo model.FinRepository, processUID string) (*restorePrivateData, error) {
+func getRestorePrivateData(repo model.SqliteRepository, processUID string) (*restorePrivateData, error) {
 	privateData, err := repo.GetActionPrivateData(processUID)
 	if err != nil {
 		return nil, err
@@ -237,7 +237,7 @@ func getRestorePrivateData(repo model.FinRepository, processUID string) (*restor
 	return &data, nil
 }
 
-func setRestorePrivateData(repo model.FinRepository, processUID string, data *restorePrivateData) error {
+func setRestorePrivateData(repo model.SqliteRepository, processUID string, data *restorePrivateData) error {
 	privateData, err := json.Marshal(data)
 	if err != nil {
 		return fmt.Errorf("failed to marshal private data: %w", err)

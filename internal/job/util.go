@@ -26,7 +26,7 @@ type BackupMetadataEntry struct {
 	CreatedAt time.Time `json:"createdAt"`
 }
 
-func GetBackupMetadata(repo model.FinRepository) (*BackupMetadata, error) {
+func GetBackupMetadata(repo model.SqliteRepository) (*BackupMetadata, error) {
 	metadata, err := repo.GetBackupMetadata()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get backup metadata: %w", err)
@@ -39,7 +39,7 @@ func GetBackupMetadata(repo model.FinRepository) (*BackupMetadata, error) {
 	return &data, nil
 }
 
-func SetBackupMetadata(repo model.FinRepository, metadata *BackupMetadata) error {
+func SetBackupMetadata(repo model.SqliteRepository, metadata *BackupMetadata) error {
 	metadataBytes, err := json.Marshal(metadata)
 	if err != nil {
 		return fmt.Errorf("failed to marshal backup metadata: %w", err)

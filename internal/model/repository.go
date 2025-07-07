@@ -19,7 +19,7 @@ var (
 	ErrNotFound      = errors.New("not found")
 )
 
-type FinRepository interface {
+type SqliteRepository interface {
 	// StartOrRestartAction starts or restarts an action with the given UID and action kind.
 	// If the repository is busy and temporarily unavailable, it returns `ErrBusy`.
 	StartOrRestartAction(uid string, action ActionKind) error

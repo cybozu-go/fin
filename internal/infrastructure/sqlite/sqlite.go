@@ -4,18 +4,19 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"time"
 
 	"github.com/cybozu-go/fin/internal/model"
 	sqlite3 "github.com/mattn/go-sqlite3"
 )
 
-// FinRepository implements model.FinRepository interface.
-type FinRepository struct {
+// SqliteRepository implements model.SqliteRepository interface.
+type SqliteRepository struct {
 	sqlite *sql.DB
 }
 
-var _ model.FinRepository = &FinRepository{}
+var _ model.SqliteRepository = &SqliteRepository{}
 
 func isSQLiteBusy(err error) bool {
 	var sqliteErr sqlite3.Error
@@ -27,8 +28,9 @@ func isSQLiteBusy(err error) bool {
 	return false
 }
 
-func New(filename string) (*FinRepository, error) {
-	sqlite, err := sql.Open("sqlite3", fmt.Sprintf("file:%s?_txlock=exclusive", filename))
+func New(dir string) (*SqliteRepository, error) {
+	path := filepath.Join(dir, "fin.sqlite3")
+	sqlite, err := sql.Open("sqlite3", fmt.Sprintf("file:%s?_txlock=exclusive", path))
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
@@ -71,12 +73,12 @@ func New(filename string) (*FinRepository, error) {
 		return nil, fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
-	return &FinRepository{
+	return &SqliteRepository{
 		sqlite: sqlite,
 	}, nil
 }
 
-func (fr *FinRepository) StartOrRestartAction(uid string, action model.ActionKind) error {
+func (fr *SqliteRepository) StartOrRestartAction(uid string, action model.ActionKind) error {
 	tx, err := fr.sqlite.Begin()
 	if err != nil {
 		if isSQLiteBusy(err) {
@@ -138,7 +140,7 @@ func (fr *FinRepository) StartOrRestartAction(uid string, action model.ActionKin
 	return tx.Commit()
 }
 
-func (fr *FinRepository) GetActionPrivateData(uid string) ([]byte, error) {
+func (fr *SqliteRepository) GetActionPrivateData(uid string) ([]byte, error) {
 	stmt, err := fr.sqlite.Prepare("SELECT private_data FROM action_status WHERE uid = ?")
 	if err != nil {
 		return nil, err
@@ -159,7 +161,7 @@ func (fr *FinRepository) GetActionPrivateData(uid string) ([]byte, error) {
 	return privateData, nil
 }
 
-func (fr *FinRepository) UpdateActionPrivateData(uid string, privateData []byte) error {
+func (fr *SqliteRepository) UpdateActionPrivateData(uid string, privateData []byte) error {
 	tx, err := fr.sqlite.Begin()
 	if err != nil {
 		if isSQLiteBusy(err) {
@@ -194,7 +196,7 @@ func (fr *FinRepository) UpdateActionPrivateData(uid string, privateData []byte)
 	return nil
 }
 
-func (fr *FinRepository) CompleteAction(uid string) error {
+func (fr *SqliteRepository) CompleteAction(uid string) error {
 	tx, err := fr.sqlite.Begin()
 	if err != nil {
 		if isSQLiteBusy(err) {
@@ -221,7 +223,7 @@ func (fr *FinRepository) CompleteAction(uid string) error {
 	return nil
 }
 
-func (fr *FinRepository) GetBackupMetadata() ([]byte, error) {
+func (fr *SqliteRepository) GetBackupMetadata() ([]byte, error) {
 	stmt, err := fr.sqlite.Prepare("SELECT data FROM backup_metadata")
 	if err != nil {
 		return nil, err
@@ -239,7 +241,7 @@ func (fr *FinRepository) GetBackupMetadata() ([]byte, error) {
 	return data, nil
 }
 
-func (fr *FinRepository) SetBackupMetadata(data []byte) error {
+func (fr *SqliteRepository) SetBackupMetadata(data []byte) error {
 	tx, err := fr.sqlite.Begin()
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
@@ -272,6 +274,6 @@ func (fr *FinRepository) SetBackupMetadata(data []byte) error {
 	return nil
 }
 
-func (fr *FinRepository) Close() error {
+func (fr *SqliteRepository) Close() error {
 	return fr.sqlite.Close()
 }
