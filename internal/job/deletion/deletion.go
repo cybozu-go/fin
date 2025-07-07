@@ -102,7 +102,7 @@ func (d *Deletion) doDeletion() error {
 		return nil
 	}
 
-	if err := d.applyDiffToRawImage(metadata.Diff[0]); err != nil {
+	if err := d.applyDiffToRawImage(metadata.Raw, metadata.Diff[0]); err != nil {
 		return fmt.Errorf("failed to apply diff to the raw image: %w", err)
 	}
 	metadata.Raw = metadata.Diff[0]
@@ -110,8 +110,8 @@ func (d *Deletion) doDeletion() error {
 	return job.SetBackupMetadata(d.repo, metadata)
 }
 
-func (d *Deletion) applyDiffToRawImage(diff *job.BackupMetadataEntry) error {
-	if err := d.applyAllDiffParts(diff); err != nil {
+func (d *Deletion) applyDiffToRawImage(raw, diff *job.BackupMetadataEntry) error {
+	if err := d.applyAllDiffParts(raw, diff); err != nil {
 		return fmt.Errorf("failed to apply diff parts: %w", err)
 	}
 	err := d.nodeLocalVolumeRepo.RemoveDiffDirRecursively(diff.SnapID)
@@ -121,7 +121,7 @@ func (d *Deletion) applyDiffToRawImage(diff *job.BackupMetadataEntry) error {
 	return nil
 }
 
-func (d *Deletion) applyAllDiffParts(diff *job.BackupMetadataEntry) error {
+func (d *Deletion) applyAllDiffParts(raw, diff *job.BackupMetadataEntry) error {
 	privateData, err := getDeletePrivateData(d.repo, d.actionUID)
 	if err != nil {
 		return fmt.Errorf("failed to get private data: %w", err)
@@ -129,8 +129,21 @@ func (d *Deletion) applyAllDiffParts(diff *job.BackupMetadataEntry) error {
 
 	partCount := int(math.Ceil(float64(diff.SnapSize) / float64(diff.PartSize)))
 	for i := privateData.NextPatchPart; i < partCount; i++ {
+		sourceSnapshotName := raw.SnapName
+		if i != 0 {
+			sourceSnapshotName = fmt.Sprintf("%s-offset-%d", diff.SnapName, i*diff.PartSize)
+		}
+		targetSnapshotName := diff.SnapName
+		if i != partCount-1 {
+			targetSnapshotName = fmt.Sprintf("%s-offset-%d", diff.SnapName, (i+1)*diff.PartSize)
+		}
 		diffPartPath := d.nodeLocalVolumeRepo.GetDiffPartPath(diff.SnapID, i)
-		if err := d.rbdRepo.ApplyDiff(d.nodeLocalVolumeRepo.GetRawImagePath(), diffPartPath); err != nil {
+		if err := d.rbdRepo.ApplyDiffToRawImage(
+			d.nodeLocalVolumeRepo.GetRawImagePath(),
+			diffPartPath,
+			sourceSnapshotName,
+			targetSnapshotName,
+		); err != nil {
 			return fmt.Errorf("failed to apply diff part %d: %w", i, err)
 		}
 

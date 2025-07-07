@@ -59,9 +59,32 @@ fmt: ## Run go fmt against code.
 vet: ## Run go vet against code.
 	go vet ./...
 
+TEST_RAW_IMG=_test/test-raw.img
+TEST_BLOCK_DEV=$$(losetup -j $(TEST_RAW_IMG) | cut -d: -f1)
+.PHONY: prepare-test
+prepare-test: 
+	if [ "$(TEST_BLOCK_DEV)" = "" ]; then \
+		mkdir -p _test && \
+		fallocate -l 100M $(TEST_RAW_IMG) && \
+		sudo losetup -f $(TEST_RAW_IMG) && \
+		sudo chmod 666 $$(losetup -j $(TEST_RAW_IMG) | cut -d: -f1); \
+	fi
+
+.PHONY: clean-test
+clean-test:
+	if [ "$(TEST_BLOCK_DEV)" != "" ]; then \
+		sudo chmod 660 $(TEST_BLOCK_DEV) && \
+		sudo losetup -d $(TEST_BLOCK_DEV) && \
+		rm -f $(TEST_RAW_IMG); \
+	fi
+
 .PHONY: test
 test: manifests generate fmt vet envtest ## Run tests.
-	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" go test $$(go list ./... | grep -v /e2e) -coverprofile cover.out
+	$(MAKE) prepare-test
+	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" \
+	 	TEST_BLOCK_DEV=$(TEST_BLOCK_DEV) \
+		go test $$(go list ./... | grep -v /e2e) -coverprofile cover.out
+	$(MAKE) clean-test
 
 # Utilize Kind or modify the e2e tests to load the image locally, enabling compatibility with other vendors.
 .PHONY: test-e2e  # Run the e2e tests against a Kind k8s instance that is spun up.

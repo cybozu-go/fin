@@ -121,8 +121,11 @@ type RBDRepository interface {
 	// If the source snapshot is not specified, it exports the difference from the empty image.
 	ExportDiff(input *ExportDiffInput) error
 
-	// ApplyDiff applies the difference from the diff file to the raw image file.
-	ApplyDiff(rawImageFilePath, diffFilePath string) error
+	// ApplyDiffToBlockDevice applies the difference from the diff file to the block device.
+	ApplyDiffToBlockDevice(blockDevicePath, diffFilePath, fromSnapName, toSnapName string) error
+
+	// ApplyDiffToRawImage applies the difference from the diff file to the raw image file.
+	ApplyDiffToRawImage(rawImageFilePath, diffFilePath, fromSnapName, toSnapName string) error
 
 	// CreateEmptyRawImage creates an empty file with the specified size.
 	// It returns an error if the file creation fails.

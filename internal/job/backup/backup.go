@@ -269,7 +269,7 @@ func (b *Backup) loopExportDiff(
 			ReadOffset:     b.maxPartSize * i,
 			ReadLength:     b.maxPartSize,
 			FromSnap:       sourceSnapshotName,
-			MidSnapPrefix:  b.targetFinBackupUID,
+			MidSnapPrefix:  targetSnapshot.Name,
 			ImageName:      b.targetRBDImageName,
 			TargetSnapName: targetSnapshot.Name,
 			OutputFile:     b.nodeLocalVolumeRepo.GetDiffPartPath(b.targetSnapshotID, i),
@@ -323,9 +323,19 @@ func (b *Backup) prepareRawImageFile(targetSnapshot *model.RBDSnapshot) error {
 func (b *Backup) loopApplyDiff(privateData *backupPrivateData, targetSnapshot *model.RBDSnapshot) error {
 	partCount := int(math.Ceil(float64(targetSnapshot.Size) / float64(b.maxPartSize)))
 	for i := privateData.NextPatchPart; i < partCount; i++ {
-		if err := b.rbdRepo.ApplyDiff(
+		sourceSnapshotName := ""
+		if i != 0 {
+			sourceSnapshotName = fmt.Sprintf("%s-offset-%d", targetSnapshot.Name, i*b.maxPartSize)
+		}
+		targetSnapshotName := targetSnapshot.Name
+		if i != partCount-1 {
+			targetSnapshotName = fmt.Sprintf("%s-offset-%d", targetSnapshot.Name, (i+1)*b.maxPartSize)
+		}
+		if err := b.rbdRepo.ApplyDiffToRawImage(
 			b.nodeLocalVolumeRepo.GetRawImagePath(),
 			b.nodeLocalVolumeRepo.GetDiffPartPath(b.targetSnapshotID, i),
+			sourceSnapshotName,
+			targetSnapshotName,
 		); err != nil {
 			return fmt.Errorf("failed to apply diff: %w", err)
 		}

@@ -113,7 +113,15 @@ func (r *RBDRepository) CreateEmptyRawImage(filePath string, size int) error {
 	return nil
 }
 
-func (r *RBDRepository) ApplyDiff(rawImageFilePath, diffFilePath string) error {
+func (r *RBDRepository) ApplyDiffToBlockDevice(blockDevicePath, diffFilePath, fromSnapName, toSnapName string) error {
+	return r.applyDiff(blockDevicePath, diffFilePath, fromSnapName, toSnapName)
+}
+
+func (r *RBDRepository) ApplyDiffToRawImage(rawImageFilePath, diffFilePath, fromSnapName, toSnapName string) error {
+	return r.applyDiff(rawImageFilePath, diffFilePath, fromSnapName, toSnapName)
+}
+
+func (r *RBDRepository) applyDiff(rawImageFilePath, diffFilePath, fromSnapName, toSnapName string) error {
 	rawImage, err := ReadRawImage(rawImageFilePath)
 	if err != nil {
 		return fmt.Errorf("failed to decode raw image: %w", err)
@@ -121,6 +129,30 @@ func (r *RBDRepository) ApplyDiff(rawImageFilePath, diffFilePath string) error {
 	diff, err := ReadDiff(diffFilePath)
 	if err != nil {
 		return fmt.Errorf("failed to decode diff: %w", err)
+	}
+
+	// validate the diff
+	if diff.ReadOffset == 0 {
+		if diff.FromSnap == nil && fromSnapName != "" {
+			return fmt.Errorf("fromSnapName mismatch: expected %s, got nil", fromSnapName)
+		}
+		if diff.FromSnap != nil && *diff.FromSnap != fromSnapName {
+			return fmt.Errorf("fromSnapName mismatch: expected %s, got %s", fromSnapName, *diff.FromSnap)
+		}
+	} else {
+		gotFromSnapName := fmt.Sprintf("%s-offset-%d", diff.SnapName, diff.ReadOffset)
+		if gotFromSnapName != fromSnapName {
+			return fmt.Errorf("fromSnapName mismatch: expected %s, got %s", fromSnapName, gotFromSnapName)
+		}
+	}
+
+	if gotToSnapName := fmt.Sprintf(
+		"%s-offset-%d", diff.SnapName, diff.ReadOffset+diff.ReadLength,
+	); diff.SnapSize > diff.ReadOffset+diff.ReadLength && gotToSnapName != toSnapName {
+		return fmt.Errorf("toSnapName mismatch: expected %s, got %s", toSnapName, gotToSnapName)
+	}
+	if diff.SnapSize <= diff.ReadOffset+diff.ReadLength && diff.SnapName != toSnapName {
+		return fmt.Errorf("toSnapName mismatch: expected %s, got %s", toSnapName, diff.SnapName)
 	}
 
 	// update the raw image
