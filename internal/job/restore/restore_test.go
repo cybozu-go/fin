@@ -2,13 +2,10 @@ package restore_test
 
 import (
 	"bytes"
-	"crypto/rand"
 	"os"
 	"testing"
-	"time"
 
 	"github.com/cybozu-go/fin/internal/infrastructure/fake"
-	"github.com/cybozu-go/fin/internal/infrastructure/sqlite"
 	"github.com/cybozu-go/fin/internal/job"
 	"github.com/cybozu-go/fin/internal/job/backup"
 	"github.com/cybozu-go/fin/internal/job/restore"
@@ -25,7 +22,8 @@ import (
 
 func TestRestoreFromFullBackup_Success(t *testing.T) {
 	// Description:
-	//  Restore from the full backup to the restore file.
+	//   Restore from the full backup to the restore file
+	//   with no error.
 	//
 	// Arrange:
 	//   - A full backup, `backup`, consists of two chunks.
@@ -41,26 +39,18 @@ func TestRestoreFromFullBackup_Success(t *testing.T) {
 	// Arrange
 
 	// Create a full backup data.
-	processUID := uuid.New().String()
-	targetFinBackupUID := uuid.New().String()
-	targetRBDPoolName := "test-pool"
-	targetRBDImageName := "test-image"
-	targetSnapshotID := 1
+	backupInput := testutil.NewBackupInputTemplate(1, 4096)
 	targetSnapshotName := "test-snap"
 	rawImageChunkSize := 4096
 	targetSnapshotSize := rawImageChunkSize * 2
 	targetSnapshotTimestamp := "Mon Jan  2 15:04:05 2006"
-	targetPVCName := "test-pvc"
-	targetPVCNamespace := "test-namespace"
-	targetPVCUID := uuid.New().String()
 	targetPVName := "test-pv"
-	maxPartSize := 4096
 
 	k8sRepo := fake.NewKubernetesRepository(
 		map[types.NamespacedName]*corev1.PersistentVolumeClaim{
-			{Name: targetPVCName, Namespace: targetPVCNamespace}: {
+			{Name: backupInput.TargetPVCName, Namespace: backupInput.TargetPVCNamespace}: {
 				ObjectMeta: metav1.ObjectMeta{
-					UID: types.UID(targetPVCUID),
+					UID: types.UID(backupInput.TargetPVCUID),
 				},
 				Spec: corev1.PersistentVolumeClaimSpec{
 					VolumeName: targetPVName,
@@ -73,7 +63,7 @@ func TestRestoreFromFullBackup_Success(t *testing.T) {
 					PersistentVolumeSource: corev1.PersistentVolumeSource{
 						CSI: &corev1.CSIPersistentVolumeSource{
 							VolumeAttributes: map[string]string{
-								"imageName": targetRBDImageName,
+								"imageName": backupInput.TargetRBDImageName,
 							},
 						},
 					},
@@ -83,9 +73,9 @@ func TestRestoreFromFullBackup_Success(t *testing.T) {
 	)
 
 	rbdRepo := fake.NewRBDRepository(map[fake.PoolImageName][]*model.RBDSnapshot{
-		{PoolName: targetRBDPoolName, ImageName: targetRBDImageName}: {
+		{PoolName: backupInput.TargetRBDPoolName, ImageName: backupInput.TargetRBDImageName}: {
 			{
-				ID:        targetSnapshotID,
+				ID:        backupInput.TargetSnapshotID,
 				Name:      targetSnapshotName,
 				Size:      targetSnapshotSize,
 				Timestamp: targetSnapshotTimestamp,
@@ -93,64 +83,30 @@ func TestRestoreFromFullBackup_Success(t *testing.T) {
 		},
 	})
 
-	nlvRepo := testutil.CreateNLVForTest(t)
+	nlvRepo, finRepo := testutil.CreateNLVAndFinRepoForTest(t)
 
-	finRepo, err := sqlite.New(testutil.GetFinSqlite3DSN(nlvRepo.GetRootPath()))
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = finRepo.Close() })
+	backupInput.Repo = finRepo
+	backupInput.KubernetesRepo = k8sRepo
+	backupInput.RBDRepo = rbdRepo
+	backupInput.NodeLocalVolumeRepo = nlvRepo
 
-	backup := backup.NewBackup(&backup.BackupInput{
-		Repo:                      finRepo,
-		KubernetesRepo:            k8sRepo,
-		RBDRepo:                   rbdRepo,
-		NodeLocalVolumeRepo:       nlvRepo,
-		RetryInterval:             1 * time.Second,
-		ProcessUID:                processUID,
-		TargetFinBackupUID:        targetFinBackupUID,
-		TargetRBDPoolName:         targetRBDPoolName,
-		TargetRBDImageName:        targetRBDImageName,
-		TargetSnapshotID:          targetSnapshotID,
-		SourceCandidateSnapshotID: nil,
-		TargetPVCName:             targetPVCName,
-		TargetPVCNamespace:        targetPVCNamespace,
-		TargetPVCUID:              targetPVCUID,
-		MaxPartSize:               maxPartSize,
-	})
-	err = backup.Perform()
+	backup := backup.NewBackup(backupInput)
+	err := backup.Perform()
 	require.NoError(t, err)
 
-	// Update raw.img filled with random data. Although this file has some data
+	// Fill raw.img with random data. Although this file has some data
 	// stored by fake backup process, we can replace them here because we won't
 	// use the original data in the restore process.
-	buf := make([]byte, targetSnapshotSize)
-	_, err = rand.Read(buf)
-	require.NoError(t, err)
-	raw, err := os.Create(nlvRepo.GetRawImagePath())
-	require.NoError(t, err)
-	defer func() { _ = raw.Close() }()
-	_, err = raw.Write(buf)
-	require.NoError(t, err)
-	err = raw.Close()
-	require.NoError(t, err)
+	buf := testutil.FillRawImageWithRandomData(t, nlvRepo.GetRawImagePath(), targetSnapshotSize)
 
 	// Create the restore file
 	restorePath := testutil.CreateRestoreFileForTest(t, int64(targetSnapshotSize))
-	rRepo := fake.NewRestoreRepository(restorePath)
+	rVol := fake.NewRestoreVolume(restorePath)
 
 	// Act
-	r := restore.NewRestore(&restore.RestoreInput{
-		Repo:                finRepo,
-		KubernetesRepo:      k8sRepo,
-		NodeLocalVolumeRepo: nlvRepo,
-		RestoreRepo:         rRepo,
-		RetryInterval:       1 * time.Second,
-		ProcessUID:          processUID,
-		TargetSnapshotID:    targetSnapshotID,
-		RawImageChunkSize:   int64(rawImageChunkSize),
-		TargetPVCName:       targetPVCName,
-		TargetPVCNamespace:  targetPVCNamespace,
-		TargetPVCUID:        targetPVCUID,
-	})
+	r := restore.NewRestore(testutil.NewRestoreInputTemplate(
+		backupInput, rVol, rawImageChunkSize, backupInput.TargetSnapshotID))
+
 	err = r.Perform()
 	require.NoError(t, err)
 
@@ -166,19 +122,20 @@ func TestRestoreFromFullBackup_Success(t *testing.T) {
 	require.True(t, bytes.Equal(buf, buf2))
 
 	// Verify the contents of the metadata
-	testutil.AssertActionPrivateDataIsEmpty(t, finRepo, processUID)
-	require.Zero(t, len(rRepo.AppliedDiffs()))
+	testutil.AssertActionPrivateDataIsEmpty(t, finRepo, backupInput.ProcessUID)
+	require.Zero(t, len(rVol.AppliedDiffs()))
 }
 
 func TestRestoreFromIncrementalBackup_Success(t *testing.T) {
 	// Description:
-	//   Restore from the incremental backup to the restore file.
+	//   Restore from the incremental backup to the restore file
+	//   with no error.
 	//
 	// Arrange:
-	//   - A full backup, `backup`, consists of 2 chunks.
-	//   - An incremental backup, `previousBackup`, consists of 3 chunks.
+	//   - A full backup, `fullBackup`, consists of 2 chunks.
+	//   - An incremental backup, `incrementalBackup`, consists of 3 chunks.
 	//   - raw.img filled with the random data.
-	//     It's size is the same as the full backup's one.
+	//     It's size is the same as the full backup.
 	//   - The restore file. It's size is the same
 	//     as the incremental backup's one.
 	//
@@ -191,33 +148,24 @@ func TestRestoreFromIncrementalBackup_Success(t *testing.T) {
 	//     chunk2: zero filled.
 
 	// Arrange
+	fullBackupInput := testutil.NewBackupInputTemplate(1, 4096)
+	fullSnapshotName := "test-snap1"
 	rawImageChunkSize := 4096
-	processUID := uuid.New().String()
-	targetRBDPoolName := "test-pool"
-	targetRBDImageName := "test-image"
-	targetPVCName := "test-pvc"
-	targetPVCNamespace := "test-namespace"
-	targetPVCUID := uuid.New().String()
+	fullSnapshotSize := rawImageChunkSize * 2
+	fullSnapshotTimestamp := "Mon Jan  2 15:03:05 2006"
 	targetPVName := "test-pv"
-	maxPartSize := rawImageChunkSize
 
-	previousFinBackupUID := uuid.New().String()
-	previousSnapshotID := 1
-	previousSnapshotName := "test-snap1"
-	previousSnapshotSize := rawImageChunkSize * 2
-	previousSnapshotTimestamp := "Mon Jan  2 15:03:05 2006"
-
-	targetFinBackupUID := uuid.New().String()
-	targetSnapshotID := 2
-	targetSnapshotName := "test-snap2"
-	targetSnapshotSize := rawImageChunkSize * 3
-	targetSnapshotTimestamp := "Mon Jan  2 15:04:05 2006"
+	incrementalBackupInput := testutil.NewIncrementalBackupInputTemplate(fullBackupInput, 2)
+	incrementalBackupInput.SourceCandidateSnapshotID = &fullBackupInput.TargetSnapshotID
+	incrementalSnapshotName := "test-snap2"
+	incrementalSnapshotSize := rawImageChunkSize * 3
+	incrementalSnapshotTimestamp := "Mon Jan  2 15:04:05 2006"
 
 	k8sRepo := fake.NewKubernetesRepository(
 		map[types.NamespacedName]*corev1.PersistentVolumeClaim{
-			{Name: targetPVCName, Namespace: targetPVCNamespace}: {
+			{Name: fullBackupInput.TargetPVCName, Namespace: fullBackupInput.TargetPVCNamespace}: {
 				ObjectMeta: metav1.ObjectMeta{
-					UID: types.UID(targetPVCUID),
+					UID: types.UID(fullBackupInput.TargetPVCUID),
 				},
 				Spec: corev1.PersistentVolumeClaimSpec{
 					VolumeName: targetPVName,
@@ -230,7 +178,7 @@ func TestRestoreFromIncrementalBackup_Success(t *testing.T) {
 					PersistentVolumeSource: corev1.PersistentVolumeSource{
 						CSI: &corev1.CSIPersistentVolumeSource{
 							VolumeAttributes: map[string]string{
-								"imageName": targetRBDImageName,
+								"imageName": fullBackupInput.TargetRBDImageName,
 							},
 						},
 					},
@@ -240,125 +188,79 @@ func TestRestoreFromIncrementalBackup_Success(t *testing.T) {
 	)
 
 	rbdRepo := fake.NewRBDRepository(map[fake.PoolImageName][]*model.RBDSnapshot{
-		{PoolName: targetRBDPoolName, ImageName: targetRBDImageName}: {
+		{PoolName: fullBackupInput.TargetRBDPoolName, ImageName: fullBackupInput.TargetRBDImageName}: {
 			{
-				ID:        previousSnapshotID,
-				Name:      previousSnapshotName,
-				Size:      previousSnapshotSize,
-				Timestamp: previousSnapshotTimestamp,
+				ID:        fullBackupInput.TargetSnapshotID,
+				Name:      fullSnapshotName,
+				Size:      fullSnapshotSize,
+				Timestamp: fullSnapshotTimestamp,
 			},
 			{
-				ID:        targetSnapshotID,
-				Name:      targetSnapshotName,
-				Size:      targetSnapshotSize,
-				Timestamp: targetSnapshotTimestamp,
+				ID:        incrementalBackupInput.TargetSnapshotID,
+				Name:      incrementalSnapshotName,
+				Size:      incrementalSnapshotSize,
+				Timestamp: incrementalSnapshotTimestamp,
 			},
 		},
 	})
 
-	nlvRepo := testutil.CreateNLVForTest(t)
+	nlvRepo, finRepo := testutil.CreateNLVAndFinRepoForTest(t)
 
-	finRepo, err := sqlite.New(testutil.GetFinSqlite3DSN(nlvRepo.GetRootPath()))
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = finRepo.Close() })
+	fullBackupInput.Repo = finRepo
+	fullBackupInput.KubernetesRepo = k8sRepo
+	fullBackupInput.RBDRepo = rbdRepo
+	fullBackupInput.NodeLocalVolumeRepo = nlvRepo
+
+	incrementalBackupInput.Repo = finRepo
+	incrementalBackupInput.KubernetesRepo = k8sRepo
+	incrementalBackupInput.RBDRepo = rbdRepo
+	incrementalBackupInput.NodeLocalVolumeRepo = nlvRepo
 
 	// Create a full backup
-	previousBackup := backup.NewBackup(&backup.BackupInput{
-		Repo:                      finRepo,
-		KubernetesRepo:            k8sRepo,
-		RBDRepo:                   rbdRepo,
-		NodeLocalVolumeRepo:       nlvRepo,
-		RetryInterval:             1 * time.Second,
-		ProcessUID:                processUID,
-		TargetFinBackupUID:        previousFinBackupUID,
-		TargetRBDPoolName:         targetRBDPoolName,
-		TargetRBDImageName:        targetRBDImageName,
-		TargetSnapshotID:          previousSnapshotID,
-		SourceCandidateSnapshotID: nil,
-		TargetPVCName:             targetPVCName,
-		TargetPVCNamespace:        targetPVCNamespace,
-		TargetPVCUID:              targetPVCUID,
-		MaxPartSize:               maxPartSize,
-	})
-	err = previousBackup.Perform()
+	fullBackup := backup.NewBackup(fullBackupInput)
+	err := fullBackup.Perform()
 	require.NoError(t, err)
 
 	// Create an incremental backup
-	backup := backup.NewBackup(&backup.BackupInput{
-		Repo:                      finRepo,
-		KubernetesRepo:            k8sRepo,
-		RBDRepo:                   rbdRepo,
-		NodeLocalVolumeRepo:       nlvRepo,
-		RetryInterval:             1 * time.Second,
-		ProcessUID:                processUID,
-		TargetFinBackupUID:        targetFinBackupUID,
-		TargetRBDPoolName:         targetRBDPoolName,
-		TargetRBDImageName:        targetRBDImageName,
-		TargetSnapshotID:          targetSnapshotID,
-		SourceCandidateSnapshotID: &previousSnapshotID,
-		TargetPVCName:             targetPVCName,
-		TargetPVCNamespace:        targetPVCNamespace,
-		TargetPVCUID:              targetPVCUID,
-		MaxPartSize:               maxPartSize,
-	})
-	err = backup.Perform()
+	incrementalBackup := backup.NewBackup(incrementalBackupInput)
+	err = incrementalBackup.Perform()
 	require.NoError(t, err)
 
-	// Update raw.img filled with random data. Although this file has some data
+	// Fill raw.img with random data. Although this file has some data
 	// stored by fake backup process, we can replace them here because we won't
 	// use the original data in the restore process.
-	buf := make([]byte, previousSnapshotSize)
-	_, err = rand.Read(buf)
-	require.NoError(t, err)
-	raw, err := os.Create(nlvRepo.GetRawImagePath())
-	require.NoError(t, err)
-	defer func() { _ = raw.Close() }()
-	_, err = raw.Write(buf)
-	require.NoError(t, err)
-	err = raw.Close()
-	require.NoError(t, err)
+	buf := testutil.FillRawImageWithRandomData(t, nlvRepo.GetRawImagePath(), fullSnapshotSize)
 
-	// Create the restore file. It's size must be the same as the incremental backup's one.
-	restorePath := testutil.CreateRestoreFileForTest(t, int64(targetSnapshotSize))
-	rRepo := fake.NewRestoreRepository(restorePath)
+	// Create the restore file
+	restorePath := testutil.CreateRestoreFileForTest(t, int64(incrementalSnapshotSize))
+	rVol := fake.NewRestoreVolume(restorePath)
 
 	// Act
-	r := restore.NewRestore(&restore.RestoreInput{
-		Repo:                finRepo,
-		KubernetesRepo:      k8sRepo,
-		NodeLocalVolumeRepo: nlvRepo,
-		RestoreRepo:         rRepo,
-		RetryInterval:       1 * time.Second,
-		ProcessUID:          processUID,
-		TargetSnapshotID:    targetSnapshotID,
-		RawImageChunkSize:   int64(rawImageChunkSize),
-		TargetPVCName:       targetPVCName,
-		TargetPVCNamespace:  targetPVCNamespace,
-		TargetPVCUID:        targetPVCUID,
-	})
+	r := restore.NewRestore(testutil.NewRestoreInputTemplate(
+		incrementalBackupInput, rVol, rawImageChunkSize, incrementalBackupInput.TargetSnapshotID))
 	err = r.Perform()
 	require.NoError(t, err)
 
 	// Assert
-	testutil.AssertActionPrivateDataIsEmpty(t, finRepo, processUID)
+	testutil.AssertActionPrivateDataIsEmpty(t, finRepo, fullBackupInput.ProcessUID)
 
-	buf2 := make([]byte, targetSnapshotSize)
-	restoreFile, err := os.Open(rRepo.GetPath())
+	buf2 := make([]byte, incrementalSnapshotSize)
+	restoreFile, err := os.Open(rVol.GetPath())
 	require.NoError(t, err)
 	rn, err := restoreFile.Read(buf2)
 	require.NoError(t, err)
-	require.Equal(t, targetSnapshotSize, rn)
-	require.True(t, bytes.Equal(buf, buf2[:previousSnapshotSize]))
-	zeroBuf := make([]byte, targetSnapshotSize-previousSnapshotSize)
-	require.True(t, bytes.Equal(buf2[previousSnapshotSize:], zeroBuf))
+	require.Equal(t, incrementalSnapshotSize, rn)
+	require.True(t, bytes.Equal(buf, buf2[:fullSnapshotSize]))
+	zeroBuf := make([]byte, incrementalSnapshotSize-fullSnapshotSize)
+	require.True(t, bytes.Equal(buf2[fullSnapshotSize:], zeroBuf))
 
-	assert.Equal(t, 3, len(rRepo.AppliedDiffs()))
-	assert.Equal(t, 0, rRepo.AppliedDiffs()[0].ReadOffset)
-	assert.Equal(t, maxPartSize, rRepo.AppliedDiffs()[0].ReadLength)
-	assert.Equal(t, maxPartSize, rRepo.AppliedDiffs()[1].ReadOffset)
-	assert.Equal(t, maxPartSize, rRepo.AppliedDiffs()[1].ReadLength)
-	assert.Equal(t, maxPartSize*2, rRepo.AppliedDiffs()[2].ReadOffset)
-	assert.Equal(t, maxPartSize, rRepo.AppliedDiffs()[2].ReadLength)
+	assert.Equal(t, 3, len(rVol.AppliedDiffs()))
+	assert.Equal(t, 0, rVol.AppliedDiffs()[0].ReadOffset)
+	assert.Equal(t, fullBackupInput.MaxPartSize, rVol.AppliedDiffs()[0].ReadLength)
+	assert.Equal(t, fullBackupInput.MaxPartSize, rVol.AppliedDiffs()[1].ReadOffset)
+	assert.Equal(t, fullBackupInput.MaxPartSize, rVol.AppliedDiffs()[1].ReadLength)
+	assert.Equal(t, fullBackupInput.MaxPartSize*2, rVol.AppliedDiffs()[2].ReadOffset)
+	assert.Equal(t, fullBackupInput.MaxPartSize, rVol.AppliedDiffs()[2].ReadLength)
 }
 
 func TestRestore_ErrorBusy(t *testing.T) {
@@ -366,13 +268,9 @@ func TestRestore_ErrorBusy(t *testing.T) {
 	processUID := uuid.New().String()
 	differentProcessUID := uuid.New().String()
 
-	nlvRepo := testutil.CreateNLVForTest(t)
+	_, finRepo := testutil.CreateNLVAndFinRepoForTest(t)
 
-	finRepo, err := sqlite.New(testutil.GetFinSqlite3DSN(nlvRepo.GetRootPath()))
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = finRepo.Close() })
-
-	err = finRepo.StartOrRestartAction(differentProcessUID, model.Backup)
+	err := finRepo.StartOrRestartAction(differentProcessUID, model.Backup)
 	require.NoError(t, err)
 
 	// Act

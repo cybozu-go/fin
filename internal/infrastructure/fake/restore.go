@@ -7,23 +7,23 @@ import (
 	"github.com/cybozu-go/fin/internal/model"
 )
 
-type restoreRepository struct {
-	real         *r.RestoreRepository
+type restoreVolume struct {
+	real         *r.RestoreVolume
 	appliedDiffs []*ExportedDiff
 }
 
-var _ model.RestoreRepository = &restoreRepository{}
+var _ model.RestoreVolume = &restoreVolume{}
 
-func NewRestoreRepository(
+func NewRestoreVolume(
 	path string,
-) *restoreRepository {
-	return &restoreRepository{
-		real:         r.NewRestoreRepository(path),
+) *restoreVolume {
+	return &restoreVolume{
+		real:         r.NewRestoreVolume(path),
 		appliedDiffs: make([]*ExportedDiff, 0),
 	}
 }
 
-func (r *restoreRepository) ApplyDiff(diffFilePath string) error {
+func (r *restoreVolume) ApplyDiff(diffFilePath string) error {
 	diff, err := ReadDiff(diffFilePath)
 	if err != nil {
 		return fmt.Errorf("failed to decode diff: %w", err)
@@ -35,18 +35,18 @@ func (r *restoreRepository) ApplyDiff(diffFilePath string) error {
 	return nil
 }
 
-func (r *restoreRepository) GetPath() string {
+func (r *restoreVolume) GetPath() string {
 	return r.real.GetPath()
 }
 
-func (r *restoreRepository) BlkDiscard() error {
+func (r *restoreVolume) BlkDiscard() error {
 	return nil
 }
 
-func (r *restoreRepository) AppliedDiffs() []*ExportedDiff {
+func (r *restoreVolume) AppliedDiffs() []*ExportedDiff {
 	return r.appliedDiffs
 }
 
-func (r *restoreRepository) CopyChunk(rawPath string, index int, chunkSize int64) error {
+func (r *restoreVolume) CopyChunk(rawPath string, index int, chunkSize int64) error {
 	return r.real.CopyChunk(rawPath, index, chunkSize)
 }

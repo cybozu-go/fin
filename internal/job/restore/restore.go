@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"path/filepath"
 	"time"
 
 	"github.com/cybozu-go/fin/internal/job"
@@ -16,13 +15,11 @@ type Restore struct {
 	repo                model.FinRepository
 	kubernetesRepo      model.KubernetesRepository
 	nodeLocalVolumeRepo model.NodeLocalVolumeRepository
-	restoreRepo         model.RestoreRepository
+	restoreVol          model.RestoreVolume
 	retryInterval       time.Duration
 	processUID          string
 	targetSnapshotID    int
 	rawImageChunkSize   int64
-	targetPVCName       string
-	targetPVCNamespace  string
 	targetPVCUID        string
 }
 
@@ -30,13 +27,11 @@ type RestoreInput struct {
 	Repo                model.FinRepository
 	KubernetesRepo      model.KubernetesRepository
 	NodeLocalVolumeRepo model.NodeLocalVolumeRepository
-	RestoreRepo         model.RestoreRepository
+	RestoreVol          model.RestoreVolume
 	RetryInterval       time.Duration
 	ProcessUID          string
 	TargetSnapshotID    int
 	RawImageChunkSize   int64
-	TargetPVCName       string
-	TargetPVCNamespace  string
 	TargetPVCUID        string
 }
 
@@ -45,13 +40,11 @@ func NewRestore(in *RestoreInput) *Restore {
 		repo:                in.Repo,
 		kubernetesRepo:      in.KubernetesRepo,
 		nodeLocalVolumeRepo: in.NodeLocalVolumeRepo,
-		restoreRepo:         in.RestoreRepo,
+		restoreVol:          in.RestoreVol,
 		retryInterval:       in.RetryInterval,
 		processUID:          in.ProcessUID,
 		targetSnapshotID:    in.TargetSnapshotID,
 		rawImageChunkSize:   in.RawImageChunkSize,
-		targetPVCName:       in.TargetPVCName,
-		targetPVCNamespace:  in.TargetPVCNamespace,
 		targetPVCUID:        in.TargetPVCUID,
 	}
 }
@@ -137,7 +130,7 @@ func (r *Restore) doDiscardPhase(privateData *restorePrivateData) error {
 	if privateData.Phase != Discard {
 		return nil
 	}
-	if err := r.restoreRepo.BlkDiscard(); err != nil {
+	if err := r.restoreVol.BlkDiscard(); err != nil {
 		return fmt.Errorf("blkdiscard failed: %w", err)
 	}
 	privateData.Phase = RestoreRawImage
@@ -165,7 +158,7 @@ func (r *Restore) doRestoreRawImagePhase(privateData *restorePrivateData, raw *j
 func (r *Restore) loopCopyChunk(privateData *restorePrivateData, rawImageSize int) error {
 	chunkCount := int(math.Ceil(float64(rawImageSize) / float64(r.rawImageChunkSize)))
 	for i := privateData.NextRawImageChunk; i < chunkCount; i++ {
-		if err := r.restoreRepo.CopyChunk(r.nodeLocalVolumeRepo.GetRawImagePath(), i, r.rawImageChunkSize); err != nil {
+		if err := r.restoreVol.CopyChunk(r.nodeLocalVolumeRepo.GetRawImagePath(), i, r.rawImageChunkSize); err != nil {
 			return fmt.Errorf("failed to copy chunk %d: %w", i, err)
 		}
 
@@ -200,8 +193,8 @@ func (r *Restore) doRestoreDiffPhase(privateData *restorePrivateData, diffs []*j
 func (r *Restore) loopApplyDiff(privateData *restorePrivateData, diff *job.BackupMetadataEntry) error {
 	partCount := int(math.Ceil(float64(diff.SnapSize) / float64(diff.PartSize)))
 	for i := privateData.NextDiffPart; i < partCount; i++ {
-		if err := r.restoreRepo.ApplyDiff(
-			filepath.Join(r.nodeLocalVolumeRepo.GetRootPath(), job.GetDiffPartPath(diff.SnapID, i)),
+		if err := r.restoreVol.ApplyDiff(
+			r.nodeLocalVolumeRepo.GetDiffPartPath(diff.SnapID, i),
 		); err != nil {
 			return fmt.Errorf("failed to apply diff: %w", err)
 		}

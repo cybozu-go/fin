@@ -9,31 +9,31 @@ import (
 	"github.com/cybozu-go/fin/internal/model"
 )
 
-type RestoreRepository struct {
+type RestoreVolume struct {
 	path string
 }
 
-var _ model.RestoreRepository = &RestoreRepository{}
+var _ model.RestoreVolume = &RestoreVolume{}
 
-func NewRestoreRepository(devPath string) *RestoreRepository {
-	return &RestoreRepository{
+func NewRestoreVolume(devPath string) *RestoreVolume {
+	return &RestoreVolume{
 		path: devPath,
 	}
 }
 
-func (r *RestoreRepository) GetPath() string {
+func (r *RestoreVolume) GetPath() string {
 	return r.path
 }
 
-func (r *RestoreRepository) BlkDiscard() error {
+func (r *RestoreVolume) BlkDiscard() error {
 	return errors.New("not implemented")
 }
 
-func (r *RestoreRepository) ApplyDiff(diffPath string) error {
+func (r *RestoreVolume) ApplyDiff(diffPath string) error {
 	return errors.New("not implemented")
 }
 
-func (r *RestoreRepository) CopyChunk(rawPath string, index int, chunkSize int64) error {
+func (r *RestoreVolume) CopyChunk(rawPath string, index int, chunkSize int64) error {
 	rawFile, err := os.Open(rawPath)
 	if err != nil {
 		return fmt.Errorf("failed to open `%s`: %w", rawPath, err)
