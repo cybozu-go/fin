@@ -1,9 +1,7 @@
 package sqlite
 
 import (
-	"database/sql"
-	"fmt"
-	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/cybozu-go/fin/internal/model"
@@ -17,21 +15,13 @@ const (
 	testAction     = model.Backup
 )
 
-func CreateRepoForTest(t *testing.T) model.FinRepository {
-	db, err := sql.Open("sqlite3", fmt.Sprintf("file:%s?_txlock=exclusive", testDatasource))
-	t.Cleanup(func() { _ = db.Close(); _ = os.Remove(testDatasource) })
-	require.NoError(t, err)
-	repo, err := New(db)
-	require.NoError(t, err)
-
-	return repo
-}
-
 func TestStartOrRestartAction_success(t *testing.T) {
-	repo := CreateRepoForTest(t)
-	assert.NotNil(t, repo)
+	tempDir := t.TempDir()
+	repo, err := New(filepath.Join(tempDir, testDatasource))
+	require.NoError(t, err)
+	defer repo.Close()
 
-	err := repo.StartOrRestartAction(testUID, testAction)
+	err = repo.StartOrRestartAction(testUID, testAction)
 	require.NoError(t, err)
 
 	// Check idempotency.
@@ -40,18 +30,21 @@ func TestStartOrRestartAction_success(t *testing.T) {
 }
 
 func TestStartOrRestartAction_successToReopenDB(t *testing.T) {
-	repo := CreateRepoForTest(t)
-	assert.NotNil(t, repo)
+	tempDir := t.TempDir()
+	repo, err := New(filepath.Join(tempDir, testDatasource))
+	require.NoError(t, err)
 
-	err := repo.StartOrRestartAction(testUID, testAction)
+	err = repo.StartOrRestartAction(testUID, testAction)
 	require.NoError(t, err)
 
 	err = repo.UpdateActionPrivateData(testUID, []byte("test-private-data"))
 	require.NoError(t, err)
 
+	_ = repo.Close()
+
 	// Reopen the repository to check if the private data is correctly stored
-	repo = CreateRepoForTest(t)
-	assert.NotNil(t, repo)
+	repo, err = New(filepath.Join(tempDir, testDatasource))
+	require.NoError(t, err)
 
 	err = repo.StartOrRestartAction(testUID, testAction)
 	require.NoError(t, err)
@@ -62,10 +55,12 @@ func TestStartOrRestartAction_successToReopenDB(t *testing.T) {
 }
 
 func TestUpdateAndCompleteAction_success(t *testing.T) {
-	repo := CreateRepoForTest(t)
-	assert.NotNil(t, repo)
+	tempDir := t.TempDir()
+	repo, err := New(filepath.Join(tempDir, testDatasource))
+	require.NoError(t, err)
+	defer repo.Close()
 
-	err := repo.StartOrRestartAction(testUID, testAction)
+	err = repo.StartOrRestartAction(testUID, testAction)
 	require.NoError(t, err)
 	privateData, err := repo.GetActionPrivateData(testUID)
 	require.NoError(t, err)
@@ -89,17 +84,20 @@ func TestUpdateAndCompleteAction_success(t *testing.T) {
 }
 
 func TestStartOrRestartAction_anotherActionCanStartAfterComplete(t *testing.T) {
-	repo := CreateRepoForTest(t)
-	assert.NotNil(t, repo)
+	tempDir := t.TempDir()
+	repo, err := New(filepath.Join(tempDir, testDatasource))
+	require.NoError(t, err)
+	defer repo.Close()
 
-	err := repo.StartOrRestartAction(testUID, testAction)
+	err = repo.StartOrRestartAction(testUID, testAction)
 	require.NoError(t, err)
 
 	err = repo.CompleteAction(testUID)
 	require.NoError(t, err)
 
-	repo2 := CreateRepoForTest(t)
-	assert.NotNil(t, repo)
+	repo2, err := New(filepath.Join(tempDir, testDatasource))
+	require.NoError(t, err)
+	defer repo2.Close()
 
 	const testUID2 = "test-uid2"
 	err = repo2.StartOrRestartAction(testUID2, testAction)
@@ -110,23 +108,25 @@ func TestStartOrRestartAction_anotherActionCanStartAfterComplete(t *testing.T) {
 }
 
 func TestStartOrRestartAction_busyError(t *testing.T) {
-	repo := CreateRepoForTest(t)
-	assert.NotNil(t, repo)
+	tempDir := t.TempDir()
+	repo, err := New(filepath.Join(tempDir, testDatasource))
+	require.NoError(t, err)
 
-	err := repo.StartOrRestartAction(testUID, testAction)
+	err = repo.StartOrRestartAction(testUID, testAction)
 	require.NoError(t, err)
 
 	// Try to start action with a different UID
-	repo2 := CreateRepoForTest(t)
-	assert.NotNil(t, repo)
+	repo2, err := New(filepath.Join(tempDir, testDatasource))
+	require.NoError(t, err)
 	err = repo2.StartOrRestartAction("test-uid2", testAction)
 	require.ErrorIs(t, err, model.ErrBusy)
 }
 
 func TestUpdateActionPrivateData_failToUpdateBeforeStart(t *testing.T) {
-	repo := CreateRepoForTest(t)
-	assert.NotNil(t, repo)
+	tempDir := t.TempDir()
+	repo, err := New(filepath.Join(tempDir, testDatasource))
+	require.NoError(t, err)
 
-	err := repo.UpdateActionPrivateData(testUID, []byte("test-private-data"))
+	err = repo.UpdateActionPrivateData(testUID, []byte("test-private-data"))
 	require.Error(t, err)
 }

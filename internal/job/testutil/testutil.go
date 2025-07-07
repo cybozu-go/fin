@@ -2,8 +2,6 @@ package testutil
 
 import (
 	"crypto/rand"
-	"database/sql"
-	"fmt"
 	"os"
 	"testing"
 	"time"
@@ -85,11 +83,10 @@ func CreateNLVAndFinRepoForTest(t *testing.T) (*nlv.NodeLocalVolumeRepository, m
 	nlvRepo, err := nlv.NewNodeLocalVolumeRepository(tempDir)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = nlvRepo.Close() })
-	db, err := sql.Open("sqlite3", fmt.Sprintf("file:%s?_txlock=exclusive", nlvRepo.GetDBPath()))
-	t.Cleanup(func() { _ = db.Close() })
 	require.NoError(t, err)
-	repo, err := sqlite.New(db)
+	repo, err := sqlite.New(nlvRepo.GetDBPath())
 	require.NoError(t, err)
+	t.Cleanup(func() { _ = repo.Close() })
 
 	return nlvRepo, repo
 }
