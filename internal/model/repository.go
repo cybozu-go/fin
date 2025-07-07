@@ -124,4 +124,7 @@ type NodeLocalVolumeRepository interface {
 
 	// RemoveDiffDirRecursively removes a diff directory and its contents.
 	RemoveDiffDirRecursively(snapshotID int) error
+
+	// Close closes the NLV, rendering it unusable for further operations.
+	Close() error
 }
