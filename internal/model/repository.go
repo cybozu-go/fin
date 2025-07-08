@@ -115,9 +115,6 @@ type NodeLocalVolumeRepository interface {
 	// GetPV gets PV's manifest.
 	GetPV() (*corev1.PersistentVolume, error)
 
-	// GetDBPath return the path of database.
-	GetDBPath() string
-
 	// MakeDiffPartDir creates a diff directory. It uses 0755 as the permission.
 	// If the directory already exists, it returns `ErrAlreadyExists`.
 	MakeDiffDir(snapshotID int) error

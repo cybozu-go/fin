@@ -50,10 +50,6 @@ func (r *NodeLocalVolumeRepository) GetRawImagePath() string {
 	return filepath.Join(r.root.Name(), "raw.img")
 }
 
-func (r *NodeLocalVolumeRepository) GetDBPath() string {
-	return filepath.Join(r.root.Name(), "fin.sqlite3")
-}
-
 func (r *NodeLocalVolumeRepository) writeFile(filePath string, data []byte) error {
 	file, err := r.root.Create(filePath)
 	if err != nil {

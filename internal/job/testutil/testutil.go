@@ -84,7 +84,7 @@ func CreateNLVAndFinRepoForTest(t *testing.T) (*nlv.NodeLocalVolumeRepository, m
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = nlvRepo.Close() })
 	require.NoError(t, err)
-	repo, err := sqlite.New(nlvRepo.GetDBPath())
+	repo, err := sqlite.New(tempDir)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = repo.Close() })
 
