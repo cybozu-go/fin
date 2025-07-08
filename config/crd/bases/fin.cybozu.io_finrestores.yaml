@@ -75,10 +75,6 @@ spec:
           status:
             description: FinRestoreStatus defines the observed state of FinRestore
             properties:
-              actionUID:
-                description: '''actionUID'' specifies the unique identifier for the
-                  restore action'
-                type: string
               conditions:
                 description: '''conditions'' specifies current restore conditions'
                 items:
