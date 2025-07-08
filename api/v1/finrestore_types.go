@@ -33,9 +33,6 @@ type FinRestoreStatus struct {
 	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
 
-	// 'actionUID' specifies the unique identifier for the restore action
-	ActionUID string `json:"actionUID,omitempty"`
-
 	// 'conditions' specifies current restore conditions
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
