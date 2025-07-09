@@ -103,7 +103,9 @@ func (fr *FinRepository) StartOrRestartAction(uid string, action model.ActionKin
 		}
 
 		if foundAction != string(action) {
-			return fmt.Errorf("bug: unexpected action (uid: %s, action: %s)", foundUID, foundAction)
+			if foundAction != string(model.Backup) || action != model.Cleanup {
+				return fmt.Errorf("bug: unexpected action (uid: %s, action: %s)", foundUID, foundAction)
+			}
 		}
 
 		foundMyEntry = true

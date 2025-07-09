@@ -37,7 +37,7 @@ func TestDelete_RawOnlyCase_Success(t *testing.T) {
 	targetSnapshotID := 1
 	targetPVCUID := uuid.New().String()
 
-	nlvRepo, finRepo := testutil.CreateNLVAndFinRepoForTest(t)
+	nlvRepo, finRepo, _ := testutil.CreateNLVAndFinRepoForTest(t)
 	rbdRepo := fake.NewRBDRepository(map[fake.PoolImageName][]*model.RBDSnapshot{})
 
 	metadata := &job.BackupMetadata{
@@ -83,7 +83,7 @@ func TestBackup_ErrorBusy(t *testing.T) {
 	actionUID := uuid.New().String()
 	differentActionUID := uuid.New().String()
 
-	_, finRepo := testutil.CreateNLVAndFinRepoForTest(t)
+	_, finRepo, _ := testutil.CreateNLVAndFinRepoForTest(t)
 
 	err := finRepo.StartOrRestartAction(differentActionUID, model.Deletion)
 	require.NoError(t, err)

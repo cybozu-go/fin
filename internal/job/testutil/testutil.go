@@ -80,7 +80,7 @@ func AssertActionPrivateDataIsEmpty(t *testing.T, finRepo model.FinRepository, a
 	assert.ErrorIs(t, err, model.ErrNotFound)
 }
 
-func CreateNLVAndFinRepoForTest(t *testing.T) (*nlv.NodeLocalVolumeRepository, model.FinRepository) {
+func CreateNLVAndFinRepoForTest(t *testing.T) (*nlv.NodeLocalVolumeRepository, model.FinRepository, string) {
 	t.Helper()
 
 	tempDir := t.TempDir()
@@ -93,7 +93,7 @@ func CreateNLVAndFinRepoForTest(t *testing.T) (*nlv.NodeLocalVolumeRepository, m
 	repo, err := sqlite.New(db)
 	require.NoError(t, err)
 
-	return nlvRepo, repo
+	return nlvRepo, repo, tempDir
 }
 
 func CreateRestoreFileForTest(t *testing.T, size int64) string {

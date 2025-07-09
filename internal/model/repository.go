@@ -14,6 +14,7 @@ const (
 	Backup   ActionKind = "Backup"
 	Restore  ActionKind = "Restore"
 	Deletion ActionKind = "Deletion"
+	Cleanup  ActionKind = "Cleanup"
 )
 
 var (
@@ -165,4 +166,8 @@ type NodeLocalVolumeRepository interface {
 
 	// RemoveRawImage removes the raw image file.
 	RemoveRawImage() error
+
+	// RemoveOngoingFullBackupFiles remove all files corresponding
+	// to the ongoing full backup.
+	RemoveOngoingFullBackupFiles(snapID int) error
 }
