@@ -17,7 +17,7 @@ type Restore struct {
 	nodeLocalVolumeRepo model.NodeLocalVolumeRepository
 	restoreVol          model.RestoreVolume
 	retryInterval       time.Duration
-	processUID          string
+	actionUID           string
 	targetSnapshotID    int
 	rawImageChunkSize   int64
 	targetPVCUID        string
@@ -29,7 +29,7 @@ type RestoreInput struct {
 	NodeLocalVolumeRepo model.NodeLocalVolumeRepository
 	RestoreVol          model.RestoreVolume
 	RetryInterval       time.Duration
-	ProcessUID          string
+	ActionUID           string
 	TargetSnapshotID    int
 	RawImageChunkSize   int64
 	TargetPVCUID        string
@@ -42,7 +42,7 @@ func NewRestore(in *RestoreInput) *Restore {
 		nodeLocalVolumeRepo: in.NodeLocalVolumeRepo,
 		restoreVol:          in.RestoreVol,
 		retryInterval:       in.RetryInterval,
-		processUID:          in.ProcessUID,
+		actionUID:           in.ActionUID,
 		targetSnapshotID:    in.TargetSnapshotID,
 		rawImageChunkSize:   in.RawImageChunkSize,
 		targetPVCUID:        in.TargetPVCUID,
@@ -51,7 +51,7 @@ func NewRestore(in *RestoreInput) *Restore {
 
 // Perform executes the restore process. If it can't get lock, it returns ErrCantLock.
 func (r *Restore) Perform() error {
-	err := r.repo.StartOrRestartAction(r.processUID, model.Restore)
+	err := r.repo.StartOrRestartAction(r.actionUID, model.Restore)
 	if err != nil {
 		if errors.Is(err, model.ErrBusy) {
 			return job.ErrCantLock
@@ -61,7 +61,7 @@ func (r *Restore) Perform() error {
 	if err := r.doRestore(); err != nil {
 		return fmt.Errorf("failed to perform restore: %w", err)
 	}
-	if err := r.repo.CompleteAction(r.processUID); err != nil {
+	if err := r.repo.CompleteAction(r.actionUID); err != nil {
 		return fmt.Errorf("failed to complete action: %w", err)
 	}
 	return nil
@@ -94,7 +94,7 @@ func (r *Restore) doRestore() error {
 		return fmt.Errorf("the number of diffs is %d but must be <= 1", len(metadata.Diff))
 	}
 
-	d, err := getRestorePrivateData(r.repo, r.processUID)
+	d, err := getRestorePrivateData(r.repo, r.actionUID)
 	if err != nil {
 		return fmt.Errorf("failed to get private data: %w", err)
 	}
@@ -123,7 +123,7 @@ func (r *Restore) doInitialPhase(privateData *restorePrivateData) error {
 		return nil
 	}
 	privateData.Phase = Discard
-	return setRestorePrivateData(r.repo, r.processUID, privateData)
+	return setRestorePrivateData(r.repo, r.actionUID, privateData)
 }
 
 func (r *Restore) doDiscardPhase(privateData *restorePrivateData) error {
@@ -134,7 +134,7 @@ func (r *Restore) doDiscardPhase(privateData *restorePrivateData) error {
 		return fmt.Errorf("blkdiscard failed: %w", err)
 	}
 	privateData.Phase = RestoreRawImage
-	return setRestorePrivateData(r.repo, r.processUID, privateData)
+	return setRestorePrivateData(r.repo, r.actionUID, privateData)
 }
 
 func (r *Restore) doRestoreRawImagePhase(privateData *restorePrivateData, raw *job.BackupMetadataEntry) error {
@@ -148,11 +148,11 @@ func (r *Restore) doRestoreRawImagePhase(privateData *restorePrivateData, raw *j
 
 	if r.targetSnapshotID == raw.SnapID {
 		privateData.Phase = Completed
-		return setRestorePrivateData(r.repo, r.processUID, privateData)
+		return setRestorePrivateData(r.repo, r.actionUID, privateData)
 	}
 
 	privateData.Phase = RestoreDiff
-	return setRestorePrivateData(r.repo, r.processUID, privateData)
+	return setRestorePrivateData(r.repo, r.actionUID, privateData)
 }
 
 func (r *Restore) loopCopyChunk(privateData *restorePrivateData, rawImageSize int) error {
@@ -163,7 +163,7 @@ func (r *Restore) loopCopyChunk(privateData *restorePrivateData, rawImageSize in
 		}
 
 		privateData.NextRawImageChunk = i + 1
-		if err := setRestorePrivateData(r.repo, r.processUID, privateData); err != nil {
+		if err := setRestorePrivateData(r.repo, r.actionUID, privateData); err != nil {
 			return fmt.Errorf("failed to set nextRawImageChunk to %d: %w",
 				privateData.NextRawImageChunk, err)
 		}
@@ -187,7 +187,7 @@ func (r *Restore) doRestoreDiffPhase(privateData *restorePrivateData, diffs []*j
 	}
 
 	privateData.Phase = Completed
-	return setRestorePrivateData(r.repo, r.processUID, privateData)
+	return setRestorePrivateData(r.repo, r.actionUID, privateData)
 }
 
 func (r *Restore) loopApplyDiff(privateData *restorePrivateData, diff *job.BackupMetadataEntry) error {
@@ -200,7 +200,7 @@ func (r *Restore) loopApplyDiff(privateData *restorePrivateData, diff *job.Backu
 		}
 
 		privateData.NextDiffPart = i + 1
-		if err := setRestorePrivateData(r.repo, r.processUID, privateData); err != nil {
+		if err := setRestorePrivateData(r.repo, r.actionUID, privateData); err != nil {
 			return fmt.Errorf("failed to set nextDiffPart to %d: %w", privateData.NextDiffPart, err)
 		}
 	}
@@ -220,8 +220,8 @@ type restorePrivateData struct {
 	Phase             string `json:"phase,omitempty"`
 }
 
-func getRestorePrivateData(repo model.FinRepository, processUID string) (*restorePrivateData, error) {
-	privateData, err := repo.GetActionPrivateData(processUID)
+func getRestorePrivateData(repo model.FinRepository, actionUID string) (*restorePrivateData, error) {
+	privateData, err := repo.GetActionPrivateData(actionUID)
 	if err != nil {
 		return nil, err
 	}
@@ -237,12 +237,12 @@ func getRestorePrivateData(repo model.FinRepository, processUID string) (*restor
 	return &data, nil
 }
 
-func setRestorePrivateData(repo model.FinRepository, processUID string, data *restorePrivateData) error {
+func setRestorePrivateData(repo model.FinRepository, actionUID string, data *restorePrivateData) error {
 	privateData, err := json.Marshal(data)
 	if err != nil {
 		return fmt.Errorf("failed to marshal private data: %w", err)
 	}
-	if err := repo.UpdateActionPrivateData(processUID, privateData); err != nil {
+	if err := repo.UpdateActionPrivateData(actionUID, privateData); err != nil {
 		return fmt.Errorf("failed to update private data: %w", err)
 	}
 	return nil

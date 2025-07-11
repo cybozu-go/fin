@@ -21,7 +21,7 @@ import (
 func NewBackupInputTemplate(snapID, maxPartSize int) *backup.BackupInput {
 	return &backup.BackupInput{
 		RetryInterval:             1 * time.Second,
-		ProcessUID:                uuid.New().String(),
+		ActionUID:                 uuid.New().String(),
 		TargetFinBackupUID:        uuid.New().String(),
 		TargetRBDPoolName:         "test-pool",
 		TargetRBDImageName:        "test-image",
@@ -39,7 +39,7 @@ func NewIncrementalBackupInputTemplate(src *backup.BackupInput, snapID int) *bac
 	parentSnapID := ret.TargetSnapshotID
 	ret.TargetSnapshotID = snapID
 	ret.SourceCandidateSnapshotID = &parentSnapID
-	ret.ProcessUID = uuid.New().String()
+	ret.ActionUID = uuid.New().String()
 	ret.TargetFinBackupUID = uuid.New().String()
 	return &ret
 }
@@ -54,7 +54,7 @@ func NewRestoreInputTemplate(bi *backup.BackupInput,
 		RawImageChunkSize:   int64(chunkSize),
 		TargetSnapshotID:    snapID,
 		RetryInterval:       bi.RetryInterval,
-		ProcessUID:          bi.ProcessUID,
+		ActionUID:           bi.ActionUID,
 		TargetPVCUID:        bi.TargetPVCUID,
 	}
 }
@@ -72,9 +72,9 @@ func FillRawImageWithRandomData(t *testing.T, rawImagePath string, size int) []b
 	return buf
 }
 
-func AssertActionPrivateDataIsEmpty(t *testing.T, finRepo model.FinRepository, processUID string) {
+func AssertActionPrivateDataIsEmpty(t *testing.T, finRepo model.FinRepository, actionUID string) {
 	t.Helper()
-	_, err := finRepo.GetActionPrivateData(processUID)
+	_, err := finRepo.GetActionPrivateData(actionUID)
 	assert.ErrorIs(t, err, model.ErrNotFound)
 }
 

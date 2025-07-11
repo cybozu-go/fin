@@ -122,7 +122,7 @@ func TestRestoreFromFullBackup_Success(t *testing.T) {
 	require.True(t, bytes.Equal(buf, buf2))
 
 	// Verify the contents of the metadata
-	testutil.AssertActionPrivateDataIsEmpty(t, finRepo, backupInput.ProcessUID)
+	testutil.AssertActionPrivateDataIsEmpty(t, finRepo, backupInput.ActionUID)
 	require.Zero(t, len(rVol.AppliedDiffs()))
 }
 
@@ -242,7 +242,7 @@ func TestRestoreFromIncrementalBackup_Success(t *testing.T) {
 	require.NoError(t, err)
 
 	// Assert
-	testutil.AssertActionPrivateDataIsEmpty(t, finRepo, fullBackupInput.ProcessUID)
+	testutil.AssertActionPrivateDataIsEmpty(t, finRepo, fullBackupInput.ActionUID)
 
 	buf2 := make([]byte, incrementalSnapshotSize)
 	restoreFile, err := os.Open(rVol.GetPath())
@@ -265,18 +265,18 @@ func TestRestoreFromIncrementalBackup_Success(t *testing.T) {
 
 func TestRestore_ErrorBusy(t *testing.T) {
 	// Arrange
-	processUID := uuid.New().String()
-	differentProcessUID := uuid.New().String()
+	actionUID := uuid.New().String()
+	differentActionUID := uuid.New().String()
 
 	_, finRepo := testutil.CreateNLVAndFinRepoForTest(t)
 
-	err := finRepo.StartOrRestartAction(differentProcessUID, model.Backup)
+	err := finRepo.StartOrRestartAction(differentActionUID, model.Backup)
 	require.NoError(t, err)
 
 	// Act
 	restore := restore.NewRestore(&restore.RestoreInput{
-		Repo:       finRepo,
-		ProcessUID: processUID,
+		Repo:      finRepo,
+		ActionUID: actionUID,
 	})
 	err = restore.Perform()
 
