@@ -92,7 +92,7 @@ func TestFullBackup_Success(t *testing.T) {
 	require.NoError(t, err)
 
 	// Assert
-	testutil.AssertActionPrivateDataIsEmpty(t, finRepo, backupInput.ProcessUID)
+	testutil.AssertActionPrivateDataIsEmpty(t, finRepo, backupInput.ActionUID)
 
 	rawImage, err := fake.ReadRawImage(nlvRepo.GetRawImagePath())
 	assert.NoError(t, err)
@@ -226,7 +226,7 @@ func TestIncrementalBackup_Success(t *testing.T) {
 	require.NoError(t, err)
 
 	// Assert
-	testutil.AssertActionPrivateDataIsEmpty(t, finRepo, fullBackupInput.ProcessUID)
+	testutil.AssertActionPrivateDataIsEmpty(t, finRepo, fullBackupInput.ActionUID)
 	numDiffParts := int(math.Ceil(float64(fullSnapshotSize) / float64(fullBackupInput.MaxPartSize)))
 	for i := range numDiffParts {
 		diffFilePath := nlvRepo.GetDiffPartPath(incrementalBackupInput.TargetSnapshotID, i)
@@ -263,18 +263,18 @@ func TestIncrementalBackup_Success(t *testing.T) {
 
 func TestBackup_ErrorBusy(t *testing.T) {
 	// Arrange
-	processUID := uuid.New().String()
-	differentProcessUID := uuid.New().String()
+	actionUID := uuid.New().String()
+	differentActionUID := uuid.New().String()
 
 	_, finRepo := testutil.CreateNLVAndFinRepoForTest(t)
 
-	err := finRepo.StartOrRestartAction(differentProcessUID, model.Backup)
+	err := finRepo.StartOrRestartAction(differentActionUID, model.Backup)
 	require.NoError(t, err)
 
 	// Act
 	backup := backup.NewBackup(&backup.BackupInput{
-		Repo:       finRepo,
-		ProcessUID: processUID,
+		Repo:      finRepo,
+		ActionUID: actionUID,
 	})
 	err = backup.Perform()
 

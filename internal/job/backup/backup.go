@@ -24,7 +24,7 @@ type Backup struct {
 	rbdRepo                   model.RBDRepository
 	nodeLocalVolumeRepo       model.NodeLocalVolumeRepository
 	retryInterval             time.Duration
-	processUID                string
+	actionUID                 string
 	targetFinBackupUID        string
 	targetRBDPool             string
 	targetRBDImageName        string
@@ -42,7 +42,7 @@ type BackupInput struct {
 	RBDRepo                   model.RBDRepository
 	NodeLocalVolumeRepo       model.NodeLocalVolumeRepository
 	RetryInterval             time.Duration
-	ProcessUID                string
+	ActionUID                 string
 	TargetFinBackupUID        string
 	TargetRBDPoolName         string
 	TargetRBDImageName        string
@@ -61,7 +61,7 @@ func NewBackup(in *BackupInput) *Backup {
 		rbdRepo:                   in.RBDRepo,
 		nodeLocalVolumeRepo:       in.NodeLocalVolumeRepo,
 		retryInterval:             in.RetryInterval,
-		processUID:                in.ProcessUID,
+		actionUID:                 in.ActionUID,
 		targetFinBackupUID:        in.TargetFinBackupUID,
 		targetRBDPool:             in.TargetRBDPoolName,
 		targetRBDImageName:        in.TargetRBDImageName,
@@ -76,7 +76,7 @@ func NewBackup(in *BackupInput) *Backup {
 
 // Perform executes the backup process. If it can't get lock, it returns ErrCantLock.
 func (b *Backup) Perform() error {
-	err := b.repo.StartOrRestartAction(b.processUID, model.Backup)
+	err := b.repo.StartOrRestartAction(b.actionUID, model.Backup)
 	if err != nil {
 		if errors.Is(err, model.ErrBusy) {
 			return job.ErrCantLock
@@ -86,14 +86,14 @@ func (b *Backup) Perform() error {
 	if err := b.doBackup(); err != nil {
 		return fmt.Errorf("failed to perform backup: %w", err)
 	}
-	if err := b.repo.CompleteAction(b.processUID); err != nil {
+	if err := b.repo.CompleteAction(b.actionUID); err != nil {
 		return fmt.Errorf("failed to complete action: %w", err)
 	}
 	return nil
 }
 
 func (b *Backup) doBackup() error {
-	privateData, err := getBackupPrivateData(b.repo, b.processUID)
+	privateData, err := getBackupPrivateData(b.repo, b.actionUID)
 	if err != nil {
 		return fmt.Errorf("failed to get private data: %w", err)
 	}
@@ -116,7 +116,7 @@ func (b *Backup) doBackup() error {
 		}
 
 		privateData.Mode = tmpMode
-		if err := setBackupPrivateData(b.repo, b.processUID, privateData); err != nil {
+		if err := setBackupPrivateData(b.repo, b.actionUID, privateData); err != nil {
 			return fmt.Errorf("failed to set private data: %w", err)
 		}
 	}
@@ -278,7 +278,7 @@ func (b *Backup) loopExportDiff(
 		}
 
 		privateData.NextStorePart = i + 1
-		if err := setBackupPrivateData(b.repo, b.processUID, privateData); err != nil {
+		if err := setBackupPrivateData(b.repo, b.actionUID, privateData); err != nil {
 			return fmt.Errorf("failed to set nextStorePart to %d: %w", privateData.NextStorePart, err)
 		}
 	}
@@ -336,7 +336,7 @@ func (b *Backup) loopApplyDiff(privateData *backupPrivateData, targetSnapshot *m
 		}
 
 		privateData.NextPatchPart = i + 1
-		if err := setBackupPrivateData(b.repo, b.processUID, privateData); err != nil {
+		if err := setBackupPrivateData(b.repo, b.actionUID, privateData); err != nil {
 			return fmt.Errorf("failed to set nextPatchPart to %d: %w", privateData.NextPatchPart, err)
 		}
 	}
@@ -374,8 +374,8 @@ type backupPrivateData struct {
 	Mode          string `json:"mode,omitempty"`
 }
 
-func getBackupPrivateData(repo model.FinRepository, processUID string) (*backupPrivateData, error) {
-	privateData, err := repo.GetActionPrivateData(processUID)
+func getBackupPrivateData(repo model.FinRepository, actionUID string) (*backupPrivateData, error) {
+	privateData, err := repo.GetActionPrivateData(actionUID)
 	if err != nil {
 		return nil, err
 	}
@@ -391,12 +391,12 @@ func getBackupPrivateData(repo model.FinRepository, processUID string) (*backupP
 	return &data, nil
 }
 
-func setBackupPrivateData(repo model.FinRepository, processUID string, data *backupPrivateData) error {
+func setBackupPrivateData(repo model.FinRepository, actionUID string, data *backupPrivateData) error {
 	privateData, err := json.Marshal(data)
 	if err != nil {
 		return fmt.Errorf("failed to marshal private data: %w", err)
 	}
-	if err := repo.UpdateActionPrivateData(processUID, privateData); err != nil {
+	if err := repo.UpdateActionPrivateData(actionUID, privateData); err != nil {
 		return fmt.Errorf("failed to update private data: %w", err)
 	}
 	return nil

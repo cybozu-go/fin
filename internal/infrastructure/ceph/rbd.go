@@ -10,6 +10,10 @@ type RBDRepository struct{}
 
 var _ model.RBDRepository = &RBDRepository{}
 
+func NewRBDRepository() *RBDRepository {
+	return &RBDRepository{}
+}
+
 func (r *RBDRepository) ListSnapshots(poolName, imageName string) ([]*model.RBDSnapshot, error) {
 	return nil, errors.New("not implemented")
 }

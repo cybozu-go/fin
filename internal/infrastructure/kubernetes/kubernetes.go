@@ -12,6 +12,10 @@ type KubernetesRepository struct{}
 
 var _ model.KubernetesRepository = &KubernetesRepository{}
 
+func NewKubernetesRepository() *KubernetesRepository {
+	return &KubernetesRepository{}
+}
+
 func (r *KubernetesRepository) GetPVC(name, namespace string) (*corev1.PersistentVolumeClaim, error) {
 	return nil, errors.New("not implemented")
 }
