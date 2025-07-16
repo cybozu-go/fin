@@ -56,36 +56,34 @@ func (r *RestoreVolume) CopyChunk(rawPath string, index int, chunkSize int64) er
 	}
 
 	buf := make([]byte, chunkSize)
-	for {
-		rn, err := rawFile.Read(buf)
-		if err != nil {
-			if errors.Is(err, io.EOF) {
-				break
-			}
-			return fmt.Errorf("failed to read: %w", err)
-		}
-
-		allZero := true
-		for _, b := range buf {
-			if b != 0 {
-				allZero = false
-				break
-			}
-		}
-		if allZero {
+	rn, err := rawFile.Read(buf)
+	if err != nil {
+		if errors.Is(err, io.EOF) {
 			return nil
 		}
+		return fmt.Errorf("failed to read: %w", err)
+	}
 
-		if rn > 0 {
-			wn, err := resVol.Write(buf[:rn])
-			if err != nil {
-				return fmt.Errorf("failed to write: %w", err)
-			}
-			if wn != rn {
-				return fmt.Errorf("short write: wrote %d bytes, expected %d", wn, rn)
-			}
-			// FIXME: calculate and store the checksum of `buf` here.
+	allZero := true
+	for _, b := range buf {
+		if b != 0 {
+			allZero = false
+			break
 		}
+	}
+	if allZero {
+		return nil
+	}
+
+	if rn > 0 {
+		wn, err := resVol.Write(buf[:rn])
+		if err != nil {
+			return fmt.Errorf("failed to write: %w", err)
+		}
+		if wn != rn {
+			return fmt.Errorf("short write: wrote %d bytes, expected %d", wn, rn)
+		}
+		// FIXME: calculate and store the checksum of `buf` here.
 	}
 
 	return nil
