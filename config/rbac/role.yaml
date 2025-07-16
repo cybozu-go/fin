@@ -5,17 +5,33 @@ metadata:
   name: manager-role
 rules:
 - apiGroups:
+  - batch
+  resources:
+  - jobs
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
   - ""
   resources:
   - persistentvolumeclaims
   verbs:
   - get
+  - list
+  - watch
 - apiGroups:
   - ""
   resources:
   - persistentvolumes
   verbs:
   - get
+  - list
+  - watch
 - apiGroups:
   - fin.cybozu.io
   resources:
