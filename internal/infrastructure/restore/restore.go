@@ -65,6 +65,17 @@ func (r *RestoreVolume) CopyChunk(rawPath string, index int, chunkSize int64) er
 			return fmt.Errorf("failed to read: %w", err)
 		}
 
+		allZero := true
+		for _, b := range buf {
+			if b != 0 {
+				allZero = false
+				break
+			}
+		}
+		if allZero {
+			return nil
+		}
+
 		if rn > 0 {
 			wn, err := resVol.Write(buf[:rn])
 			if err != nil {
