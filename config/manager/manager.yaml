@@ -61,12 +61,21 @@ spec:
       - command:
         - /manager
         args:
-          - --leader-elect
-          - --health-probe-bind-address=:8081
-          - --metrics-bind-address=0
+        - --leader-elect
+        - --health-probe-bind-address=:8081
+        - --metrics-bind-address=0
         image: controller:latest
         imagePullPolicy: IfNotPresent
         name: manager
+        env:
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: POD_IMAGE
+          value: controller:latest
+        - name: MAX_PART_SIZE
+          value: 30Mi
         securityContext:
           allowPrivilegeEscalation: false
           capabilities:
@@ -85,5 +94,102 @@ spec:
           initialDelaySeconds: 5
           periodSeconds: 10
         resources: null
+        volumeMounts:
+        - name: ceph-config
+          mountPath: /etc/ceph
+      # Used mantle source code as a reference.
+      # https://github.com/cybozu-go/mantle/blob/593f1c48a037ec57fd2795e48e35ee70d043aa0c/charts/mantle/templates/deployment.yaml#L152
+      - command:
+        - /bin/bash
+        - -c
+        - |
+          # Replicate the script from toolbox.sh inline so the ceph image
+          # can be run directly, instead of requiring the rook toolbox
+          CEPH_CONFIG="/etc/ceph/ceph.conf"
+          MON_CONFIG="/etc/rook/mon-endpoints"
+          KEYRING_FILE="/etc/ceph/keyring"
+          # create a ceph config file in its default location so ceph/rados tools can be used
+          # without specifying any arguments
+          write_endpoints() {
+            endpoints=$(cat ${MON_CONFIG})
+           # filter out the mon names
+            # external cluster can have numbers or hyphens in mon names, handling them in regex
+            # shellcheck disable=SC2001
+            mon_endpoints=$(echo "${endpoints}"| sed 's/[a-z0-9_-]\+=//g')
+           DATE=$(date)
+            echo "$DATE writing mon endpoints to ${CEPH_CONFIG}: ${endpoints}"
+              cat <<EOF > ${CEPH_CONFIG}
+          [global]
+          mon_host = ${mon_endpoints}
+          [client.admin]
+          keyring = ${KEYRING_FILE}
+          EOF
+          }
+          # watch the endpoints config file and update if the mon endpoints ever change
+          watch_endpoints() {
+            # get the timestamp for the target of the soft link
+            real_path=$(realpath ${MON_CONFIG})
+            initial_time=$(stat -c %Z "${real_path}")
+            while true; do
+              real_path=$(realpath ${MON_CONFIG})
+              latest_time=$(stat -c %Z "${real_path}")
+             if [[ "${latest_time}" != "${initial_time}" ]]; then
+                write_endpoints
+                initial_time=${latest_time}
+              fi
+             sleep 10
+            done
+          }
+          # read the secret from an env var (for backward compatibility), or from the secret file
+          ceph_secret=${ROOK_CEPH_SECRET}
+          if [[ "$ceph_secret" == "" ]]; then
+            ceph_secret=$(cat /var/lib/rook-ceph-mon/secret.keyring)
+          fi
+          # create the keyring file
+          cat <<EOF > ${KEYRING_FILE}
+          [${ROOK_CEPH_USERNAME}]
+          key = ${ceph_secret}
+          EOF
+          # write the initial config file
+          write_endpoints
+          # continuously update the mon endpoints if they fail over
+          watch_endpoints
+        env:
+        - name: ROOK_CEPH_USERNAME
+          valueFrom:
+            secretKeyRef:
+              key: ceph-username
+              name: rook-ceph-mon
+        image:  controller:latest
+        imagePullPolicy: IfNotPresent
+        name: toolbox
+        securityContext:
+          runAsGroup: 2016
+          runAsNonRoot: true
+          runAsUser: 2016
+        volumeMounts:
+        - mountPath: /etc/ceph
+          name: ceph-config
+        - mountPath: /etc/rook
+          name: mon-endpoint-volume
+        - name: ceph-admin-secret
+          mountPath: /var/lib/rook-ceph-mon
+          readOnly: true
+      volumes:
+      - name: ceph-admin-secret
+        secret:
+          secretName: rook-ceph-mon
+          optional: false
+          items:
+            - key: ceph-secret
+              path: secret.keyring
+      - configMap:
+          items:
+          - key: data
+            path: mon-endpoints
+          name: rook-ceph-mon-endpoints
+        name: mon-endpoint-volume
+      - emptyDir: {}
+        name: ceph-config
       serviceAccountName: controller-manager
       terminationGracePeriodSeconds: 10
