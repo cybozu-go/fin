@@ -36,7 +36,9 @@ func TestFullBackup_Success(t *testing.T) {
 	backupInput := testutil.NewBackupInputTemplate(1, 512)
 	targetSnapshotName := "test-snap"
 	targetSnapshotSize := 1000
-	targetSnapshotTimestamp := "Mon Jan  2 15:04:05 2006"
+	ts, err := time.Parse(testutil.SnapshotTimeFormat, "Mon Jan  2 15:04:05 2006")
+	require.NoError(t, err)
+	targetSnapshotTimestamp := model.NewRBDTimeStamp(ts)
 	targetPVName := "test-pv"
 
 	fakePVC := corev1.PersistentVolumeClaim{
@@ -88,7 +90,7 @@ func TestFullBackup_Success(t *testing.T) {
 
 	// Act
 	backup := backup.NewBackup(backupInput)
-	err := backup.Perform()
+	err = backup.Perform()
 	require.NoError(t, err)
 
 	// Assert
@@ -118,7 +120,7 @@ func TestFullBackup_Success(t *testing.T) {
 		assert.Equal(t, backupInput.TargetSnapshotID, diff.SnapID)
 		assert.Equal(t, targetSnapshotName, diff.SnapName)
 		assert.Equal(t, targetSnapshotSize, diff.SnapSize)
-		assert.Equal(t, targetSnapshotTimestamp, diff.SnapTimestamp)
+		assert.Equal(t, targetSnapshotTimestamp.Time, diff.SnapTimestamp)
 	}
 
 	metadata, err := job.GetBackupMetadata(finRepo)
@@ -130,7 +132,7 @@ func TestFullBackup_Success(t *testing.T) {
 	assert.Equal(t, targetSnapshotName, metadata.Raw.SnapName)
 	assert.Equal(t, targetSnapshotSize, metadata.Raw.SnapSize)
 	assert.Equal(t, backupInput.MaxPartSize, metadata.Raw.PartSize)
-	assert.Equal(t, targetSnapshotTimestamp, metadata.Raw.CreatedAt.Format(time.ANSIC))
+	assert.Equal(t, targetSnapshotTimestamp.Time, metadata.Raw.CreatedAt)
 	assert.Empty(t, metadata.Diff)
 }
 
@@ -152,13 +154,17 @@ func TestIncrementalBackup_Success(t *testing.T) {
 	fullBackupInput := testutil.NewBackupInputTemplate(1, 512)
 	fullSnapshotName := "test-snap1"
 	fullSnapshotSize := 900
-	fullSnapshotTimestamp := "Mon Jan  2 15:03:05 2006"
+	fts, err := time.Parse(testutil.SnapshotTimeFormat, "Mon Jan  2 15:03:05 2006")
+	require.NoError(t, err)
+	fullSnapshotTimestamp := model.NewRBDTimeStamp(fts)
 	targetPVName := "test-pv"
 
 	incrementalBackupInput := testutil.NewIncrementalBackupInputTemplate(fullBackupInput, 2)
 	incrementalSnapshotName := "test-snap2"
 	incrementalSnapshotSize := 1000
-	incrementalSnapshotTimestamp := "Mon Jan  2 15:04:05 2006"
+	its, err := time.Parse(testutil.SnapshotTimeFormat, "Mon Jan  2 15:04:05 2006")
+	require.NoError(t, err)
+	incrementalSnapshotTimestamp := model.NewRBDTimeStamp(its)
 
 	k8sRepo := fake.NewKubernetesRepository(
 		map[types.NamespacedName]*corev1.PersistentVolumeClaim{
@@ -217,7 +223,7 @@ func TestIncrementalBackup_Success(t *testing.T) {
 
 	// Create a full backup
 	fullBackup := backup.NewBackup(fullBackupInput)
-	err := fullBackup.Perform()
+	err = fullBackup.Perform()
 	require.NoError(t, err)
 
 	// Act
@@ -239,7 +245,7 @@ func TestIncrementalBackup_Success(t *testing.T) {
 		assert.Equal(t, incrementalBackupInput.TargetSnapshotID, diff.SnapID)
 		assert.Equal(t, incrementalSnapshotName, diff.SnapName)
 		assert.Equal(t, incrementalSnapshotSize, diff.SnapSize)
-		assert.Equal(t, incrementalSnapshotTimestamp, diff.SnapTimestamp)
+		assert.Equal(t, incrementalSnapshotTimestamp.Time, diff.SnapTimestamp)
 	}
 
 	metadata, err := job.GetBackupMetadata(finRepo)
@@ -251,14 +257,14 @@ func TestIncrementalBackup_Success(t *testing.T) {
 	assert.Equal(t, fullSnapshotName, metadata.Raw.SnapName)
 	assert.Equal(t, fullSnapshotSize, metadata.Raw.SnapSize)
 	assert.Equal(t, fullBackupInput.MaxPartSize, metadata.Raw.PartSize)
-	assert.Equal(t, fullSnapshotTimestamp, metadata.Raw.CreatedAt.Format(time.ANSIC))
+	assert.Equal(t, fullSnapshotTimestamp.Time, metadata.Raw.CreatedAt)
 	assert.NotNil(t, metadata.Diff)
 	assert.Len(t, metadata.Diff, 1)
 	assert.Equal(t, incrementalBackupInput.TargetSnapshotID, metadata.Diff[0].SnapID)
 	assert.Equal(t, incrementalSnapshotName, metadata.Diff[0].SnapName)
 	assert.Equal(t, incrementalSnapshotSize, metadata.Diff[0].SnapSize)
 	assert.Equal(t, incrementalBackupInput.MaxPartSize, metadata.Diff[0].PartSize)
-	assert.Equal(t, incrementalSnapshotTimestamp, metadata.Diff[0].CreatedAt.Format(time.ANSIC))
+	assert.Equal(t, incrementalSnapshotTimestamp.Time, metadata.Diff[0].CreatedAt)
 }
 
 func TestBackup_ErrorBusy(t *testing.T) {

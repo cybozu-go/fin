@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"slices"
+	"time"
 
 	"github.com/cybozu-go/fin/internal/model"
 )
@@ -20,16 +21,16 @@ type RawImage struct {
 }
 
 type ExportedDiff struct {
-	PoolName      string  `json:"poolName"`
-	ReadOffset    int     `json:"readOffset"`
-	ReadLength    int     `json:"readLength"`
-	FromSnap      *string `json:"fromSnap"`
-	MidSnapPrefix string  `json:"midSnapPrefix"`
-	ImageName     string  `json:"imageName"`
-	SnapID        int     `json:"snapId"`
-	SnapName      string  `json:"snapName"`
-	SnapSize      int     `json:"snapSize"`
-	SnapTimestamp string  `json:"snapTimestamp"`
+	PoolName      string    `json:"poolName"`
+	ReadOffset    int       `json:"readOffset"`
+	ReadLength    int       `json:"readLength"`
+	FromSnap      *string   `json:"fromSnap"`
+	MidSnapPrefix string    `json:"midSnapPrefix"`
+	ImageName     string    `json:"imageName"`
+	SnapID        int       `json:"snapId"`
+	SnapName      string    `json:"snapName"`
+	SnapSize      int       `json:"snapSize"`
+	SnapTimestamp time.Time `json:"snapTimestamp"`
 }
 
 type RBDRepository struct {
@@ -81,7 +82,7 @@ func (r *RBDRepository) ExportDiff(input *model.ExportDiffInput) error {
 		SnapID:        snapshot.ID,
 		SnapName:      snapshot.Name,
 		SnapSize:      snapshot.Size,
-		SnapTimestamp: snapshot.Timestamp,
+		SnapTimestamp: snapshot.Timestamp.Time,
 	}
 	if err := encoder.Encode(diff); err != nil {
 		return fmt.Errorf("failed to encode exported diff: %w", err)

@@ -286,13 +286,8 @@ func (b *Backup) loopExportDiff(
 }
 
 func (b *Backup) declareStoringCompleted(targetSnapshot *model.RBDSnapshot) error {
-	createdAt, err := time.Parse("Mon Jan  2 15:04:05 2006", targetSnapshot.Timestamp)
-	if err != nil {
-		return fmt.Errorf("failed to parse snapshot timestamp: %w", err)
-	}
-
 	var metadata *job.BackupMetadata
-	metadata, err = job.GetBackupMetadata(b.repo)
+	metadata, err := job.GetBackupMetadata(b.repo)
 	if err != nil {
 		if !errors.Is(err, model.ErrNotFound) {
 			return fmt.Errorf("failed to get backup metadata: %w", err)
@@ -309,7 +304,7 @@ func (b *Backup) declareStoringCompleted(targetSnapshot *model.RBDSnapshot) erro
 	metadata.Diff[0].SnapName = targetSnapshot.Name
 	metadata.Diff[0].SnapSize = targetSnapshot.Size
 	metadata.Diff[0].PartSize = b.maxPartSize
-	metadata.Diff[0].CreatedAt = createdAt
+	metadata.Diff[0].CreatedAt = targetSnapshot.Timestamp.Time
 
 	return job.SetBackupMetadata(b.repo, metadata)
 }
@@ -344,11 +339,6 @@ func (b *Backup) loopApplyDiff(privateData *backupPrivateData, targetSnapshot *m
 }
 
 func (b *Backup) declareFullBackupApplicationCompleted(targetSnapshot *model.RBDSnapshot) error {
-	createdAt, err := time.Parse("Mon Jan  2 15:04:05 2006", targetSnapshot.Timestamp)
-	if err != nil {
-		return fmt.Errorf("failed to parse snapshot timestamp: %w", err)
-	}
-
 	metadata, err := job.GetBackupMetadata(b.repo)
 	if err != nil {
 		return fmt.Errorf("failed to get backup metadata: %w", err)
@@ -362,7 +352,7 @@ func (b *Backup) declareFullBackupApplicationCompleted(targetSnapshot *model.RBD
 		SnapName:  targetSnapshot.Name,
 		SnapSize:  targetSnapshot.Size,
 		PartSize:  b.maxPartSize,
-		CreatedAt: createdAt,
+		CreatedAt: targetSnapshot.Timestamp.Time,
 	}
 
 	return job.SetBackupMetadata(b.repo, metadata)
