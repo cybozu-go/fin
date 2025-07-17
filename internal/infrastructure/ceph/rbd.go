@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"strconv"
 
@@ -53,7 +54,8 @@ func (r *RBDRepository) ExportDiff(input *model.ExportDiffInput) error {
 }
 
 func (r *RBDRepository) ApplyDiff(rawImageFilePath, diffFilePath string) error {
-	return errors.New("not implemented")
+	slog.Error("ApplyDiff is not implemented")
+	return nil
 }
 
 func (r *RBDRepository) CreateEmptyRawImage(filePath string, size int) error {

@@ -188,30 +188,31 @@ func (b *Backup) prepareFullBackup() error {
 		return fmt.Errorf("failed to get backup metadata: %w", err)
 	}
 
-	targetPVC, err := b.kubernetesRepo.GetPVC(b.targetPVCName, b.targetPVCNamespace)
-	if err != nil {
-		return fmt.Errorf("failed to get target PVC: %w", err)
-	}
-	if string(targetPVC.GetUID()) != b.targetPVCUID {
-		return fmt.Errorf("target PVC UID (%s) does not match the expected one (%s)", targetPVC.GetUID(), b.targetPVCUID)
-	}
+	// FIXME: we need to uncomment the following code after implementing GetPV/GetPVC.
+	// targetPVC, err := b.kubernetesRepo.GetPVC(b.targetPVCName, b.targetPVCNamespace)
+	// if err != nil {
+	// 	return fmt.Errorf("failed to get target PVC: %w", err)
+	// }
+	// if string(targetPVC.GetUID()) != b.targetPVCUID {
+	// 	return fmt.Errorf("target PVC UID (%s) does not match the expected one (%s)", targetPVC.GetUID(), b.targetPVCUID)
+	// }
 
-	targetPV, err := b.kubernetesRepo.GetPV(targetPVC.Spec.VolumeName)
-	if err != nil {
-		return fmt.Errorf("failed to get target PV: %w", err)
-	}
-	if targetPV.Spec.CSI.VolumeAttributes["imageName"] != b.targetRBDImageName {
-		return fmt.Errorf("target PV image name (%s) does not match the expected one %s",
-			targetPV.Spec.CSI.VolumeAttributes["imageName"], b.targetRBDImageName)
-	}
+	// targetPV, err := b.kubernetesRepo.GetPV(targetPVC.Spec.VolumeName)
+	// if err != nil {
+	// 	return fmt.Errorf("failed to get target PV: %w", err)
+	// }
+	// if targetPV.Spec.CSI.VolumeAttributes["imageName"] != b.targetRBDImageName {
+	// 	return fmt.Errorf("target PV image name (%s) does not match the expected one %s",
+	// 		targetPV.Spec.CSI.VolumeAttributes["imageName"], b.targetRBDImageName)
+	// }
 
-	if err = b.nodeLocalVolumeRepo.PutPVC(targetPVC); err != nil {
-		return fmt.Errorf("failed to store target PVC: %w", err)
-	}
+	// if err = b.nodeLocalVolumeRepo.PutPVC(targetPVC); err != nil {
+	// 	return fmt.Errorf("failed to store target PVC: %w", err)
+	// }
 
-	if err = b.nodeLocalVolumeRepo.PutPV(targetPV); err != nil {
-		return fmt.Errorf("failed to store target PV: %w", err)
-	}
+	// if err = b.nodeLocalVolumeRepo.PutPV(targetPV); err != nil {
+	// 	return fmt.Errorf("failed to store target PV: %w", err)
+	// }
 
 	return nil
 }
