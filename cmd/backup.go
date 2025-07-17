@@ -3,6 +3,7 @@ package cmd
 import (
 	"database/sql"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -131,6 +132,8 @@ func backupJobMain() error {
 	if err != nil {
 		return fmt.Errorf("failed to perform backup: %w", err)
 	}
+
+	slog.Info("Backup job completed successfully")
 
 	return nil
 }
