@@ -130,8 +130,8 @@ func (r *Restore) doDiscardPhase(privateData *restorePrivateData) error {
 	if privateData.Phase != Discard {
 		return nil
 	}
-	if err := r.restoreVol.BlkDiscard(); err != nil {
-		return fmt.Errorf("blkdiscard failed: %w", err)
+	if err := r.restoreVol.ZeroOut(); err != nil {
+		return fmt.Errorf("failed to zero out restore volume: %w", err)
 	}
 	privateData.Phase = RestoreRawImage
 	return setRestorePrivateData(r.repo, r.actionUID, privateData)

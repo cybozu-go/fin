@@ -5,8 +5,8 @@ type RestoreVolume interface {
 	// GetPath return the path of the restore volume's block device file.
 	GetPath() string
 
-	// BlkDiscard issues `blkdiscard <bdev file>`.
-	BlkDiscard() error
+	// ZeroOut fills the block device with zero.
+	ZeroOut() error
 
 	// Apply diff applies diff to the restore volume
 	ApplyDiff(diffFilePath string) error
