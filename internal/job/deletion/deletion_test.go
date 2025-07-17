@@ -55,7 +55,9 @@ func TestDelete_RawOnlyCase_Success(t *testing.T) {
 	require.NoError(t, job.SetBackupMetadata(finRepo, metadata))
 
 	// Create raw.img file to simulate existing backup
-	require.NoError(t, rbdRepo.CreateEmptyRawImage(nlvRepo.GetRawImagePath(), 1000))
+	file, err := os.Create(nlvRepo.GetRawImagePath())
+	require.NoError(t, err)
+	require.NoError(t, file.Close())
 
 	// Act
 	deletionJob := deletion.NewDeletion(&deletion.DeletionInput{
@@ -66,7 +68,7 @@ func TestDelete_RawOnlyCase_Success(t *testing.T) {
 		TargetSnapshotID:    targetSnapshotID,
 		TargetPVCUID:        targetPVCUID,
 	})
-	err := deletionJob.Perform()
+	err = deletionJob.Perform()
 	require.NoError(t, err)
 
 	// Verify backup metadata is updated (raw should be empty)

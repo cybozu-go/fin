@@ -126,11 +126,6 @@ type RBDRepository interface {
 
 	// ApplyDiffToRawImage applies the difference from the diff file to the raw image file.
 	ApplyDiffToRawImage(rawImageFilePath, diffFilePath, fromSnapName, toSnapName string) error
-
-	// CreateEmptyRawImage creates an empty file with the specified size.
-	// It returns an error if the file creation fails.
-	// If the file already exists, it returns `ErrAlreadyExists`.
-	CreateEmptyRawImage(filePath string, size int) error
 }
 
 // NodeLocalVolumeRepository is an interface for directly managing a filesystem

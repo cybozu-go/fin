@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"encoding/binary"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -87,26 +86,6 @@ func (r *RBDRepository) ApplyDiffToRawImage(rawImageFilePath, diffFilePath, from
 	const expansionUnitSize = 100 * 1024 * 1024 * 1024 // 100 GiB
 
 	return applyDiffToRawImage(rawImageFilePath, diffFile, fromSnapName, toSnapName, expansionUnitSize)
-}
-
-func (r *RBDRepository) CreateEmptyRawImage(filePath string, size int) error {
-	if size <= 0 {
-		return errors.New("invalid raw image size")
-	}
-	f, err := os.Create(filePath)
-	if err != nil {
-		return fmt.Errorf("failed to create file %s: %w", filePath, err)
-	}
-	defer func() { _ = f.Close() }()
-
-	if _, err := f.Seek(int64(size)-1, io.SeekStart); err != nil {
-		return fmt.Errorf("failed to seek to end of file %s: %w", filePath, err)
-	}
-
-	if _, err := f.Write([]byte{0}); err != nil {
-		return fmt.Errorf("failed to write to file %s: %w", filePath, err)
-	}
-	return nil
 }
 
 func applyDiffToBlockDevice(blockDevicePath string, diffFile io.Reader, fromSnapName, toSnapName string) error {

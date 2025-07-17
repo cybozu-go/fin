@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"path/filepath"
 	"slices"
 	"time"
 
@@ -151,9 +150,6 @@ func (b *Backup) doBackup() error {
 	// FIXME: We need to verify the backup.
 
 	if privateData.Mode == modeFull {
-		if err := b.prepareRawImageFile(targetSnapshot); err != nil {
-			return fmt.Errorf("failed to prepare raw image file: %w", err)
-		}
 		if err := b.loopApplyDiff(privateData, targetSnapshot); err != nil {
 			return fmt.Errorf("failed to loop apply diff: %w", err)
 		}
@@ -307,17 +303,6 @@ func (b *Backup) declareStoringCompleted(targetSnapshot *model.RBDSnapshot) erro
 	metadata.Diff[0].CreatedAt = targetSnapshot.Timestamp.Time
 
 	return job.SetBackupMetadata(b.repo, metadata)
-}
-
-func (b *Backup) prepareRawImageFile(targetSnapshot *model.RBDSnapshot) error {
-	err := b.rbdRepo.CreateEmptyRawImage(
-		filepath.Join(b.nodeLocalVolumeRepo.GetRawImagePath()),
-		targetSnapshot.Size,
-	)
-	if err != nil && !errors.Is(err, model.ErrAlreadyExists) {
-		return fmt.Errorf("failed to allocate space for raw image: %w", err)
-	}
-	return nil
 }
 
 func (b *Backup) loopApplyDiff(privateData *backupPrivateData, targetSnapshot *model.RBDSnapshot) error {

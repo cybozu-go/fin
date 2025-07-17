@@ -98,7 +98,6 @@ func TestFullBackup_Success(t *testing.T) {
 
 	rawImage, err := fake.ReadRawImage(nlvRepo.GetRawImagePath())
 	assert.NoError(t, err)
-	assert.Equal(t, targetSnapshotSize, rawImage.Size)
 	assert.Equal(t, 2, len(rawImage.AppliedDiffs))
 	assert.Equal(t, 0, rawImage.AppliedDiffs[0].ReadOffset)
 	assert.Equal(t, backupInput.MaxPartSize, rawImage.AppliedDiffs[0].ReadLength)

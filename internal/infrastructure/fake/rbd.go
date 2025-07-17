@@ -16,7 +16,6 @@ type PoolImageName struct {
 }
 
 type RawImage struct {
-	Size         int             `json:"size"`
 	AppliedDiffs []*ExportedDiff `json:"appliedDiffs"`
 }
 
@@ -90,29 +89,6 @@ func (r *RBDRepository) ExportDiff(input *model.ExportDiffInput) error {
 	return nil
 }
 
-func (r *RBDRepository) CreateEmptyRawImage(filePath string, size int) error {
-	if _, err := os.Stat(filePath); err == nil {
-		return model.ErrAlreadyExists
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("failed to check file existence: %w", err)
-	}
-
-	file, err := os.Create(filePath)
-	if err != nil {
-		return fmt.Errorf("failed to create raw image file: %w", err)
-	}
-	defer func() { _ = file.Close() }()
-
-	encoder := json.NewEncoder(file)
-	rawImage := RawImage{
-		Size: size,
-	}
-	if err := encoder.Encode(rawImage); err != nil {
-		return fmt.Errorf("failed to encode raw image: %w", err)
-	}
-	return nil
-}
-
 func (r *RBDRepository) ApplyDiffToBlockDevice(blockDevicePath, diffFilePath, fromSnapName, toSnapName string) error {
 	return r.applyDiff(blockDevicePath, diffFilePath, fromSnapName, toSnapName)
 }
@@ -122,6 +98,10 @@ func (r *RBDRepository) ApplyDiffToRawImage(rawImageFilePath, diffFilePath, from
 }
 
 func (r *RBDRepository) applyDiff(rawImageFilePath, diffFilePath, fromSnapName, toSnapName string) error {
+	err := createRawImageIfNotExists(rawImageFilePath)
+	if err != nil {
+		return fmt.Errorf("failed to create raw image if not exists: %w", err)
+	}
 	rawImage, err := ReadRawImage(rawImageFilePath)
 	if err != nil {
 		return fmt.Errorf("failed to decode raw image: %w", err)
@@ -157,7 +137,6 @@ func (r *RBDRepository) applyDiff(rawImageFilePath, diffFilePath, fromSnapName, 
 
 	// update the raw image
 	rawImage.AppliedDiffs = append(rawImage.AppliedDiffs, diff)
-	rawImage.Size = max(rawImage.Size, min(diff.SnapSize, diff.ReadOffset+diff.ReadLength))
 
 	// write the updated raw image back to the file
 	rawImageFile, err := os.Create(rawImageFilePath)
@@ -170,6 +149,27 @@ func (r *RBDRepository) applyDiff(rawImageFilePath, diffFilePath, fromSnapName, 
 		return fmt.Errorf("failed to encode updated raw image: %w", err)
 	}
 
+	return nil
+}
+
+func createRawImageIfNotExists(filePath string) error {
+	if _, err := os.Stat(filePath); err == nil {
+		return nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("failed to check file existence: %w", err)
+	}
+
+	file, err := os.Create(filePath)
+	if err != nil {
+		return fmt.Errorf("failed to create raw image file: %w", err)
+	}
+	defer func() { _ = file.Close() }()
+
+	encoder := json.NewEncoder(file)
+	rawImage := RawImage{}
+	if err := encoder.Encode(rawImage); err != nil {
+		return fmt.Errorf("failed to encode raw image: %w", err)
+	}
 	return nil
 }
 
