@@ -26,6 +26,19 @@ type NodeLocalVolumeRepository struct {
 var _ model.NodeLocalVolumeRepository = &NodeLocalVolumeRepository{}
 
 func NewNodeLocalVolumeRepository(rootPath string) (*NodeLocalVolumeRepository, error) {
+	st, err := os.Stat(rootPath)
+	if err != nil {
+		if !errors.Is(err, fs.ErrNotExist) {
+			return nil, fmt.Errorf("failed to stat %s: %w", rootPath, err)
+		}
+		err = os.MkdirAll(rootPath, 0755)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create root directory %s: %w", rootPath, err)
+		}
+	} else if !st.IsDir() {
+		return nil, fmt.Errorf("%s already exists but is not a directory", rootPath)
+	}
+
 	root, err := os.OpenRoot(rootPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open root directory: %w", err)
