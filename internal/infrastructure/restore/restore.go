@@ -1,10 +1,12 @@
 package restore
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 
 	"github.com/cybozu-go/fin/internal/model"
 )
@@ -25,8 +27,18 @@ func (r *RestoreVolume) GetPath() string {
 	return r.path
 }
 
-func (r *RestoreVolume) BlkDiscard() error {
-	return errors.New("not implemented")
+func (r *RestoreVolume) ZeroOut() error {
+	cmd := exec.Command("blkdiscard", "-z", r.GetPath())
+
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
+	err := cmd.Run()
+	if err != nil {
+		return fmt.Errorf("failed to zero out %s: %w: %s", r.GetPath(), err, stderr.String())
+	}
+
+	return nil
 }
 
 func (r *RestoreVolume) ApplyDiff(diffPath string) error {

@@ -39,7 +39,7 @@ func (r *restoreVolume) GetPath() string {
 	return r.real.GetPath()
 }
 
-func (r *restoreVolume) BlkDiscard() error {
+func (r *restoreVolume) ZeroOut() error {
 	return nil
 }
 
