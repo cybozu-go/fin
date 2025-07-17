@@ -21,6 +21,16 @@ func NewRBDRepository() *RBDRepository {
 	return &RBDRepository{}
 }
 
+func (r *RBDRepository) CreateSnapshot(poolName, imageName, snapName string) error {
+	args := []string{"snap", "create", fmt.Sprintf("%s/%s@%s", poolName, imageName, snapName)}
+	_, stderr, err := runRBDCommand(args...)
+	if err != nil {
+		return fmt.Errorf("failed to create RBD snapshot: %w, stderr: %s", err, string(stderr))
+	}
+
+	return nil
+}
+
 func (r *RBDRepository) ListSnapshots(poolName, imageName string) ([]*model.RBDSnapshot, error) {
 	args := []string{"snap", "ls", "--format", "json", fmt.Sprintf("%s/%s", poolName, imageName)}
 	stdout, stderr, err := runRBDCommand(args...)

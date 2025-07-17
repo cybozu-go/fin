@@ -9,6 +9,7 @@ import (
 	// to ensure that exec-entrypoint and run can make use of them.
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
+	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -20,6 +21,7 @@ import (
 
 	finv1 "github.com/cybozu-go/fin/api/v1"
 	"github.com/cybozu-go/fin/internal/controller"
+	"github.com/cybozu-go/fin/internal/infrastructure/ceph"
 	//+kubebuilder:scaffold:imports
 )
 
@@ -112,10 +114,21 @@ func controllerMain(args []string) {
 		os.Exit(1)
 	}
 
-	if err = (&controller.FinBackupReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
-	}).SetupWithManager(mgr); err != nil {
+	snapRepo := ceph.NewRBDRepository()
+	maxPartSize, err := resource.ParseQuantity(os.Getenv("MAX_PART_SIZE"))
+	if err != nil {
+		setupLog.Error(err, "failed to parse MAX_PART_SIZE environment variable")
+		os.Exit(1)
+	}
+	finBackupReconciler := controller.NewFinBackupReconciler(
+		mgr.GetClient(),
+		mgr.GetScheme(),
+		os.Getenv("POD_NAMESPACE"),
+		os.Getenv("POD_IMAGE"),
+		&maxPartSize,
+		snapRepo,
+	)
+	if err = finBackupReconciler.SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "FinBackup")
 		os.Exit(1)
 	}

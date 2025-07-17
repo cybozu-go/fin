@@ -93,11 +93,25 @@ type ExportDiffInput struct {
 	OutputFile     string
 }
 
+type RBDSnapshotCreateRepository interface {
+	// CreateSnapshot create a snapshot for the specified pool and image.
+	CreateSnapshot(poolName, imageName, snapName string) error
+}
+
+type RBDSnapshotListRepository interface {
+	// ListSnapshots retrieves a list of snapshots for the specified pool and image.
+	ListSnapshots(poolName, imageName string) ([]*RBDSnapshot, error)
+}
+
+type RBDSnapshotRepository interface {
+	RBDSnapshotCreateRepository
+	RBDSnapshotListRepository
+}
+
 // RBDRepository is an interface for managing RBD images and snapshots.
 // It provides any operations that need knowledge of RBD's internal structure.
 type RBDRepository interface {
-	// ListSnapshots retrieves a list of snapshots for the specified pool and image.
-	ListSnapshots(poolName, imageName string) ([]*RBDSnapshot, error)
+	RBDSnapshotListRepository
 
 	// ExportDiff exports the difference between the source snapshot and the target snapshot.
 	// If the source snapshot is not specified, it exports the difference from the empty image.
