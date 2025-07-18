@@ -188,30 +188,31 @@ func (b *Backup) prepareFullBackup() error {
 		return fmt.Errorf("failed to get backup metadata: %w", err)
 	}
 
-	targetPVC, err := b.kubernetesRepo.GetPVC(b.targetPVCName, b.targetPVCNamespace)
-	if err != nil {
-		return fmt.Errorf("failed to get target PVC: %w", err)
-	}
-	if string(targetPVC.GetUID()) != b.targetPVCUID {
-		return fmt.Errorf("target PVC UID (%s) does not match the expected one (%s)", targetPVC.GetUID(), b.targetPVCUID)
-	}
+	// FIXME: we need to uncomment the following code after implementing GetPV/GetPVC.
+	// targetPVC, err := b.kubernetesRepo.GetPVC(b.targetPVCName, b.targetPVCNamespace)
+	// if err != nil {
+	// 	return fmt.Errorf("failed to get target PVC: %w", err)
+	// }
+	// if string(targetPVC.GetUID()) != b.targetPVCUID {
+	// 	return fmt.Errorf("target PVC UID (%s) does not match the expected one (%s)", targetPVC.GetUID(), b.targetPVCUID)
+	// }
 
-	targetPV, err := b.kubernetesRepo.GetPV(targetPVC.Spec.VolumeName)
-	if err != nil {
-		return fmt.Errorf("failed to get target PV: %w", err)
-	}
-	if targetPV.Spec.CSI.VolumeAttributes["imageName"] != b.targetRBDImageName {
-		return fmt.Errorf("target PV image name (%s) does not match the expected one %s",
-			targetPV.Spec.CSI.VolumeAttributes["imageName"], b.targetRBDImageName)
-	}
+	// targetPV, err := b.kubernetesRepo.GetPV(targetPVC.Spec.VolumeName)
+	// if err != nil {
+	// 	return fmt.Errorf("failed to get target PV: %w", err)
+	// }
+	// if targetPV.Spec.CSI.VolumeAttributes["imageName"] != b.targetRBDImageName {
+	// 	return fmt.Errorf("target PV image name (%s) does not match the expected one %s",
+	// 		targetPV.Spec.CSI.VolumeAttributes["imageName"], b.targetRBDImageName)
+	// }
 
-	if err = b.nodeLocalVolumeRepo.PutPVC(targetPVC); err != nil {
-		return fmt.Errorf("failed to store target PVC: %w", err)
-	}
+	// if err = b.nodeLocalVolumeRepo.PutPVC(targetPVC); err != nil {
+	// 	return fmt.Errorf("failed to store target PVC: %w", err)
+	// }
 
-	if err = b.nodeLocalVolumeRepo.PutPV(targetPV); err != nil {
-		return fmt.Errorf("failed to store target PV: %w", err)
-	}
+	// if err = b.nodeLocalVolumeRepo.PutPV(targetPV); err != nil {
+	// 	return fmt.Errorf("failed to store target PV: %w", err)
+	// }
 
 	return nil
 }
@@ -286,13 +287,8 @@ func (b *Backup) loopExportDiff(
 }
 
 func (b *Backup) declareStoringCompleted(targetSnapshot *model.RBDSnapshot) error {
-	createdAt, err := time.Parse("Mon Jan  2 15:04:05 2006", targetSnapshot.Timestamp)
-	if err != nil {
-		return fmt.Errorf("failed to parse snapshot timestamp: %w", err)
-	}
-
 	var metadata *job.BackupMetadata
-	metadata, err = job.GetBackupMetadata(b.repo)
+	metadata, err := job.GetBackupMetadata(b.repo)
 	if err != nil {
 		if !errors.Is(err, model.ErrNotFound) {
 			return fmt.Errorf("failed to get backup metadata: %w", err)
@@ -309,7 +305,7 @@ func (b *Backup) declareStoringCompleted(targetSnapshot *model.RBDSnapshot) erro
 	metadata.Diff[0].SnapName = targetSnapshot.Name
 	metadata.Diff[0].SnapSize = targetSnapshot.Size
 	metadata.Diff[0].PartSize = b.maxPartSize
-	metadata.Diff[0].CreatedAt = createdAt
+	metadata.Diff[0].CreatedAt = targetSnapshot.Timestamp.Time
 
 	return job.SetBackupMetadata(b.repo, metadata)
 }
@@ -344,11 +340,6 @@ func (b *Backup) loopApplyDiff(privateData *backupPrivateData, targetSnapshot *m
 }
 
 func (b *Backup) declareFullBackupApplicationCompleted(targetSnapshot *model.RBDSnapshot) error {
-	createdAt, err := time.Parse("Mon Jan  2 15:04:05 2006", targetSnapshot.Timestamp)
-	if err != nil {
-		return fmt.Errorf("failed to parse snapshot timestamp: %w", err)
-	}
-
 	metadata, err := job.GetBackupMetadata(b.repo)
 	if err != nil {
 		return fmt.Errorf("failed to get backup metadata: %w", err)
@@ -362,7 +353,7 @@ func (b *Backup) declareFullBackupApplicationCompleted(targetSnapshot *model.RBD
 		SnapName:  targetSnapshot.Name,
 		SnapSize:  targetSnapshot.Size,
 		PartSize:  b.maxPartSize,
-		CreatedAt: createdAt,
+		CreatedAt: targetSnapshot.Timestamp.Time,
 	}
 
 	return job.SetBackupMetadata(b.repo, metadata)

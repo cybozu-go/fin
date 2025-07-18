@@ -18,6 +18,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+const SnapshotTimeFormat = "Mon Jan  2 15:04:05 2006"
+
 func NewBackupInputTemplate(snapID, maxPartSize int) *backup.BackupInput {
 	return &backup.BackupInput{
 		RetryInterval:             1 * time.Second,

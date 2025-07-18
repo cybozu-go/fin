@@ -12,7 +12,10 @@ import (
 	"github.com/cybozu-go/fin/test/utils"
 )
 
-const namespace = "fin-system"
+const (
+	rookNamespace = "rook-ceph"
+	pvcNamespace  = "test-ns"
+)
 
 func execWrapper(cmd string, input []byte, args ...string) ([]byte, []byte, error) {
 	var stdout, stderr bytes.Buffer
@@ -41,7 +44,7 @@ var _ = Describe("controller", Ordered, func() {
 			By("validating that the controller-manager pod is running as expected")
 			verifyControllerUp := func() error {
 				// Get the controller pod name
-				stdout, stderr, err := kubectl("get", "-n", namespace,
+				stdout, stderr, err := kubectl("get", "-n", rookNamespace,
 					"pods", "-l", "control-plane=controller-manager",
 					"-o", "go-template={{ range .items }}"+
 						"{{ if not .metadata.deletionTimestamp }}"+
@@ -57,7 +60,7 @@ var _ = Describe("controller", Ordered, func() {
 				ExpectWithOffset(2, controllerPodName).Should(ContainSubstring("controller-manager"))
 
 				// Validate pod status
-				stdout, stderr, err = kubectl("get", "-n", namespace,
+				stdout, stderr, err = kubectl("get", "-n", rookNamespace,
 					"pods", controllerPodName, "-o", "jsonpath={.status.phase}",
 				)
 				Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
@@ -68,12 +71,22 @@ var _ = Describe("controller", Ordered, func() {
 			}
 			EventuallyWithOffset(1, verifyControllerUp, time.Minute, time.Second).Should(Succeed())
 
+			By("creating a namespace")
+			_, stderr, err := kubectl("apply", "-f", "testdata/namespace.yaml")
+			Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
+
 			By("creating a PVC")
-			_, stderr, err := kubectl("apply", "-f", "testdata/backup-target-pvc.yaml")
+			_, stderr, err = kubectl("apply", "-f", "testdata/backup-target-pvc.yaml")
+			Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
+			_, stderr, err = kubectl("wait", "pvc", "-n", pvcNamespace, "test-pvc",
+				"--for=jsonpath={.status.phase}=Bound", "--timeout=2m")
 			Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
 
 			By("creating a backup")
 			_, stderr, err = kubectl("apply", "-f", "testdata/finbackup.yaml")
+			Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
+			_, stderr, err = kubectl("wait", "finbackup", "-n", rookNamespace, "finbackup-test",
+				"--for=condition=ReadyToUse", "--timeout=2m")
 			Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
 		})
 	})

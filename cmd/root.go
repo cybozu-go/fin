@@ -7,9 +7,10 @@ import (
 )
 
 var rootCmd = &cobra.Command{
-	Use: "fin",
+	Use:                "fin",
+	DisableFlagParsing: true,
 	Run: func(cmd *cobra.Command, args []string) {
-		controllerMain()
+		controllerMain(args)
 	},
 }
 

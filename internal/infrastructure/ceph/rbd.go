@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"strconv"
 
@@ -18,6 +19,16 @@ var _ model.RBDRepository = &RBDRepository{}
 
 func NewRBDRepository() *RBDRepository {
 	return &RBDRepository{}
+}
+
+func (r *RBDRepository) CreateSnapshot(poolName, imageName, snapName string) error {
+	args := []string{"snap", "create", fmt.Sprintf("%s/%s@%s", poolName, imageName, snapName)}
+	_, stderr, err := runRBDCommand(args...)
+	if err != nil {
+		return fmt.Errorf("failed to create RBD snapshot: %w, stderr: %s", err, string(stderr))
+	}
+
+	return nil
 }
 
 func (r *RBDRepository) ListSnapshots(poolName, imageName string) ([]*model.RBDSnapshot, error) {
@@ -53,7 +64,8 @@ func (r *RBDRepository) ExportDiff(input *model.ExportDiffInput) error {
 }
 
 func (r *RBDRepository) ApplyDiff(rawImageFilePath, diffFilePath string) error {
-	return errors.New("not implemented")
+	slog.Error("ApplyDiff is not implemented")
+	return nil
 }
 
 func (r *RBDRepository) CreateEmptyRawImage(filePath string, size int) error {

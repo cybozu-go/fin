@@ -23,6 +23,7 @@ test:
 	$(MAKE) launch-minikube
 	$(MAKE) image-build
 	$(MAKE) launch-rook-ceph
+	$(MAKE) setup-fin-volume
 	$(MAKE) setup-components
 	$(MAKE) do-test
 
@@ -75,6 +76,13 @@ create-loop-dev:
 	$(MINIKUBE) ssh -- dd if=/dev/zero of=$(LOOP_FILE) bs=1G seek=32 count=0
 	$(MINIKUBE) ssh -- sudo losetup $(LOOP_DEV) $(LOOP_FILE) || :
 	$(MINIKUBE) ssh -- lsblk
+
+.PHONY: setup-fin-volume
+setup-fin-volume: $(MINIKUBE) $(KUBECTL)
+	$(MINIKUBE) ssh -- sudo mkdir -p /fin
+	$(MINIKUBE) ssh -- sudo chown -R 10000:10000 /fin
+	$(MINIKUBE) ssh -- ls -ld /fin
+	$(KUBECTL) apply -f testdata/fin-volume.yaml
 
 .PHONY: wait-deploy-ready
 wait-deploy-ready: NS=

@@ -49,6 +49,10 @@ type FinBackupStatus struct {
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
 
+const (
+	BackupConditionReadyToUse = "ReadyToUse"
+)
+
 //+kubebuilder:object:root=true
 //+kubebuilder:subresource:status
 //+kubebuilder:printcolumn:name="PVC",type="string",JSONPath=".spec.pvc"

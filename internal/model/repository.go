@@ -2,6 +2,8 @@ package model
 
 import (
 	"errors"
+	"strings"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 )
@@ -57,11 +59,27 @@ type KubernetesRepository interface {
 	GetPV(name string) (*corev1.PersistentVolume, error)
 }
 
+// Copied from the following source code.
+// ref. https://github.com/cybozu-go/mantle/blob/4728f019f9400c297b361a410efbc66c480db8e2/internal/ceph/ceph.go#L19-L39
+type RBDTimeStamp struct {
+	time.Time
+}
+
+func NewRBDTimeStamp(t time.Time) RBDTimeStamp {
+	return RBDTimeStamp{t}
+}
+
+func (t *RBDTimeStamp) UnmarshalJSON(data []byte) error {
+	var err error
+	t.Time, err = time.Parse("Mon Jan  2 15:04:05 2006", strings.Trim(string(data), `"`))
+	return err
+}
+
 type RBDSnapshot struct {
-	ID        int    `json:"id"`
-	Name      string `json:"name"`
-	Size      int    `json:"size"`
-	Timestamp string `json:"timestamp"`
+	ID        int          `json:"id"`
+	Name      string       `json:"name"`
+	Size      int          `json:"size"`
+	Timestamp RBDTimeStamp `json:"timestamp"`
 }
 
 type ExportDiffInput struct {
@@ -75,11 +93,25 @@ type ExportDiffInput struct {
 	OutputFile     string
 }
 
+type RBDSnapshotCreateRepository interface {
+	// CreateSnapshot create a snapshot for the specified pool and image.
+	CreateSnapshot(poolName, imageName, snapName string) error
+}
+
+type RBDSnapshotListRepository interface {
+	// ListSnapshots retrieves a list of snapshots for the specified pool and image.
+	ListSnapshots(poolName, imageName string) ([]*RBDSnapshot, error)
+}
+
+type RBDSnapshotRepository interface {
+	RBDSnapshotCreateRepository
+	RBDSnapshotListRepository
+}
+
 // RBDRepository is an interface for managing RBD images and snapshots.
 // It provides any operations that need knowledge of RBD's internal structure.
 type RBDRepository interface {
-	// ListSnapshots retrieves a list of snapshots for the specified pool and image.
-	ListSnapshots(poolName, imageName string) ([]*RBDSnapshot, error)
+	RBDSnapshotListRepository
 
 	// ExportDiff exports the difference between the source snapshot and the target snapshot.
 	// If the source snapshot is not specified, it exports the difference from the empty image.
