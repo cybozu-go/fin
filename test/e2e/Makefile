@@ -130,9 +130,10 @@ setup-components:
 	$(MAKE) -C ../.. deploy
 
 .PHONY: do-test
-do-test: $(GINKGO) $(KUBECTL)
+do-test: $(GINKGO) $(KUBECTL) $(MINIKUBE)
 	env \
 	PATH=${PATH} \
 	E2ETEST=1 \
 	KUBECTL=$(KUBECTL) \
+	MINIKUBE=$(MINIKUBE) \
 	$(GINKGO) --fail-fast -v $(GINKGO_FLAGS) .
