@@ -425,6 +425,8 @@ func (r *FinBackupReconciler) createOrUpdateBackupJob(
 			RunAsUser:    ptr.To(int64(10000)),
 		}
 
+		job.Spec.Template.Spec.ServiceAccountName = "fin-backup-job"
+
 		job.Spec.Template.Spec.RestartPolicy = corev1.RestartPolicyOnFailure
 
 		job.Spec.Template.Spec.Containers = []corev1.Container{

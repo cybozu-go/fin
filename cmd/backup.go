@@ -15,6 +15,8 @@ import (
 	"github.com/cybozu-go/fin/internal/infrastructure/sqlite"
 	"github.com/cybozu-go/fin/internal/job/backup"
 	"github.com/spf13/cobra"
+	cgk8s "k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 )
 
 var backupCmd = &cobra.Command{
@@ -26,6 +28,18 @@ var backupCmd = &cobra.Command{
 
 func init() {
 	rootCmd.AddCommand(backupCmd)
+}
+
+func getClientSet() (*cgk8s.Clientset, error) {
+	config, err := rest.InClusterConfig()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get in-cluster config: %w", err)
+	}
+	clientSet, err := cgk8s.NewForConfig(config)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create Kubernetes clientset: %w", err)
+	}
+	return clientSet, nil
 }
 
 func backupJobMain() error {
@@ -55,7 +69,11 @@ func backupJobMain() error {
 		return fmt.Errorf("failed to create repository: %w", err)
 	}
 
-	k8sRepo := kubernetes.NewKubernetesRepository()
+	clientSet, err := getClientSet()
+	if err != nil {
+		return fmt.Errorf("failed to get Kubernetes clientset: %w", err)
+	}
+	k8sRepo := kubernetes.NewKubernetesRepository(clientSet)
 	rbdRepo := ceph.NewRBDRepository()
 
 	actionUID := os.Getenv("ACTION_UID")
