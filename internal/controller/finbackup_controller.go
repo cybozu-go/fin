@@ -290,7 +290,7 @@ func (r *FinBackupReconciler) getSnapshot(rbdPool, rbdImage, snapName string) (*
 		return nil, fmt.Errorf("failed to list snapshots: %w", err)
 	}
 	if len(snapshots) == 0 {
-		return nil, fmt.Errorf("no snapshots found for pool %s and image %s", rbdPool, rbdImage)
+		return nil, fmt.Errorf("%w (snapshot: %s, pool: %s, image: %s)", errSnapshotNotFound, snapName, rbdPool, rbdImage)
 	}
 	i := slices.IndexFunc(snapshots, func(s *model.RBDSnapshot) bool {
 		return s.Name == snapName
