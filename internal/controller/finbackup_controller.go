@@ -164,22 +164,10 @@ func (r *FinBackupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		}
 
 		snapName := fmt.Sprintf("fin-backup-%s", backup.GetUID())
-		snap, err := r.getSnapshot(rbdPool, rbdImage, snapName)
+		snap, err := r.createSnapshotIfNeeded(rbdPool, rbdImage, snapName)
 		if err != nil {
-			if !errors.Is(err, errSnapshotNotFound) {
-				logger.Error(err, "failed to get snapshot")
-				return ctrl.Result{}, err
-			}
-			err = r.snapRepo.CreateSnapshot(rbdPool, rbdImage, snapName)
-			if err != nil {
-				logger.Error(err, "failed to create snapshot")
-				return ctrl.Result{}, err
-			}
-			snap, err = r.getSnapshot(rbdPool, rbdImage, snapName)
-			if err != nil {
-				logger.Error(err, "failed to get snapshot after creation")
-				return ctrl.Result{}, err
-			}
+			logger.Error(err, "failed to create or get snapshot")
+			return ctrl.Result{}, err
 		}
 		backup.Status.CreatedAt = metav1.NewTime(snap.Timestamp.Time)
 		backup.Status.SnapID = &snap.ID
@@ -276,6 +264,24 @@ func (r *FinBackupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	logger.Info("FinBackup has become ready to use")
 
 	return ctrl.Result{}, nil
+}
+
+func (r *FinBackupReconciler) createSnapshotIfNeeded(rbdPool, rbdImage, snapName string) (*model.RBDSnapshot, error) {
+	snap, err := r.getSnapshot(rbdPool, rbdImage, snapName)
+	if err != nil {
+		if !errors.Is(err, errSnapshotNotFound) {
+			return nil, fmt.Errorf("failed to get snapshot: %w", err)
+		}
+		err = r.snapRepo.CreateSnapshot(rbdPool, rbdImage, snapName)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create snapshot: %w", err)
+		}
+		snap, err = r.getSnapshot(rbdPool, rbdImage, snapName)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get snapshot after creation: %w", err)
+		}
+	}
+	return snap, nil
 }
 
 func (r *FinBackupReconciler) getSnapshot(rbdPool, rbdImage, snapName string) (*model.RBDSnapshot, error) {
