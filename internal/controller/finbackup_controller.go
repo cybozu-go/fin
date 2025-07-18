@@ -333,7 +333,8 @@ func snapIDPreconditionSatisfied(
 		}
 		if *fb.Status.SnapID < *backup.Status.SnapID {
 			if !meta.IsStatusConditionTrue(fb.Status.Conditions, finv1.BackupConditionReadyToUse) &&
-				fb.DeletionTimestamp.IsZero() {
+				fb.DeletionTimestamp.IsZero() &&
+				fb.Spec.Node == backup.Spec.Node {
 				logger.Info("found another FinBackup which has smaller SnapID and is not ready",
 					"name", fb.Name, "snapID", *fb.Status.SnapID)
 				return false
@@ -351,7 +352,9 @@ func findDiffSourceSnapID(backup *finv1.FinBackup, finBackupList *finv1.FinBacku
 
 	var diffFrom *int
 	for _, fb := range finBackupList.Items {
-		if *fb.Status.SnapID < *backup.Status.SnapID && fb.DeletionTimestamp.IsZero() {
+		if *fb.Status.SnapID < *backup.Status.SnapID &&
+			fb.DeletionTimestamp.IsZero() &&
+			fb.Spec.Node == backup.Spec.Node {
 			if diffFrom == nil || *diffFrom < *fb.Status.SnapID {
 				diffFrom = fb.Status.SnapID
 			}
