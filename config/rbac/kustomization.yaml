@@ -18,4 +18,5 @@ resources:
 - finrestore_viewer_role.yaml
 - finbackup_editor_role.yaml
 - finbackup_viewer_role.yaml
-
+# For jobs.
+- job.yaml
