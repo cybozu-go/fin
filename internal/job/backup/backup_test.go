@@ -36,9 +36,7 @@ func TestFullBackup_Success(t *testing.T) {
 	backupInput := testutil.NewBackupInputTemplate(1, 512)
 	targetSnapshotName := "test-snap"
 	targetSnapshotSize := 1000
-	ts, err := time.Parse(testutil.SnapshotTimeFormat, "Mon Jan  2 15:04:05 2006")
-	require.NoError(t, err)
-	targetSnapshotTimestamp := model.NewRBDTimeStamp(ts)
+	targetSnapshotTimestamp := model.RBDTimeStamp{Time: time.Now().UTC()}
 	targetPVName := "test-pv"
 
 	fakePVC := corev1.PersistentVolumeClaim{
@@ -90,7 +88,7 @@ func TestFullBackup_Success(t *testing.T) {
 
 	// Act
 	backup := backup.NewBackup(backupInput)
-	err = backup.Perform()
+	err := backup.Perform()
 	require.NoError(t, err)
 
 	// Assert
@@ -151,20 +149,18 @@ func TestIncrementalBackup_Success(t *testing.T) {
 	//   Check if the contents of the incremental backup is correct.
 
 	// Arrange
+	today := time.Now().UTC()
+	yesterday := today.Add(-time.Hour)
 	fullBackupInput := testutil.NewBackupInputTemplate(1, 512)
 	fullSnapshotName := "test-snap1"
 	fullSnapshotSize := 900
-	fts, err := time.Parse(testutil.SnapshotTimeFormat, "Mon Jan  2 15:03:05 2006")
-	require.NoError(t, err)
-	fullSnapshotTimestamp := model.NewRBDTimeStamp(fts)
+	fullSnapshotTimestamp := model.RBDTimeStamp{Time: yesterday}
 	targetPVName := "test-pv"
 
 	incrementalBackupInput := testutil.NewIncrementalBackupInputTemplate(fullBackupInput, 2)
 	incrementalSnapshotName := "test-snap2"
 	incrementalSnapshotSize := 1000
-	its, err := time.Parse(testutil.SnapshotTimeFormat, "Mon Jan  2 15:04:05 2006")
-	require.NoError(t, err)
-	incrementalSnapshotTimestamp := model.NewRBDTimeStamp(its)
+	incrementalSnapshotTimestamp := model.RBDTimeStamp{Time: today}
 
 	k8sRepo := fake.NewKubernetesRepository(
 		map[types.NamespacedName]*corev1.PersistentVolumeClaim{
@@ -223,7 +219,7 @@ func TestIncrementalBackup_Success(t *testing.T) {
 
 	// Create a full backup
 	fullBackup := backup.NewBackup(fullBackupInput)
-	err = fullBackup.Perform()
+	err := fullBackup.Perform()
 	require.NoError(t, err)
 
 	// Act

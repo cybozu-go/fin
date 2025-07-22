@@ -68,13 +68,9 @@ type RBDTimeStamp struct {
 	time.Time
 }
 
-func NewRBDTimeStamp(t time.Time) RBDTimeStamp {
-	return RBDTimeStamp{t}
-}
-
 func (t *RBDTimeStamp) UnmarshalJSON(data []byte) error {
 	var err error
-	t.Time, err = time.Parse("Mon Jan  2 15:04:05 2006", strings.Trim(string(data), `"`))
+	t.Time, err = time.Parse(time.ANSIC, strings.Trim(string(data), `"`))
 	return err
 }
 
