@@ -11,8 +11,9 @@ import (
 type ActionKind string
 
 const (
-	Backup  ActionKind = "Backup"
-	Restore ActionKind = "Restore"
+	Backup   ActionKind = "Backup"
+	Restore  ActionKind = "Restore"
+	Deletion ActionKind = "Deletion"
 )
 
 var (
@@ -45,6 +46,8 @@ type FinRepository interface {
 
 	// SetBackupMetadata sets the backup metadata.
 	SetBackupMetadata(metadata []byte) error
+
+	DeleteBackupMetadata() error
 }
 
 type KubernetesRepository interface {
@@ -159,4 +162,7 @@ type NodeLocalVolumeRepository interface {
 
 	// Close closes the NLV, rendering it unusable for further operations.
 	Close() error
+
+	// RemoveRawImage removes the raw image file.
+	RemoveRawImage() error
 }

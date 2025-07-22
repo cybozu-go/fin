@@ -262,3 +262,18 @@ func (fr *FinRepository) SetBackupMetadata(data []byte) error {
 	}
 	return nil
 }
+
+func (fr *FinRepository) DeleteBackupMetadata() error {
+	tx, err := fr.db.Begin()
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	_, err = tx.Exec("DELETE FROM backup_metadata")
+	if err != nil {
+		return fmt.Errorf("failed to delete record in backup_metadata table: %w", err)
+	}
+
+	return tx.Commit()
+}
