@@ -1,27 +1,18 @@
-# https://github.com/containerd/containerd/releases
-CONTAINERD_VERSION := 1.7.17
-# https://github.com/opencontainers/runc/releases
-RUNC_VERSION := v1.1.12
-# https://github.com/containernetworking/plugins/releases
-CNI_PLUGINS_VERSION := v1.5.0
-# https://github.com/kubernetes-sigs/cri-tools/releases
-CRICTL_VERSION := v1.30.0
 # https://github.com/helm/helm/releases
-HELM_VERSION := 3.15.1
-# kind node image version is related to kind version.
-# if you change kind version, also change kind node image version.
-# https://github.com/kubernetes-sigs/kind/releases
-KIND_VERSION := v0.20.0
+HELM_VERSION := 3.17.4
 # It is set by CI using the environment variable, use conditional assignment.
-KUBERNETES_VERSION ?= 1.27.10
+KUBERNETES_VERSION ?= 1.31.11
 # https://github.com/kubernetes/minikube/releases
-MINIKUBE_VERSION := v1.33.1
+MINIKUBE_VERSION := v1.36.0
 # https://github.com/rook/rook/releases
-ROOK_CHART_VERSION := v1.13.8
+ROOK_CHART_VERSION := v1.16.4
 
-ENVTEST_KUBERNETES_VERSION := $(shell echo $(KUBERNETES_VERSION) | cut -d "." -f 1-2)
+ENVTEST_K8S_VERSION := $(shell echo $(KUBERNETES_VERSION) | cut -d "." -f 1-2)
 
-# Tools versions which are defined in go.mod
+# Tools versions
 SELF_DIR := $(dir $(lastword $(MAKEFILE_LIST)))
-CONTROLLER_TOOLS_VERSION := $(shell awk '/sigs\.k8s\.io\/controller-tools/ {print substr($$2, 2)}' $(SELF_DIR)/go.mod)
 GINKGO_VERSION := $(shell awk '/github.com\/onsi\/ginkgo\/v2/ {print $$2}' $(SELF_DIR)/go.mod)
+KUSTOMIZE_VERSION ?= v5.7.0
+CONTROLLER_TOOLS_VERSION ?= v0.18.0
+ENVTEST_VERSION ?= release-0.20
+GOLANGCI_LINT_VERSION ?= v2.1.5
