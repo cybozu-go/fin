@@ -196,3 +196,23 @@ func (r *NodeLocalVolumeRepository) RemoveRawImage() error {
 
 	return nil
 }
+
+// RemoveOngoingFullBackupFiles removes all files corresponding to ongoing full backup.
+// This method returns nil if all files does not exist.
+func (r *NodeLocalVolumeRepository) RemoveOngoingFullBackupFiles(snapID int) error {
+	if err := r.RemoveDiffDirRecursively(snapID); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("remove diff dir: %w", err)
+	}
+
+	if err := r.RemoveRawImage(); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("failed to remove the raw image: %w", err)
+	}
+	if err := r.root.Remove(pvcFilePath); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("failed to remove the pvc file: %w", err)
+	}
+	if err := r.root.Remove(pvFilePath); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("failed to remove the pv file: %w", err)
+	}
+
+	return nil
+}

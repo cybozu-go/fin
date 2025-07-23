@@ -86,7 +86,7 @@ func TestRestoreFromFullBackup_Success(t *testing.T) {
 		},
 	})
 
-	nlvRepo, finRepo := testutil.CreateNLVAndFinRepoForTest(t)
+	nlvRepo, finRepo, _ := testutil.CreateNLVAndFinRepoForTest(t)
 
 	backupInput.Repo = finRepo
 	backupInput.KubernetesRepo = k8sRepo
@@ -211,7 +211,7 @@ func TestRestoreFromIncrementalBackup_Success(t *testing.T) {
 		},
 	})
 
-	nlvRepo, finRepo := testutil.CreateNLVAndFinRepoForTest(t)
+	nlvRepo, finRepo, _ := testutil.CreateNLVAndFinRepoForTest(t)
 
 	fullBackupInput.Repo = finRepo
 	fullBackupInput.KubernetesRepo = k8sRepo
@@ -275,7 +275,7 @@ func TestRestore_ErrorBusy(t *testing.T) {
 	actionUID := uuid.New().String()
 	differentActionUID := uuid.New().String()
 
-	_, finRepo := testutil.CreateNLVAndFinRepoForTest(t)
+	_, finRepo, _ := testutil.CreateNLVAndFinRepoForTest(t)
 
 	err := finRepo.StartOrRestartAction(differentActionUID, model.Backup)
 	require.NoError(t, err)
