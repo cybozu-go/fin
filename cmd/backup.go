@@ -81,11 +81,6 @@ func backupJobMain() error {
 		return fmt.Errorf("ACTION_UID environment variable is not set")
 	}
 
-	finBackupUID := os.Getenv("FIN_BACKUP_UID")
-	if finBackupUID == "" {
-		return fmt.Errorf("FIN_BACKUP_UID environment variable is not set")
-	}
-
 	rbdPool := os.Getenv("RBD_POOL")
 	if rbdPool == "" {
 		return fmt.Errorf("RBD_POOL environment variable is not set")
@@ -136,7 +131,6 @@ func backupJobMain() error {
 		NodeLocalVolumeRepo:       nlvRepo,
 		RetryInterval:             time.Duration(10) * time.Second,
 		ActionUID:                 actionUID,
-		TargetFinBackupUID:        finBackupUID,
 		TargetRBDPoolName:         rbdPool,
 		TargetRBDImageName:        rbdImageName,
 		TargetSnapshotID:          backupSnapshotID,

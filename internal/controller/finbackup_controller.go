@@ -443,10 +443,6 @@ func (r *FinBackupReconciler) createOrUpdateBackupJob(
 						Value: string(backup.GetUID()),
 					},
 					{
-						Name:  "FIN_BACKUP_UID",
-						Value: string(backup.GetUID()),
-					},
-					{
 						Name:  "RBD_POOL",
 						Value: backup.GetAnnotations()[annotationRBDPool],
 					},

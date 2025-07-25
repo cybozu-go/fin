@@ -24,7 +24,6 @@ type Backup struct {
 	nodeLocalVolumeRepo       model.NodeLocalVolumeRepository
 	retryInterval             time.Duration
 	actionUID                 string
-	targetFinBackupUID        string
 	targetRBDPool             string
 	targetRBDImageName        string
 	targetSnapshotID          int
@@ -42,7 +41,6 @@ type BackupInput struct {
 	NodeLocalVolumeRepo       model.NodeLocalVolumeRepository
 	RetryInterval             time.Duration
 	ActionUID                 string
-	TargetFinBackupUID        string
 	TargetRBDPoolName         string
 	TargetRBDImageName        string
 	TargetSnapshotID          int
@@ -61,7 +59,6 @@ func NewBackup(in *BackupInput) *Backup {
 		nodeLocalVolumeRepo:       in.NodeLocalVolumeRepo,
 		retryInterval:             in.RetryInterval,
 		actionUID:                 in.ActionUID,
-		targetFinBackupUID:        in.TargetFinBackupUID,
 		targetRBDPool:             in.TargetRBDPoolName,
 		targetRBDImageName:        in.TargetRBDImageName,
 		targetSnapshotID:          in.TargetSnapshotID,
