@@ -126,7 +126,8 @@ func (b *Backup) doBackup() error {
 		return fmt.Errorf("failed to get target snapshot: %w", err)
 	}
 
-	if err := b.nodeLocalVolumeRepo.MakeDiffDir(b.targetSnapshotID); err != nil {
+	if err := b.nodeLocalVolumeRepo.MakeDiffDir(b.targetSnapshotID); err != nil &&
+		!errors.Is(err, model.ErrAlreadyExists) {
 		return fmt.Errorf("failed to create diff directory: %w", err)
 	}
 
