@@ -152,7 +152,7 @@ type NodeLocalVolumeRepository interface {
 	// GetDBPath return the path of database.
 	GetDBPath() string
 
-	// MakeDiffPartDir creates a diff directory. It uses 0755 as the permission.
+	// MakeDiffDir creates a diff directory. It uses 0755 as the permission.
 	// If the directory already exists, it returns `ErrAlreadyExists`.
 	MakeDiffDir(snapshotID int) error
 
