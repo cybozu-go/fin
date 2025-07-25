@@ -2,18 +2,14 @@ package e2e
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
-	"strconv"
-	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/cybozu-go/fin/internal/model"
 	"github.com/cybozu-go/fin/test/utils"
 )
 
@@ -50,34 +46,6 @@ func execWrapper(cmd string, input []byte, args ...string) ([]byte, []byte, erro
 
 func kubectl(args ...string) ([]byte, []byte, error) {
 	return execWrapper("kubectl", nil, args...)
-}
-
-func getRawImageSize() int {
-	GinkgoHelper()
-	stdout, stderr, err := execWrapper(minikube, nil, "ssh", "--",
-		"ls", "-l", fmt.Sprintf("/fin/%s/%s/raw.img", pvcNamespace, pvcName))
-	Expect(err).NotTo(HaveOccurred(), "stdout: "+string(stderr))
-	stdout, stderr, err = execWrapper("awk", stdout, "{print $5}")
-	Expect(err).NotTo(HaveOccurred(), "stdout: "+string(stderr))
-	rawImgSize, err := strconv.Atoi(strings.TrimSpace(string(stdout)))
-	Expect(err).NotTo(HaveOccurred(), "stdout: "+string(stderr))
-	return rawImgSize
-}
-
-func getSnapshotSize() int {
-	GinkgoHelper()
-	stdout, stderr, err := kubectl("get", "pvc", "-n", pvcNamespace, pvcName, "-o", "jsonpath={.spec.volumeName}")
-	Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
-	stdout, stderr, err = kubectl("get", "pv", string(stdout), "-o", "jsonpath={.spec.csi.volumeAttributes.imageName}")
-	Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
-	stdout, stderr, err = kubectl("exec", "-n", rookNamespace, "deploy/rook-ceph-tools", "--",
-		"rbd", "snap", "ls", "--format", "json", fmt.Sprintf("%s/%s", poolName, string(stdout)))
-	Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
-	snapshots := make([]*model.RBDSnapshot, 0)
-	err = json.Unmarshal(stdout, &snapshots)
-	Expect(err).NotTo(HaveOccurred())
-	Expect(snapshots).NotTo(BeEmpty(), "No snapshots found for the image")
-	return snapshots[0].Size
 }
 
 var _ = Describe("controller", Ordered, func() {
@@ -127,6 +95,23 @@ var _ = Describe("controller", Ordered, func() {
 				"--for=jsonpath={.status.phase}=Bound", "--timeout=2m")
 			Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
 
+			By("creating a pod")
+			_, stderr, err = kubectl("apply", "-f", "testdata/test-pod.yaml")
+			Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
+			_, stderr, err = kubectl("wait", "pod", "-n", pvcNamespace, "test-pod",
+				"--for=condition=Ready", "--timeout=2m")
+			Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
+
+			By("writing data to the pvc")
+			_, stderr, err = kubectl("exec", "-n", pvcNamespace, "test-pod", "--",
+				"dd", "if=/dev/urandom", "of=/data", "bs=1K", "count=1")
+			Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
+			_, stderr, err = kubectl("exec", "-n", pvcNamespace, "test-pod", "--", "sync")
+			Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
+			expectedWrittenData, stderr, err := kubectl("exec", "-n", pvcNamespace, "test-pod", "--",
+				"dd", "if=/data", "bs=1K", "count=1")
+			Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
+
 			By("creating a backup")
 			_, stderr, err = kubectl("apply", "-f", "testdata/finbackup.yaml")
 			Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
@@ -134,10 +119,12 @@ var _ = Describe("controller", Ordered, func() {
 				"--for=condition=ReadyToUse", "--timeout=2m")
 			Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
 
-			By("checking the backup size")
-			rawImageSize := getRawImageSize()
-			snapshotSize := getSnapshotSize()
-			Expect(rawImageSize).To(Equal(snapshotSize))
+			By("verifying the data in raw.img")
+			// `--native-ssh=false` is used to avoid issues of conversion from LF to CRLF.
+			actualWrittenData, stderr, err := execWrapper(minikube, nil, "ssh", "--native-ssh=false", "--",
+				"dd", fmt.Sprintf("if=/fin/%s/%s/raw.img", pvcNamespace, pvcName), "bs=1K", "count=1", "status=none")
+			Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
+			Expect(actualWrittenData).To(Equal(expectedWrittenData), "Data in raw.img does not match the expected data")
 		})
 	})
 })
