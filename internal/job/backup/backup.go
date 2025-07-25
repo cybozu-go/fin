@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"math"
 	"path/filepath"
-	"slices"
 	"time"
 
 	"github.com/cybozu-go/fin/internal/job"
@@ -26,8 +25,6 @@ type Backup struct {
 	retryInterval             time.Duration
 	actionUID                 string
 	targetFinBackupUID        string
-	targetRBDPool             string
-	targetRBDImageName        string
 	targetSnapshotID          int
 	sourceCandidateSnapshotID *int
 	targetPVCName             string
@@ -44,8 +41,6 @@ type BackupInput struct {
 	RetryInterval             time.Duration
 	ActionUID                 string
 	TargetFinBackupUID        string
-	TargetRBDPoolName         string
-	TargetRBDImageName        string
 	TargetSnapshotID          int
 	SourceCandidateSnapshotID *int
 	TargetPVCName             string
@@ -63,8 +58,6 @@ func NewBackup(in *BackupInput) *Backup {
 		retryInterval:             in.RetryInterval,
 		actionUID:                 in.ActionUID,
 		targetFinBackupUID:        in.TargetFinBackupUID,
-		targetRBDPool:             in.TargetRBDPoolName,
-		targetRBDImageName:        in.TargetRBDImageName,
 		targetSnapshotID:          in.TargetSnapshotID,
 		sourceCandidateSnapshotID: in.SourceCandidateSnapshotID,
 		targetPVCName:             in.TargetPVCName,
@@ -121,8 +114,7 @@ func (b *Backup) doBackup() error {
 		}
 	}
 
-	targetSnapshot, err := getSnapshot(
-		b.rbdRepo, b.targetRBDPool, b.targetRBDImageName, b.targetSnapshotID)
+	targetSnapshot, err := b.rbdRepo.GetSnapshot(b.targetSnapshotID)
 	if err != nil {
 		return fmt.Errorf("failed to get target snapshot: %w", err)
 	}
@@ -130,10 +122,9 @@ func (b *Backup) doBackup() error {
 	if err := b.nodeLocalVolumeRepo.MakeDiffDir(b.targetSnapshotID); err != nil {
 		return fmt.Errorf("failed to create diff directory: %w", err)
 	}
-
 	var sourceSnapshotName *string
 	if privateData.Mode == modeIncremental {
-		sourceSnapshot, err := getSnapshot(b.rbdRepo, b.targetRBDPool, b.targetRBDImageName, *b.sourceCandidateSnapshotID)
+		sourceSnapshot, err := b.rbdRepo.GetSnapshot(*b.sourceCandidateSnapshotID)
 		if err != nil {
 			return fmt.Errorf("failed to get source snapshot: %w", err)
 		}
@@ -200,9 +191,9 @@ func (b *Backup) prepareFullBackup() error {
 	if err != nil {
 		return fmt.Errorf("failed to get target PV: %w", err)
 	}
-	if targetPV.Spec.CSI.VolumeAttributes["imageName"] != b.targetRBDImageName {
+	if targetPV.Spec.CSI.VolumeAttributes["imageName"] != b.rbdRepo.ImageName() {
 		return fmt.Errorf("target PV image name (%s) does not match the expected one %s",
-			targetPV.Spec.CSI.VolumeAttributes["imageName"], b.targetRBDImageName)
+			targetPV.Spec.CSI.VolumeAttributes["imageName"], b.rbdRepo.ImageName())
 	}
 
 	if err = b.nodeLocalVolumeRepo.PutPVC(targetPVC); err != nil {
@@ -225,9 +216,9 @@ func (b *Backup) prepareIncrementalBackup() error {
 		return fmt.Errorf("PVC UID in metadata table (%s) does not match the expected one (%s)",
 			metadata.PVCUID, b.targetPVCUID)
 	}
-	if metadata.RBDImageName != b.targetRBDImageName {
+	if metadata.RBDImageName != b.rbdRepo.ImageName() {
 		return fmt.Errorf("RBD image name in metadata table (%s) does not match the expected one (%s)",
-			metadata.RBDImageName, b.targetRBDImageName)
+			metadata.RBDImageName, b.rbdRepo.ImageName())
 	}
 	if len(metadata.Diff) != 0 {
 		return fmt.Errorf("diff metadata already exists for PVC %s", b.targetPVCUID)
@@ -243,20 +234,6 @@ func (b *Backup) prepareIncrementalBackup() error {
 	return nil
 }
 
-func getSnapshot(repo model.RBDRepository, poolName, imageName string, snapshotID int) (*model.RBDSnapshot, error) {
-	snapshots, err := repo.ListSnapshots(poolName, imageName)
-	if err != nil {
-		return nil, fmt.Errorf("failed to list snapshots: %w", err)
-	}
-	targetSnapshotIndex := slices.IndexFunc(snapshots, func(s *model.RBDSnapshot) bool {
-		return s.ID == snapshotID
-	})
-	if targetSnapshotIndex == -1 {
-		return nil, fmt.Errorf("target snapshot ID %d not found", snapshotID)
-	}
-	return snapshots[targetSnapshotIndex], nil
-}
-
 func (b *Backup) loopExportDiff(
 	privateData *backupPrivateData,
 	targetSnapshot *model.RBDSnapshot,
@@ -264,16 +241,13 @@ func (b *Backup) loopExportDiff(
 ) error {
 	partCount := int(math.Ceil(float64(targetSnapshot.Size) / float64(b.maxPartSize)))
 	for i := privateData.NextStorePart; i < partCount; i++ {
-		if err := b.rbdRepo.ExportDiff(&model.ExportDiffInput{
-			PoolName:       b.targetRBDPool,
-			ReadOffset:     b.maxPartSize * i,
-			ReadLength:     b.maxPartSize,
-			FromSnap:       sourceSnapshotName,
-			MidSnapPrefix:  b.targetFinBackupUID,
-			ImageName:      b.targetRBDImageName,
-			TargetSnapName: targetSnapshot.Name,
-			OutputFile:     b.nodeLocalVolumeRepo.GetDiffPartPath(b.targetSnapshotID, i),
-		}); err != nil {
+		if err := b.rbdRepo.ExportDiff(targetSnapshot.Name,
+			string(b.targetFinBackupUID),
+			b.maxPartSize*i,
+			b.maxPartSize,
+			sourceSnapshotName,
+			b.nodeLocalVolumeRepo.GetDiffPartPath(b.targetSnapshotID, i),
+		); err != nil {
 			return fmt.Errorf("failed to export diff: %w", err)
 		}
 
@@ -296,7 +270,7 @@ func (b *Backup) declareStoringCompleted(targetSnapshot *model.RBDSnapshot) erro
 	}
 
 	metadata.PVCUID = b.targetPVCUID
-	metadata.RBDImageName = b.targetRBDImageName
+	metadata.RBDImageName = b.rbdRepo.ImageName()
 	if len(metadata.Diff) == 0 {
 		metadata.Diff = []*job.BackupMetadataEntry{{}}
 	}
@@ -345,7 +319,7 @@ func (b *Backup) declareFullBackupApplicationCompleted(targetSnapshot *model.RBD
 	}
 
 	metadata.PVCUID = b.targetPVCUID
-	metadata.RBDImageName = b.targetRBDImageName
+	metadata.RBDImageName = b.rbdRepo.ImageName()
 	metadata.Diff = []*job.BackupMetadataEntry{}
 	metadata.Raw = &job.BackupMetadataEntry{
 		SnapID:    targetSnapshot.ID,

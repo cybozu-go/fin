@@ -18,15 +18,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const SnapshotTimeFormat = "Mon Jan  2 15:04:05 2006"
+const (
+	PoolName           = "test-pool"
+	ImageName          = "test-image"
+	SnapshotTimeFormat = "Mon Jan  2 15:04:05 2006"
+)
 
 func NewBackupInputTemplate(snapID, maxPartSize int) *backup.BackupInput {
 	return &backup.BackupInput{
 		RetryInterval:             1 * time.Second,
 		ActionUID:                 uuid.New().String(),
 		TargetFinBackupUID:        uuid.New().String(),
-		TargetRBDPoolName:         "test-pool",
-		TargetRBDImageName:        "test-image",
 		TargetSnapshotID:          snapID,
 		SourceCandidateSnapshotID: nil,
 		TargetPVCName:             "test-pvc",

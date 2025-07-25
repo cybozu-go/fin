@@ -66,7 +66,7 @@ func TestRestoreFromFullBackup_Success(t *testing.T) {
 					PersistentVolumeSource: corev1.PersistentVolumeSource{
 						CSI: &corev1.CSIPersistentVolumeSource{
 							VolumeAttributes: map[string]string{
-								"imageName": backupInput.TargetRBDImageName,
+								"imageName": testutil.ImageName,
 							},
 						},
 					},
@@ -75,16 +75,18 @@ func TestRestoreFromFullBackup_Success(t *testing.T) {
 		},
 	)
 
-	rbdRepo := fake.NewRBDRepository(map[fake.PoolImageName][]*model.RBDSnapshot{
-		{PoolName: backupInput.TargetRBDPoolName, ImageName: backupInput.TargetRBDImageName}: {
-			{
+	rbdRepo := fake.NewRBDRepository(
+		testutil.PoolName,
+		testutil.ImageName,
+		map[int]*model.RBDSnapshot{
+			backupInput.TargetSnapshotID: {
 				ID:        backupInput.TargetSnapshotID,
 				Name:      targetSnapshotName,
 				Size:      targetSnapshotSize,
 				Timestamp: targetSnapshotTimestamp,
 			},
 		},
-	})
+	)
 
 	nlvRepo, finRepo, _ := testutil.CreateNLVAndFinRepoForTest(t)
 
@@ -185,7 +187,7 @@ func TestRestoreFromIncrementalBackup_Success(t *testing.T) {
 					PersistentVolumeSource: corev1.PersistentVolumeSource{
 						CSI: &corev1.CSIPersistentVolumeSource{
 							VolumeAttributes: map[string]string{
-								"imageName": fullBackupInput.TargetRBDImageName,
+								"imageName": testutil.ImageName,
 							},
 						},
 					},
@@ -194,22 +196,23 @@ func TestRestoreFromIncrementalBackup_Success(t *testing.T) {
 		},
 	)
 
-	rbdRepo := fake.NewRBDRepository(map[fake.PoolImageName][]*model.RBDSnapshot{
-		{PoolName: fullBackupInput.TargetRBDPoolName, ImageName: fullBackupInput.TargetRBDImageName}: {
-			{
+	rbdRepo := fake.NewRBDRepository(
+		testutil.PoolName,
+		testutil.ImageName,
+		map[int]*model.RBDSnapshot{
+			fullBackupInput.TargetSnapshotID: {
 				ID:        fullBackupInput.TargetSnapshotID,
 				Name:      fullSnapshotName,
 				Size:      fullSnapshotSize,
 				Timestamp: fullSnapshotTimestamp,
 			},
-			{
+			incrementalBackupInput.TargetSnapshotID: {
 				ID:        incrementalBackupInput.TargetSnapshotID,
 				Name:      incrementalSnapshotName,
 				Size:      incrementalSnapshotSize,
 				Timestamp: incrementalSnapshotTimestamp,
 			},
-		},
-	})
+		})
 
 	nlvRepo, finRepo, _ := testutil.CreateNLVAndFinRepoForTest(t)
 

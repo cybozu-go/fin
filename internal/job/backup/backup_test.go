@@ -54,7 +54,7 @@ func TestFullBackup_Success(t *testing.T) {
 			PersistentVolumeSource: corev1.PersistentVolumeSource{
 				CSI: &corev1.CSIPersistentVolumeSource{
 					VolumeAttributes: map[string]string{
-						"imageName": backupInput.TargetRBDImageName,
+						"imageName": testutil.ImageName,
 					},
 				},
 			},
@@ -70,17 +70,18 @@ func TestFullBackup_Success(t *testing.T) {
 		},
 	)
 
-	rbdRepo := fake.NewRBDRepository(map[fake.PoolImageName][]*model.RBDSnapshot{
-		{PoolName: backupInput.TargetRBDPoolName, ImageName: backupInput.TargetRBDImageName}: {
-			{
+	rbdRepo := fake.NewRBDRepository(
+		testutil.PoolName,
+		testutil.ImageName,
+		map[int]*model.RBDSnapshot{
+			backupInput.TargetSnapshotID: {
 				ID:        backupInput.TargetSnapshotID,
 				Name:      targetSnapshotName,
 				Size:      targetSnapshotSize,
 				Timestamp: targetSnapshotTimestamp,
 			},
 		},
-	})
-
+	)
 	nlvRepo, finRepo, _ := testutil.CreateNLVAndFinRepoForTest(t)
 
 	backupInput.Repo = finRepo
@@ -113,10 +114,10 @@ func TestFullBackup_Success(t *testing.T) {
 	assert.True(t, equality.Semantic.DeepEqual(&fakePV, resPV))
 
 	for _, diff := range rawImage.AppliedDiffs {
-		assert.Equal(t, backupInput.TargetRBDPoolName, diff.PoolName)
+		assert.Equal(t, testutil.PoolName, diff.PoolName)
 		assert.Nil(t, diff.FromSnap)
 		assert.Equal(t, backupInput.TargetFinBackupUID, diff.MidSnapPrefix)
-		assert.Equal(t, backupInput.TargetRBDImageName, diff.ImageName)
+		assert.Equal(t, testutil.ImageName, diff.ImageName)
 		assert.Equal(t, backupInput.TargetSnapshotID, diff.SnapID)
 		assert.Equal(t, targetSnapshotName, diff.SnapName)
 		assert.Equal(t, targetSnapshotSize, diff.SnapSize)
@@ -126,7 +127,7 @@ func TestFullBackup_Success(t *testing.T) {
 	metadata, err := job.GetBackupMetadata(finRepo)
 	require.NoError(t, err)
 	assert.Equal(t, backupInput.TargetPVCUID, metadata.PVCUID)
-	assert.Equal(t, backupInput.TargetRBDImageName, metadata.RBDImageName)
+	assert.Equal(t, testutil.ImageName, metadata.RBDImageName)
 	assert.NotNil(t, metadata.Raw)
 	assert.Equal(t, backupInput.TargetSnapshotID, metadata.Raw.SnapID)
 	assert.Equal(t, targetSnapshotName, metadata.Raw.SnapName)
@@ -183,7 +184,7 @@ func TestIncrementalBackup_Success(t *testing.T) {
 					PersistentVolumeSource: corev1.PersistentVolumeSource{
 						CSI: &corev1.CSIPersistentVolumeSource{
 							VolumeAttributes: map[string]string{
-								"imageName": fullBackupInput.TargetRBDImageName,
+								"imageName": testutil.ImageName,
 							},
 						},
 					},
@@ -192,22 +193,23 @@ func TestIncrementalBackup_Success(t *testing.T) {
 		},
 	)
 
-	rbdRepo := fake.NewRBDRepository(map[fake.PoolImageName][]*model.RBDSnapshot{
-		{PoolName: fullBackupInput.TargetRBDPoolName, ImageName: fullBackupInput.TargetRBDImageName}: {
-			{
+	rbdRepo := fake.NewRBDRepository(
+		testutil.PoolName,
+		testutil.ImageName,
+		map[int]*model.RBDSnapshot{
+			fullBackupInput.TargetSnapshotID: {
 				ID:        fullBackupInput.TargetSnapshotID,
 				Name:      fullSnapshotName,
 				Size:      fullSnapshotSize,
 				Timestamp: fullSnapshotTimestamp,
 			},
-			{
+			incrementalBackupInput.TargetSnapshotID: {
 				ID:        incrementalBackupInput.TargetSnapshotID,
 				Name:      incrementalSnapshotName,
 				Size:      incrementalSnapshotSize,
 				Timestamp: incrementalSnapshotTimestamp,
 			},
-		},
-	})
+		})
 
 	nlvRepo, finRepo, _ := testutil.CreateNLVAndFinRepoForTest(t)
 
@@ -238,10 +240,10 @@ func TestIncrementalBackup_Success(t *testing.T) {
 		diffFilePath := nlvRepo.GetDiffPartPath(incrementalBackupInput.TargetSnapshotID, i)
 		diff, err := fake.ReadDiff(diffFilePath)
 		require.NoError(t, err)
-		assert.Equal(t, fullBackupInput.TargetRBDPoolName, diff.PoolName)
+		assert.Equal(t, testutil.PoolName, diff.PoolName)
 		assert.Equal(t, fullSnapshotName, *diff.FromSnap)
 		assert.Equal(t, incrementalBackupInput.TargetFinBackupUID, diff.MidSnapPrefix)
-		assert.Equal(t, incrementalBackupInput.TargetRBDImageName, diff.ImageName)
+		assert.Equal(t, testutil.ImageName, diff.ImageName)
 		assert.Equal(t, incrementalBackupInput.TargetSnapshotID, diff.SnapID)
 		assert.Equal(t, incrementalSnapshotName, diff.SnapName)
 		assert.Equal(t, incrementalSnapshotSize, diff.SnapSize)
@@ -251,7 +253,7 @@ func TestIncrementalBackup_Success(t *testing.T) {
 	metadata, err := job.GetBackupMetadata(finRepo)
 	require.NoError(t, err)
 	assert.Equal(t, fullBackupInput.TargetPVCUID, metadata.PVCUID)
-	assert.Equal(t, fullBackupInput.TargetRBDImageName, metadata.RBDImageName)
+	assert.Equal(t, testutil.ImageName, metadata.RBDImageName)
 	assert.NotNil(t, metadata.Raw)
 	assert.Equal(t, fullBackupInput.TargetSnapshotID, metadata.Raw.SnapID)
 	assert.Equal(t, fullSnapshotName, metadata.Raw.SnapName)

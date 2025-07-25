@@ -86,40 +86,31 @@ type RBDSnapshot struct {
 	Timestamp RBDTimeStamp `json:"timestamp"`
 }
 
-type ExportDiffInput struct {
-	PoolName       string
-	ReadOffset     int
-	ReadLength     int
-	FromSnap       *string
-	MidSnapPrefix  string
-	ImageName      string
-	TargetSnapName string
-	OutputFile     string
-}
-
 type RBDSnapshotCreateRepository interface {
 	// CreateSnapshot create a snapshot for the specified pool and image.
-	CreateSnapshot(poolName, imageName, snapName string) error
+	CreateSnapshot(snapName string) error
 }
 
-type RBDSnapshotListRepository interface {
+type RBDSnapshotGetRepository interface {
 	// ListSnapshots retrieves a list of snapshots for the specified pool and image.
-	ListSnapshots(poolName, imageName string) ([]*RBDSnapshot, error)
+	GetSnapshot(snapshotID int) (*RBDSnapshot, error)
+	GetSnapshotByName(snapshotName string) (*RBDSnapshot, error)
+	ImageName() string
 }
 
 type RBDSnapshotRepository interface {
 	RBDSnapshotCreateRepository
-	RBDSnapshotListRepository
+	RBDSnapshotGetRepository
 }
 
 // RBDRepository is an interface for managing RBD images and snapshots.
 // It provides any operations that need knowledge of RBD's internal structure.
 type RBDRepository interface {
-	RBDSnapshotListRepository
+	RBDSnapshotGetRepository
 
 	// ExportDiff exports the difference between the source snapshot and the target snapshot.
 	// If the source snapshot is not specified, it exports the difference from the empty image.
-	ExportDiff(input *ExportDiffInput) error
+	ExportDiff(targetSnapName, midSnapPrefix string, readOffset, readLength int, fromSnap *string, outputFile string) error
 
 	// ApplyDiff applies the difference from the diff file to the raw image file.
 	ApplyDiff(rawImageFilePath, diffFilePath string) error

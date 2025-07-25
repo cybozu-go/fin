@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"slices"
 	"strconv"
 	"time"
 
@@ -25,6 +24,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	finv1 "github.com/cybozu-go/fin/api/v1"
+	"github.com/cybozu-go/fin/internal/infrastructure/ceph"
 	"github.com/cybozu-go/fin/internal/model"
 	"github.com/go-logr/logr"
 )
@@ -54,7 +54,6 @@ type FinBackupReconciler struct {
 	cephClusterNamespace string
 	podImage             string
 	maxPartSize          *resource.Quantity
-	snapRepo             model.RBDSnapshotRepository
 }
 
 func NewFinBackupReconciler(
@@ -63,7 +62,6 @@ func NewFinBackupReconciler(
 	cephClusterNamespace string,
 	podImage string,
 	maxPartSize *resource.Quantity,
-	snapRepo model.RBDSnapshotRepository,
 ) *FinBackupReconciler {
 	return &FinBackupReconciler{
 		Client:               client,
@@ -71,7 +69,6 @@ func NewFinBackupReconciler(
 		cephClusterNamespace: cephClusterNamespace,
 		podImage:             podImage,
 		maxPartSize:          maxPartSize,
-		snapRepo:             snapRepo,
 	}
 }
 
@@ -163,8 +160,9 @@ func (r *FinBackupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			return ctrl.Result{}, err
 		}
 
+		rbdRepo := ceph.NewRBDRepository(rbdPool, rbdImage)
 		snapName := fmt.Sprintf("fin-backup-%s", backup.GetUID())
-		snap, err := r.createSnapshotIfNeeded(rbdPool, rbdImage, snapName)
+		snap, err := r.createSnapshotIfNeeded(rbdRepo, snapName)
 		if err != nil {
 			logger.Error(err, "failed to create or get snapshot")
 			return ctrl.Result{}, err
@@ -266,39 +264,22 @@ func (r *FinBackupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	return ctrl.Result{}, nil
 }
 
-func (r *FinBackupReconciler) createSnapshotIfNeeded(rbdPool, rbdImage, snapName string) (*model.RBDSnapshot, error) {
-	snap, err := r.getSnapshot(rbdPool, rbdImage, snapName)
+func (r *FinBackupReconciler) createSnapshotIfNeeded(rbdRepo model.RBDSnapshotRepository, snapName string) (*model.RBDSnapshot, error) {
+	snap, err := rbdRepo.GetSnapshotByName(snapName)
 	if err != nil {
 		if !errors.Is(err, errSnapshotNotFound) {
 			return nil, fmt.Errorf("failed to get snapshot: %w", err)
 		}
-		err = r.snapRepo.CreateSnapshot(rbdPool, rbdImage, snapName)
+		err = rbdRepo.CreateSnapshot(snapName)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create snapshot: %w", err)
 		}
-		snap, err = r.getSnapshot(rbdPool, rbdImage, snapName)
+		snap, err = rbdRepo.GetSnapshotByName(snapName)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get snapshot after creation: %w", err)
 		}
 	}
 	return snap, nil
-}
-
-func (r *FinBackupReconciler) getSnapshot(rbdPool, rbdImage, snapName string) (*model.RBDSnapshot, error) {
-	snapshots, err := r.snapRepo.ListSnapshots(rbdPool, rbdImage)
-	if err != nil {
-		return nil, fmt.Errorf("failed to list snapshots: %w", err)
-	}
-	if len(snapshots) == 0 {
-		return nil, fmt.Errorf("%w (snapshot: %s, pool: %s, image: %s)", errSnapshotNotFound, snapName, rbdPool, rbdImage)
-	}
-	i := slices.IndexFunc(snapshots, func(s *model.RBDSnapshot) bool {
-		return s.Name == snapName
-	})
-	if i == -1 {
-		return nil, fmt.Errorf("%w (snapshot: %s, pool: %s, image: %s)", errSnapshotNotFound, snapName, rbdPool, rbdImage)
-	}
-	return snapshots[i], nil
 }
 
 func checkPVCUIDConsistency(backup *finv1.FinBackup, pvc *corev1.PersistentVolumeClaim) error {

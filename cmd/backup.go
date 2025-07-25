@@ -74,7 +74,6 @@ func backupJobMain() error {
 		return fmt.Errorf("failed to get Kubernetes clientset: %w", err)
 	}
 	k8sRepo := kubernetes.NewKubernetesRepository(clientSet)
-	rbdRepo := ceph.NewRBDRepository()
 
 	actionUID := os.Getenv("ACTION_UID")
 	if actionUID == "" {
@@ -95,6 +94,7 @@ func backupJobMain() error {
 	if rbdImageName == "" {
 		return fmt.Errorf("RBD_IMAGE_NAME environment variable is not set")
 	}
+	rbdRepo := ceph.NewRBDRepository(rbdPool, rbdImageName)
 
 	backupSnapshotIDStr := os.Getenv("BACKUP_SNAPSHOT_ID")
 	if backupSnapshotIDStr == "" {
@@ -137,8 +137,6 @@ func backupJobMain() error {
 		RetryInterval:             time.Duration(10) * time.Second,
 		ActionUID:                 actionUID,
 		TargetFinBackupUID:        finBackupUID,
-		TargetRBDPoolName:         rbdPool,
-		TargetRBDImageName:        rbdImageName,
 		TargetSnapshotID:          backupSnapshotID,
 		SourceCandidateSnapshotID: sourceCandidateSnapshotID,
 		TargetPVCName:             pvcName,

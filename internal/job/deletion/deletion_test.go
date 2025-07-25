@@ -38,7 +38,7 @@ func TestDelete_RawOnlyCase_Success(t *testing.T) {
 	targetPVCUID := uuid.New().String()
 
 	nlvRepo, finRepo, _ := testutil.CreateNLVAndFinRepoForTest(t)
-	rbdRepo := fake.NewRBDRepository(map[fake.PoolImageName][]*model.RBDSnapshot{})
+	rbdRepo := fake.NewRBDRepository("", "", nil)
 
 	metadata := &job.BackupMetadata{
 		PVCUID:       targetPVCUID,

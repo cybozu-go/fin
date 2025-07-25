@@ -21,7 +21,6 @@ import (
 
 	finv1 "github.com/cybozu-go/fin/api/v1"
 	"github.com/cybozu-go/fin/internal/controller"
-	"github.com/cybozu-go/fin/internal/infrastructure/ceph"
 	//+kubebuilder:scaffold:imports
 )
 
@@ -114,7 +113,6 @@ func controllerMain(args []string) {
 		os.Exit(1)
 	}
 
-	snapRepo := ceph.NewRBDRepository()
 	maxPartSize, err := resource.ParseQuantity(os.Getenv("MAX_PART_SIZE"))
 	if err != nil {
 		setupLog.Error(err, "failed to parse MAX_PART_SIZE environment variable")
@@ -126,7 +124,6 @@ func controllerMain(args []string) {
 		os.Getenv("POD_NAMESPACE"),
 		os.Getenv("POD_IMAGE"),
 		&maxPartSize,
-		snapRepo,
 	)
 	if err = finBackupReconciler.SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "FinBackup")

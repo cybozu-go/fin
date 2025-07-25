@@ -5,15 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"slices"
 	"time"
 
 	"github.com/cybozu-go/fin/internal/model"
 )
-
-type PoolImageName struct {
-	PoolName, ImageName string
-}
 
 type RawImage struct {
 	Size         int             `json:"size"`
@@ -34,38 +29,44 @@ type ExportedDiff struct {
 }
 
 type RBDRepository struct {
-	snapshots map[PoolImageName][]*model.RBDSnapshot
+	poolName, imageName string
+	snapshots           map[int]*model.RBDSnapshot
 }
 
 var _ model.RBDRepository = &RBDRepository{}
 
-func NewRBDRepository(
-	snapshots map[PoolImageName][]*model.RBDSnapshot,
-) *RBDRepository {
-	return &RBDRepository{snapshots: snapshots}
+func NewRBDRepository(poolName, imageName string, snapshots map[int]*model.RBDSnapshot) *RBDRepository {
+	return &RBDRepository{poolName: poolName, imageName: imageName, snapshots: snapshots}
 }
 
-func (r *RBDRepository) ListSnapshots(poolName, imageName string) ([]*model.RBDSnapshot, error) {
-	if snapshots, ok := r.snapshots[PoolImageName{poolName, imageName}]; ok {
-		return snapshots, nil
+func (r *RBDRepository) ImageName() string {
+	return r.imageName
+}
+
+func (r *RBDRepository) GetSnapshot(snapshotID int) (*model.RBDSnapshot, error) {
+	snapshot, ok := r.snapshots[snapshotID]
+	if !ok {
+		return nil, model.ErrNotFound
+	}
+	return snapshot, nil
+}
+
+func (r *RBDRepository) GetSnapshotByName(snapshotName string) (*model.RBDSnapshot, error) {
+	for _, snapshot := range r.snapshots {
+		if snapshot.Name == snapshotName {
+			return snapshot, nil
+		}
 	}
 	return nil, model.ErrNotFound
 }
 
-func (r *RBDRepository) ExportDiff(input *model.ExportDiffInput) error {
-	snapshots, ok := r.snapshots[PoolImageName{PoolName: input.PoolName, ImageName: input.ImageName}]
-	if !ok {
-		return errors.New("source image not found")
-	}
-	snapshotIndex := slices.IndexFunc(snapshots, func(snapshot *model.RBDSnapshot) bool {
-		return snapshot.Name == input.TargetSnapName
-	})
-	if snapshotIndex == -1 {
-		return errors.New("source snapshot not found")
-	}
-	snapshot := snapshots[snapshotIndex]
+func (r *RBDRepository) ExportDiff(targetSnapName, midSnapPrefix string, readOffset, readLength int, fromSnap *string, outputFile string) error {
+	snapshot, err := r.GetSnapshotByName(targetSnapName)
+	if err != nil {
+		return fmt.Errorf("failed to get snapshot by name: %w", err)
 
-	file, err := os.Create(input.OutputFile)
+	}
+	file, err := os.Create(outputFile)
 	if err != nil {
 		return fmt.Errorf("failed to create output file: %w", err)
 	}
@@ -73,12 +74,12 @@ func (r *RBDRepository) ExportDiff(input *model.ExportDiffInput) error {
 
 	encoder := json.NewEncoder(file)
 	diff := ExportedDiff{
-		PoolName:      input.PoolName,
-		ReadOffset:    input.ReadOffset,
-		ReadLength:    input.ReadLength,
-		FromSnap:      input.FromSnap,
-		MidSnapPrefix: input.MidSnapPrefix,
-		ImageName:     input.ImageName,
+		PoolName:      r.poolName,
+		ReadOffset:    readOffset,
+		ReadLength:    readLength,
+		FromSnap:      fromSnap,
+		MidSnapPrefix: midSnapPrefix,
+		ImageName:     r.imageName,
 		SnapID:        snapshot.ID,
 		SnapName:      snapshot.Name,
 		SnapSize:      snapshot.Size,
