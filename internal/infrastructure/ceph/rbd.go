@@ -83,9 +83,15 @@ func (r *RBDRepository) ApplyDiffToRawImage(rawImageFilePath, diffFilePath, from
 	}
 	defer func() { _ = diffFile.Close() }()
 
-	const expansionUnitSize = 100 * 1024 * 1024 * 1024 // 100 GiB
+	expansionUnitSizeParsed := 100 * 1024 * 1024 * 1024 // 100 GiB by default
+	if expansionUnitSize := os.Getenv("FIN_RAW_IMG_EXPANSION_UNIT_SIZE"); expansionUnitSize != "" {
+		expansionUnitSizeParsed, err = strconv.Atoi(expansionUnitSize)
+		if err != nil {
+			return fmt.Errorf("failed to parse FIN_RAW_IMG_EXPANSION_UNIT_SIZE: %w", err)
+		}
+	}
 
-	return applyDiffToRawImage(rawImageFilePath, diffFile, fromSnapName, toSnapName, expansionUnitSize)
+	return applyDiffToRawImage(rawImageFilePath, diffFile, fromSnapName, toSnapName, uint64(expansionUnitSizeParsed))
 }
 
 func applyDiffToBlockDevice(blockDevicePath string, diffFile io.Reader, fromSnapName, toSnapName string) error {

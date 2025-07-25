@@ -43,6 +43,7 @@ func controllerMain(args []string) {
 	var probeAddr string
 	var secureMetrics bool
 	var enableHTTP2 bool
+	var rawImgExpansionUnitSize int
 
 	fs := flag.NewFlagSet("", flag.ExitOnError)
 	fs.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "The address the metric endpoint binds to.")
@@ -54,6 +55,8 @@ func controllerMain(args []string) {
 		"If set the metrics endpoint is served securely")
 	fs.BoolVar(&enableHTTP2, "enable-http2", false,
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
+	fs.IntVar(&rawImgExpansionUnitSize, "raw-img-expansion-unit-size", 0,
+		"Set FIN_RAW_IMG_EXPANSION_UNIT_SIZE in backup job.")
 	opts := zap.Options{
 		Development: true,
 	}
@@ -127,6 +130,7 @@ func controllerMain(args []string) {
 		os.Getenv("POD_IMAGE"),
 		&maxPartSize,
 		snapRepo,
+		rawImgExpansionUnitSize,
 	)
 	if err = finBackupReconciler.SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "FinBackup")
