@@ -11,9 +11,7 @@ import (
 	"github.com/cybozu-go/fin/internal/job/backup"
 	"github.com/cybozu-go/fin/internal/job/restore"
 	"github.com/cybozu-go/fin/internal/job/testutil"
-	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
+	"github.com/cybozu-go/fin/test/utils"
 
 	"github.com/cybozu-go/fin/internal/model"
 	"github.com/google/uuid"
@@ -40,61 +38,20 @@ func TestRestoreFromFullBackup_Success(t *testing.T) {
 	// Arrange
 
 	// Create a full backup data.
-	backupInput := testutil.NewBackupInputTemplate(1, 4096)
-	targetSnapshotName := "test-snap"
-	rawImageChunkSize := 4096
-	targetSnapshotSize := rawImageChunkSize * 2
-	ts, err := time.Parse(testutil.SnapshotTimeFormat, "Mon Jan  2 15:04:05 2006")
-	require.NoError(t, err)
-	targetSnapshotTimestamp := model.NewRBDTimeStamp(ts)
-	targetPVName := "test-pv"
-
-	k8sRepo := fake.NewKubernetesRepository(
-		map[types.NamespacedName]*corev1.PersistentVolumeClaim{
-			{Name: backupInput.TargetPVCName, Namespace: backupInput.TargetPVCNamespace}: {
-				ObjectMeta: metav1.ObjectMeta{
-					UID: types.UID(backupInput.TargetPVCUID),
-				},
-				Spec: corev1.PersistentVolumeClaimSpec{
-					VolumeName: targetPVName,
-				},
-			},
-		},
-		map[string]*corev1.PersistentVolume{
-			targetPVName: {
-				Spec: corev1.PersistentVolumeSpec{
-					PersistentVolumeSource: corev1.PersistentVolumeSource{
-						CSI: &corev1.CSIPersistentVolumeSource{
-							VolumeAttributes: map[string]string{
-								"imageName": backupInput.TargetRBDImageName,
-							},
-						},
-					},
-				},
-			},
-		},
-	)
-
-	rbdRepo := fake.NewRBDRepository(map[fake.PoolImageName][]*model.RBDSnapshot{
-		{PoolName: backupInput.TargetRBDPoolName, ImageName: backupInput.TargetRBDImageName}: {
-			{
-				ID:        backupInput.TargetSnapshotID,
-				Name:      targetSnapshotName,
-				Size:      targetSnapshotSize,
-				Timestamp: targetSnapshotTimestamp,
-			},
-		},
-	})
-
+	k8sRepo, rbdRepo, volumeInfo := fake.NewStorage()
 	nlvRepo, finRepo, _ := testutil.CreateNLVAndFinRepoForTest(t)
 
+	rawImageChunkSize := 4096
+	targetSnapshotSize := rawImageChunkSize * 2
+	snapID := rbdRepo.CreateFakeSnapshot(utils.GetUniqueName("snap-"), targetSnapshotSize, time.Now())
+	backupInput := testutil.NewBackupInput(k8sRepo, volumeInfo, snapID, nil, rawImageChunkSize)
 	backupInput.Repo = finRepo
 	backupInput.KubernetesRepo = k8sRepo
 	backupInput.RBDRepo = rbdRepo
 	backupInput.NodeLocalVolumeRepo = nlvRepo
 
 	backup := backup.NewBackup(backupInput)
-	err = backup.Perform()
+	err := backup.Perform()
 	require.NoError(t, err)
 
 	// Fill raw.img with random data. Although this file has some data
@@ -151,73 +108,26 @@ func TestRestoreFromIncrementalBackup_Success(t *testing.T) {
 	//     chunk2: zero filled.
 
 	// Arrange
-	fullBackupInput := testutil.NewBackupInputTemplate(1, 4096)
-	fullSnapshotName := "test-snap1"
-	rawImageChunkSize := 4096
-	fullSnapshotSize := rawImageChunkSize * 2
-	fts, err := time.Parse(testutil.SnapshotTimeFormat, "Mon Jan  2 15:03:05 2006")
-	require.NoError(t, err)
-	fullSnapshotTimestamp := model.NewRBDTimeStamp(fts)
-	targetPVName := "test-pv"
-
-	incrementalBackupInput := testutil.NewIncrementalBackupInputTemplate(fullBackupInput, 2)
-	incrementalBackupInput.SourceCandidateSnapshotID = &fullBackupInput.TargetSnapshotID
-	incrementalSnapshotName := "test-snap2"
-	incrementalSnapshotSize := rawImageChunkSize * 3
-	its, err := time.Parse(testutil.SnapshotTimeFormat, "Mon Jan  2 15:04:05 2006")
-	require.NoError(t, err)
-	incrementalSnapshotTimestamp := model.NewRBDTimeStamp(its)
-
-	k8sRepo := fake.NewKubernetesRepository(
-		map[types.NamespacedName]*corev1.PersistentVolumeClaim{
-			{Name: fullBackupInput.TargetPVCName, Namespace: fullBackupInput.TargetPVCNamespace}: {
-				ObjectMeta: metav1.ObjectMeta{
-					UID: types.UID(fullBackupInput.TargetPVCUID),
-				},
-				Spec: corev1.PersistentVolumeClaimSpec{
-					VolumeName: targetPVName,
-				},
-			},
-		},
-		map[string]*corev1.PersistentVolume{
-			targetPVName: {
-				Spec: corev1.PersistentVolumeSpec{
-					PersistentVolumeSource: corev1.PersistentVolumeSource{
-						CSI: &corev1.CSIPersistentVolumeSource{
-							VolumeAttributes: map[string]string{
-								"imageName": fullBackupInput.TargetRBDImageName,
-							},
-						},
-					},
-				},
-			},
-		},
-	)
-
-	rbdRepo := fake.NewRBDRepository(map[fake.PoolImageName][]*model.RBDSnapshot{
-		{PoolName: fullBackupInput.TargetRBDPoolName, ImageName: fullBackupInput.TargetRBDImageName}: {
-			{
-				ID:        fullBackupInput.TargetSnapshotID,
-				Name:      fullSnapshotName,
-				Size:      fullSnapshotSize,
-				Timestamp: fullSnapshotTimestamp,
-			},
-			{
-				ID:        incrementalBackupInput.TargetSnapshotID,
-				Name:      incrementalSnapshotName,
-				Size:      incrementalSnapshotSize,
-				Timestamp: incrementalSnapshotTimestamp,
-			},
-		},
-	})
-
+	k8sRepo, rbdRepo, volumeInfo := fake.NewStorage()
 	nlvRepo, finRepo, _ := testutil.CreateNLVAndFinRepoForTest(t)
 
+	rawImageChunkSize := 4096
+
+	fullSnapshotSize := rawImageChunkSize * 2
+	fullBKsnapID := rbdRepo.CreateFakeSnapshot(utils.GetUniqueName("snap-"),
+		fullSnapshotSize, time.Now())
+	fullBackupInput := testutil.NewBackupInput(k8sRepo, volumeInfo,
+		fullBKsnapID, nil, rawImageChunkSize)
 	fullBackupInput.Repo = finRepo
 	fullBackupInput.KubernetesRepo = k8sRepo
 	fullBackupInput.RBDRepo = rbdRepo
 	fullBackupInput.NodeLocalVolumeRepo = nlvRepo
 
+	incrementalSnapshotSize := rawImageChunkSize * 3
+	incrementalBKsnapID := rbdRepo.CreateFakeSnapshot(utils.GetUniqueName("snap-"),
+		incrementalSnapshotSize, time.Now())
+	incrementalBackupInput := testutil.NewBackupInput(k8sRepo, volumeInfo,
+		incrementalBKsnapID, &fullBKsnapID, rawImageChunkSize)
 	incrementalBackupInput.Repo = finRepo
 	incrementalBackupInput.KubernetesRepo = k8sRepo
 	incrementalBackupInput.RBDRepo = rbdRepo
@@ -225,7 +135,7 @@ func TestRestoreFromIncrementalBackup_Success(t *testing.T) {
 
 	// Create a full backup
 	fullBackup := backup.NewBackup(fullBackupInput)
-	err = fullBackup.Perform()
+	err := fullBackup.Perform()
 	require.NoError(t, err)
 
 	// Create an incremental backup
