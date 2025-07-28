@@ -10,14 +10,74 @@ import (
 	"github.com/cybozu-go/fin/internal/job/backup"
 	"github.com/cybozu-go/fin/internal/job/testutil"
 	"github.com/cybozu-go/fin/internal/model"
+	"github.com/cybozu-go/fin/test/utils"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
 )
+
+type setupInput struct {
+	fullSnapshotSize, incrementalSnapshotSize int
+	maxPartSize                               int
+}
+
+type setupOutput struct {
+	fullBackupInput, incrementalBackupInput *backup.BackupInput
+	k8sRepo                                 model.KubernetesRepository
+	finRepo                                 model.FinRepository
+	nlvRepo                                 model.NodeLocalVolumeRepository
+	fullSnapshot, incrementalSnapshot       *model.RBDSnapshot
+	targetPVName                            string
+}
+
+func setup(t *testing.T, input *setupInput) *setupOutput {
+	maxPartSize := 512
+	if input.maxPartSize != 0 {
+		maxPartSize = input.maxPartSize
+	}
+
+	fullSnapshotSize := 900
+	if input.fullSnapshotSize != 0 {
+		fullSnapshotSize = input.fullSnapshotSize
+	}
+
+	k8sRepo, rbdRepo, volumeInfo := fake.NewStorage()
+	nlvRepo, finRepo, _ := testutil.CreateNLVAndFinRepoForTest(t)
+
+	// Take a fake snapshot for full backup
+	fullSnapshot := rbdRepo.CreateFakeSnapshot(utils.GetUniqueName("snap-"), fullSnapshotSize, time.Now())
+
+	// Create a full backup input
+	fullBackupInput := testutil.NewBackupInput(k8sRepo, volumeInfo, fullSnapshot.ID, nil, maxPartSize)
+	fullBackupInput.Repo = finRepo
+	fullBackupInput.KubernetesRepo = k8sRepo
+	fullBackupInput.RBDRepo = rbdRepo
+	fullBackupInput.NodeLocalVolumeRepo = nlvRepo
+
+	// Take a fake snapshot for incremental backup
+	incrementalSnapshotSize := 1000
+	incrementalSnapshot := rbdRepo.CreateFakeSnapshot(utils.GetUniqueName("snap-"), incrementalSnapshotSize, time.Now())
+
+	// Create an incremental backup input
+	incrementalBackupInput := testutil.NewBackupInput(
+		k8sRepo, volumeInfo, incrementalSnapshot.ID, &fullSnapshot.ID, maxPartSize)
+	incrementalBackupInput.Repo = finRepo
+	incrementalBackupInput.KubernetesRepo = k8sRepo
+	incrementalBackupInput.RBDRepo = rbdRepo
+	incrementalBackupInput.NodeLocalVolumeRepo = nlvRepo
+
+	return &setupOutput{
+		fullBackupInput:        fullBackupInput,
+		incrementalBackupInput: incrementalBackupInput,
+		k8sRepo:                k8sRepo,
+		finRepo:                finRepo,
+		nlvRepo:                nlvRepo,
+		fullSnapshot:           fullSnapshot,
+		incrementalSnapshot:    incrementalSnapshot,
+		targetPVName:           volumeInfo.PVName,
+	}
+}
 
 func TestFullBackup_Success(t *testing.T) {
 	// Description:
@@ -33,106 +93,58 @@ func TestFullBackup_Success(t *testing.T) {
 	//   Check if the contents of the node local volume is correct.
 
 	// Arrange
-	backupInput := testutil.NewBackupInputTemplate(1, 512)
-	targetSnapshotName := "test-snap"
-	targetSnapshotSize := 1000
-	ts, err := time.Parse(testutil.SnapshotTimeFormat, "Mon Jan  2 15:04:05 2006")
-	require.NoError(t, err)
-	targetSnapshotTimestamp := model.NewRBDTimeStamp(ts)
-	targetPVName := "test-pv"
-
-	fakePVC := corev1.PersistentVolumeClaim{
-		ObjectMeta: metav1.ObjectMeta{
-			UID: types.UID(backupInput.TargetPVCUID),
-		},
-		Spec: corev1.PersistentVolumeClaimSpec{
-			VolumeName: targetPVName,
-		},
-	}
-	fakePV := corev1.PersistentVolume{
-		Spec: corev1.PersistentVolumeSpec{
-			PersistentVolumeSource: corev1.PersistentVolumeSource{
-				CSI: &corev1.CSIPersistentVolumeSource{
-					VolumeAttributes: map[string]string{
-						"imageName": backupInput.TargetRBDImageName,
-					},
-				},
-			},
-		},
-	}
-
-	k8sRepo := fake.NewKubernetesRepository(
-		map[types.NamespacedName]*corev1.PersistentVolumeClaim{
-			{Name: backupInput.TargetPVCName, Namespace: backupInput.TargetPVCNamespace}: &fakePVC,
-		},
-		map[string]*corev1.PersistentVolume{
-			targetPVName: &fakePV,
-		},
-	)
-
-	rbdRepo := fake.NewRBDRepository(map[fake.PoolImageName][]*model.RBDSnapshot{
-		{PoolName: backupInput.TargetRBDPoolName, ImageName: backupInput.TargetRBDImageName}: {
-			{
-				ID:        backupInput.TargetSnapshotID,
-				Name:      targetSnapshotName,
-				Size:      targetSnapshotSize,
-				Timestamp: targetSnapshotTimestamp,
-			},
-		},
-	})
-
-	nlvRepo, finRepo, _ := testutil.CreateNLVAndFinRepoForTest(t)
-
-	backupInput.Repo = finRepo
-	backupInput.KubernetesRepo = k8sRepo
-	backupInput.RBDRepo = rbdRepo
-	backupInput.NodeLocalVolumeRepo = nlvRepo
+	cfg := setup(t, &setupInput{})
 
 	// Act
-	backup := backup.NewBackup(backupInput)
-	err = backup.Perform()
+	backup := backup.NewBackup(cfg.fullBackupInput)
+	err := backup.Perform()
 	require.NoError(t, err)
 
 	// Assert
-	testutil.AssertActionPrivateDataIsEmpty(t, finRepo, backupInput.ActionUID)
+	testutil.AssertActionPrivateDataIsEmpty(t, cfg.finRepo, cfg.fullBackupInput.ActionUID)
 
-	rawImage, err := fake.ReadRawImage(nlvRepo.GetRawImagePath())
+	rawImage, err := fake.ReadRawImage(cfg.nlvRepo.GetRawImagePath())
 	assert.NoError(t, err)
 	assert.Equal(t, 2, len(rawImage.AppliedDiffs))
 	assert.Equal(t, 0, rawImage.AppliedDiffs[0].ReadOffset)
-	assert.Equal(t, backupInput.MaxPartSize, rawImage.AppliedDiffs[0].ReadLength)
-	assert.Equal(t, backupInput.MaxPartSize, rawImage.AppliedDiffs[1].ReadOffset)
-	assert.Equal(t, backupInput.MaxPartSize, rawImage.AppliedDiffs[1].ReadLength)
+	assert.Equal(t, cfg.fullBackupInput.MaxPartSize, rawImage.AppliedDiffs[0].ReadLength)
+	assert.Equal(t, cfg.fullBackupInput.MaxPartSize, rawImage.AppliedDiffs[1].ReadOffset)
+	assert.Equal(t, cfg.fullBackupInput.MaxPartSize, rawImage.AppliedDiffs[1].ReadLength)
 
-	resPVC, err := nlvRepo.GetPVC()
+	fakePVC, err := cfg.k8sRepo.GetPVC(cfg.fullBackupInput.TargetPVCName, cfg.fullBackupInput.TargetPVCNamespace)
+	require.NoError(t, err)
+	resPVC, err := cfg.nlvRepo.GetPVC()
 	assert.NoError(t, err)
-	assert.True(t, equality.Semantic.DeepEqual(&fakePVC, resPVC))
-	resPV, err := nlvRepo.GetPV()
+	assert.True(t, equality.Semantic.DeepEqual(fakePVC, resPVC))
+
+	fakePV, err := cfg.k8sRepo.GetPV(cfg.targetPVName)
+	require.NoError(t, err)
+	resPV, err := cfg.nlvRepo.GetPV()
 	assert.NoError(t, err)
-	assert.True(t, equality.Semantic.DeepEqual(&fakePV, resPV))
+	assert.True(t, equality.Semantic.DeepEqual(fakePV, resPV))
 
 	for _, diff := range rawImage.AppliedDiffs {
-		assert.Equal(t, backupInput.TargetRBDPoolName, diff.PoolName)
+		assert.Equal(t, cfg.fullBackupInput.TargetRBDPoolName, diff.PoolName)
 		assert.Nil(t, diff.FromSnap)
-		assert.Equal(t, targetSnapshotName, diff.MidSnapPrefix)
-		assert.Equal(t, backupInput.TargetRBDImageName, diff.ImageName)
-		assert.Equal(t, backupInput.TargetSnapshotID, diff.SnapID)
-		assert.Equal(t, targetSnapshotName, diff.SnapName)
-		assert.Equal(t, targetSnapshotSize, diff.SnapSize)
-		assert.Equal(t, targetSnapshotTimestamp.Time, diff.SnapTimestamp)
+		assert.Equal(t, cfg.fullSnapshot.Name, diff.MidSnapPrefix)
+		assert.Equal(t, cfg.fullBackupInput.TargetRBDImageName, diff.ImageName)
+		assert.Equal(t, cfg.fullBackupInput.TargetSnapshotID, diff.SnapID)
+		assert.Equal(t, cfg.fullSnapshot.Name, diff.SnapName)
+		assert.Equal(t, cfg.fullSnapshot.Size, diff.SnapSize)
+		assert.True(t, cfg.fullSnapshot.Timestamp.Equal(diff.SnapTimestamp))
 	}
 
-	metadata, err := job.GetBackupMetadata(finRepo)
-	require.NoError(t, err)
-	assert.Equal(t, backupInput.TargetPVCUID, metadata.PVCUID)
-	assert.Equal(t, backupInput.TargetRBDImageName, metadata.RBDImageName)
-	assert.NotNil(t, metadata.Raw)
-	assert.Equal(t, backupInput.TargetSnapshotID, metadata.Raw.SnapID)
-	assert.Equal(t, targetSnapshotName, metadata.Raw.SnapName)
-	assert.Equal(t, targetSnapshotSize, metadata.Raw.SnapSize)
-	assert.Equal(t, backupInput.MaxPartSize, metadata.Raw.PartSize)
-	assert.Equal(t, targetSnapshotTimestamp.Time, metadata.Raw.CreatedAt)
-	assert.Empty(t, metadata.Diff)
+	ensureBackupMetadataCorrect(t, cfg.finRepo, &job.BackupMetadata{
+		PVCUID:       cfg.fullBackupInput.TargetPVCUID,
+		RBDImageName: cfg.fullBackupInput.TargetRBDImageName,
+		Raw: &job.BackupMetadataEntry{
+			SnapID:    cfg.fullBackupInput.TargetSnapshotID,
+			SnapName:  cfg.fullSnapshot.Name,
+			SnapSize:  cfg.fullSnapshot.Size,
+			PartSize:  cfg.fullBackupInput.MaxPartSize,
+			CreatedAt: cfg.fullSnapshot.Timestamp.Time,
+		},
+	})
 }
 
 func TestIncrementalBackup_Success(t *testing.T) {
@@ -150,120 +162,57 @@ func TestIncrementalBackup_Success(t *testing.T) {
 	//   Check if the contents of the incremental backup is correct.
 
 	// Arrange
-	fullBackupInput := testutil.NewBackupInputTemplate(1, 512)
-	fullSnapshotName := "test-snap1"
-	fullSnapshotSize := 900
-	fts, err := time.Parse(testutil.SnapshotTimeFormat, "Mon Jan  2 15:03:05 2006")
-	require.NoError(t, err)
-	fullSnapshotTimestamp := model.NewRBDTimeStamp(fts)
-	targetPVName := "test-pv"
-
-	incrementalBackupInput := testutil.NewIncrementalBackupInputTemplate(fullBackupInput, 2)
-	incrementalSnapshotName := "test-snap2"
-	incrementalSnapshotSize := 1000
-	its, err := time.Parse(testutil.SnapshotTimeFormat, "Mon Jan  2 15:04:05 2006")
-	require.NoError(t, err)
-	incrementalSnapshotTimestamp := model.NewRBDTimeStamp(its)
-
-	k8sRepo := fake.NewKubernetesRepository(
-		map[types.NamespacedName]*corev1.PersistentVolumeClaim{
-			{Name: fullBackupInput.TargetPVCName, Namespace: fullBackupInput.TargetPVCNamespace}: {
-				ObjectMeta: metav1.ObjectMeta{
-					UID: types.UID(fullBackupInput.TargetPVCUID),
-				},
-				Spec: corev1.PersistentVolumeClaimSpec{
-					VolumeName: targetPVName,
-				},
-			},
-		},
-		map[string]*corev1.PersistentVolume{
-			targetPVName: {
-				Spec: corev1.PersistentVolumeSpec{
-					PersistentVolumeSource: corev1.PersistentVolumeSource{
-						CSI: &corev1.CSIPersistentVolumeSource{
-							VolumeAttributes: map[string]string{
-								"imageName": fullBackupInput.TargetRBDImageName,
-							},
-						},
-					},
-				},
-			},
-		},
-	)
-
-	rbdRepo := fake.NewRBDRepository(map[fake.PoolImageName][]*model.RBDSnapshot{
-		{PoolName: fullBackupInput.TargetRBDPoolName, ImageName: fullBackupInput.TargetRBDImageName}: {
-			{
-				ID:        fullBackupInput.TargetSnapshotID,
-				Name:      fullSnapshotName,
-				Size:      fullSnapshotSize,
-				Timestamp: fullSnapshotTimestamp,
-			},
-			{
-				ID:        incrementalBackupInput.TargetSnapshotID,
-				Name:      incrementalSnapshotName,
-				Size:      incrementalSnapshotSize,
-				Timestamp: incrementalSnapshotTimestamp,
-			},
-		},
-	})
-
-	nlvRepo, finRepo, _ := testutil.CreateNLVAndFinRepoForTest(t)
-
-	fullBackupInput.Repo = finRepo
-	fullBackupInput.KubernetesRepo = k8sRepo
-	fullBackupInput.RBDRepo = rbdRepo
-	fullBackupInput.NodeLocalVolumeRepo = nlvRepo
-
-	incrementalBackupInput.Repo = finRepo
-	incrementalBackupInput.KubernetesRepo = k8sRepo
-	incrementalBackupInput.RBDRepo = rbdRepo
-	incrementalBackupInput.NodeLocalVolumeRepo = nlvRepo
+	cfg := setup(t, &setupInput{})
+	finRepo := cfg.finRepo
+	nlvRepo := cfg.nlvRepo
 
 	// Create a full backup
-	fullBackup := backup.NewBackup(fullBackupInput)
-	err = fullBackup.Perform()
+	fullBackup := backup.NewBackup(cfg.fullBackupInput)
+	err := fullBackup.Perform()
 	require.NoError(t, err)
 
 	// Act
-	backup := backup.NewBackup(incrementalBackupInput)
+	backup := backup.NewBackup(cfg.incrementalBackupInput)
 	err = backup.Perform()
 	require.NoError(t, err)
 
 	// Assert
-	testutil.AssertActionPrivateDataIsEmpty(t, finRepo, fullBackupInput.ActionUID)
-	numDiffParts := int(math.Ceil(float64(fullSnapshotSize) / float64(fullBackupInput.MaxPartSize)))
+	testutil.AssertActionPrivateDataIsEmpty(t, finRepo, cfg.fullBackupInput.ActionUID)
+	numDiffParts := int(math.Ceil(float64(cfg.fullSnapshot.Size) / float64(cfg.fullBackupInput.MaxPartSize)))
 	for i := range numDiffParts {
-		diffFilePath := nlvRepo.GetDiffPartPath(incrementalBackupInput.TargetSnapshotID, i)
-		diff, err := fake.ReadDiff(diffFilePath)
-		require.NoError(t, err)
-		assert.Equal(t, fullBackupInput.TargetRBDPoolName, diff.PoolName)
-		assert.Equal(t, fullSnapshotName, *diff.FromSnap)
-		assert.Equal(t, incrementalSnapshotName, diff.MidSnapPrefix)
-		assert.Equal(t, incrementalBackupInput.TargetRBDImageName, diff.ImageName)
-		assert.Equal(t, incrementalBackupInput.TargetSnapshotID, diff.SnapID)
-		assert.Equal(t, incrementalSnapshotName, diff.SnapName)
-		assert.Equal(t, incrementalSnapshotSize, diff.SnapSize)
-		assert.Equal(t, incrementalSnapshotTimestamp.Time, diff.SnapTimestamp)
+		diffFilePath := nlvRepo.GetDiffPartPath(cfg.incrementalBackupInput.TargetSnapshotID, i)
+		ensureDiffFileCorrect(t, diffFilePath, &fake.ExportedDiff{
+			PoolName:      cfg.fullBackupInput.TargetRBDPoolName,
+			FromSnap:      &cfg.fullSnapshot.Name,
+			MidSnapPrefix: cfg.incrementalSnapshot.Name,
+			ImageName:     cfg.incrementalBackupInput.TargetRBDImageName,
+			SnapID:        cfg.incrementalBackupInput.TargetSnapshotID,
+			SnapName:      cfg.incrementalSnapshot.Name,
+			SnapSize:      cfg.incrementalSnapshot.Size,
+			SnapTimestamp: cfg.incrementalSnapshot.Timestamp.Time,
+		})
 	}
 
-	metadata, err := job.GetBackupMetadata(finRepo)
-	require.NoError(t, err)
-	assert.Equal(t, fullBackupInput.TargetPVCUID, metadata.PVCUID)
-	assert.Equal(t, fullBackupInput.TargetRBDImageName, metadata.RBDImageName)
-	assert.NotNil(t, metadata.Raw)
-	assert.Equal(t, fullBackupInput.TargetSnapshotID, metadata.Raw.SnapID)
-	assert.Equal(t, fullSnapshotName, metadata.Raw.SnapName)
-	assert.Equal(t, fullSnapshotSize, metadata.Raw.SnapSize)
-	assert.Equal(t, fullBackupInput.MaxPartSize, metadata.Raw.PartSize)
-	assert.Equal(t, fullSnapshotTimestamp.Time, metadata.Raw.CreatedAt)
-	assert.NotNil(t, metadata.Diff)
-	assert.Len(t, metadata.Diff, 1)
-	assert.Equal(t, incrementalBackupInput.TargetSnapshotID, metadata.Diff[0].SnapID)
-	assert.Equal(t, incrementalSnapshotName, metadata.Diff[0].SnapName)
-	assert.Equal(t, incrementalSnapshotSize, metadata.Diff[0].SnapSize)
-	assert.Equal(t, incrementalBackupInput.MaxPartSize, metadata.Diff[0].PartSize)
-	assert.Equal(t, incrementalSnapshotTimestamp.Time, metadata.Diff[0].CreatedAt)
+	ensureBackupMetadataCorrect(t, finRepo, &job.BackupMetadata{
+		PVCUID:       cfg.fullBackupInput.TargetPVCUID,
+		RBDImageName: cfg.fullBackupInput.TargetRBDImageName,
+		Raw: &job.BackupMetadataEntry{
+			SnapID:    cfg.fullBackupInput.TargetSnapshotID,
+			SnapName:  cfg.fullSnapshot.Name,
+			SnapSize:  cfg.fullSnapshot.Size,
+			PartSize:  cfg.fullBackupInput.MaxPartSize,
+			CreatedAt: cfg.fullSnapshot.Timestamp.Time,
+		},
+		Diff: []*job.BackupMetadataEntry{
+			{
+				SnapID:    cfg.incrementalBackupInput.TargetSnapshotID,
+				SnapName:  cfg.incrementalSnapshot.Name,
+				SnapSize:  cfg.incrementalSnapshot.Size,
+				PartSize:  cfg.incrementalBackupInput.MaxPartSize,
+				CreatedAt: cfg.incrementalSnapshot.Timestamp.Time,
+			},
+		},
+	})
 }
 
 func TestBackup_ErrorBusy(t *testing.T) {
@@ -285,4 +234,52 @@ func TestBackup_ErrorBusy(t *testing.T) {
 
 	// Assert
 	assert.ErrorIs(t, err, job.ErrCantLock)
+}
+
+func ensureDiffFileCorrect(t *testing.T, diffFilePath string, expected *fake.ExportedDiff) {
+	t.Helper()
+	diff, err := fake.ReadDiff(diffFilePath)
+	require.NoError(t, err)
+	assert.Equal(t, expected.PoolName, diff.PoolName)
+	assert.Equal(t, expected.FromSnap, diff.FromSnap)
+	assert.Equal(t, expected.MidSnapPrefix, diff.MidSnapPrefix)
+	assert.Equal(t, expected.ImageName, diff.ImageName)
+	assert.Equal(t, expected.SnapID, diff.SnapID)
+	assert.Equal(t, expected.SnapName, diff.SnapName)
+	assert.Equal(t, expected.SnapSize, diff.SnapSize)
+	assert.True(t, expected.SnapTimestamp.Equal(diff.SnapTimestamp))
+}
+
+func ensureBackupMetadataCorrect(t *testing.T, repo model.FinRepository, expected *job.BackupMetadata) {
+	t.Helper()
+
+	metadata, err := job.GetBackupMetadata(repo)
+	require.NoError(t, err)
+	assert.NotNil(t, metadata)
+	assert.Equal(t, expected.PVCUID, metadata.PVCUID)
+	assert.Equal(t, expected.RBDImageName, metadata.RBDImageName)
+
+	if expected.Raw == nil {
+		assert.Nil(t, metadata.Raw)
+	} else {
+		assert.NotNil(t, metadata.Raw)
+		assert.Equal(t, expected.Raw.SnapID, metadata.Raw.SnapID)
+		assert.Equal(t, expected.Raw.SnapName, metadata.Raw.SnapName)
+		assert.Equal(t, expected.Raw.SnapSize, metadata.Raw.SnapSize)
+		assert.Equal(t, expected.Raw.PartSize, metadata.Raw.PartSize)
+		assert.True(t, expected.Raw.CreatedAt.Equal(metadata.Raw.CreatedAt))
+	}
+
+	if expected.Diff == nil {
+		assert.Nil(t, metadata.Diff)
+	} else {
+		assert.NotNil(t, metadata.Diff)
+		for i := range expected.Diff {
+			assert.Equal(t, expected.Diff[i].SnapID, metadata.Diff[i].SnapID)
+			assert.Equal(t, expected.Diff[i].SnapName, metadata.Diff[i].SnapName)
+			assert.Equal(t, expected.Diff[i].SnapSize, metadata.Diff[i].SnapSize)
+			assert.Equal(t, expected.Diff[i].PartSize, metadata.Diff[i].PartSize)
+			assert.True(t, expected.Diff[i].CreatedAt.Equal(metadata.Diff[i].CreatedAt))
+		}
+	}
 }
