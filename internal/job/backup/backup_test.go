@@ -1,7 +1,10 @@
 package backup_test
 
 import (
+	"encoding/json"
+	"errors"
 	"math"
+	"os"
 	"testing"
 	"time"
 
@@ -234,6 +237,112 @@ func TestBackup_ErrorBusy(t *testing.T) {
 
 	// Assert
 	assert.ErrorIs(t, err, job.ErrCantLock)
+}
+
+func Test_IncrementalBackup_Success_Resume(t *testing.T) {
+	// CSATEST-1512
+	// Description:
+	//   Resume an incremental backup that was interrupted after setting nextStorePart=0 or 1.
+	//
+	// Arrange:
+	//   - Set backup_metadata.raw to be non-empty.
+	//   - Set max part num to 3.
+	//   - Set action_status.nextStorePart to 1.
+	//
+	// Act:
+	//   Run the backup process to create an incremental backup,
+	//   `incrementalBackup`.
+	//
+	// Assert:
+	//   Check if the contents of the incremental backup is correct.
+
+	// Arrange
+	nextStorePart := 1
+	snapshotSize, maxPartSize := 1000, 400 // max part size will be 3 (= ceil(1000/400))
+
+	cfg := setup(t, &setupInput{
+		fullSnapshotSize:        snapshotSize,
+		incrementalSnapshotSize: snapshotSize,
+		maxPartSize:             maxPartSize,
+	})
+
+	// Set up fin.sqlite3 for the test
+	err := cfg.finRepo.StartOrRestartAction(cfg.incrementalBackupInput.ActionUID, model.Backup)
+	require.NoError(t, err)
+
+	arrangedBackupMetadata, err := json.Marshal(job.BackupMetadata{
+		PVCUID:       cfg.fullBackupInput.TargetPVCUID,
+		RBDImageName: cfg.fullBackupInput.TargetRBDImageName,
+		Raw: &job.BackupMetadataEntry{ // Raw should be non-empty
+			SnapID:    cfg.fullBackupInput.TargetSnapshotID,
+			SnapName:  cfg.fullSnapshot.Name,
+			SnapSize:  snapshotSize,
+			PartSize:  cfg.fullBackupInput.MaxPartSize,
+			CreatedAt: cfg.fullSnapshot.Timestamp.Time,
+		},
+		Diff: []*job.BackupMetadataEntry{},
+	})
+	require.NoError(t, err)
+	err = cfg.finRepo.SetBackupMetadata(arrangedBackupMetadata)
+	require.NoError(t, err)
+
+	arrangedActionPrivateData, err := json.Marshal(backup.BackupPrivateData{
+		NextStorePart: nextStorePart, // Set custom value to nextStorePart
+		Mode:          backup.ModeIncremental,
+	})
+	require.NoError(t, err)
+	err = cfg.finRepo.UpdateActionPrivateData(cfg.incrementalBackupInput.ActionUID, arrangedActionPrivateData)
+	require.NoError(t, err)
+
+	// Act
+	backup := backup.NewBackup(cfg.incrementalBackupInput)
+	err = backup.Perform()
+	require.NoError(t, err)
+
+	// Assert
+	testutil.AssertActionPrivateDataIsEmpty(t, cfg.finRepo, cfg.incrementalBackupInput.ActionUID)
+	numDiffParts := int(math.Ceil(float64(snapshotSize) / float64(maxPartSize)))
+	for i := range numDiffParts {
+		if i < nextStorePart { // Skipped diff parts should not exist
+			diffFilePath := cfg.nlvRepo.GetDiffPartPath(cfg.incrementalBackupInput.TargetSnapshotID, i)
+			_, err := os.Stat(diffFilePath)
+			assert.True(t, errors.Is(err, os.ErrNotExist))
+			continue
+		}
+
+		diffFilePath := cfg.nlvRepo.GetDiffPartPath(cfg.incrementalBackupInput.TargetSnapshotID, i)
+		ensureDiffFileCorrect(t, diffFilePath, &fake.ExportedDiff{
+			PoolName:      cfg.fullBackupInput.TargetRBDPoolName,
+			FromSnap:      &cfg.fullSnapshot.Name,
+			MidSnapPrefix: cfg.incrementalSnapshot.Name,
+			ImageName:     cfg.incrementalBackupInput.TargetRBDImageName,
+			SnapID:        cfg.incrementalBackupInput.TargetSnapshotID,
+			SnapName:      cfg.incrementalSnapshot.Name,
+			SnapSize:      snapshotSize,
+			SnapTimestamp: cfg.incrementalSnapshot.Timestamp.Time,
+		})
+	}
+
+	ensureBackupMetadataCorrect(t, cfg.finRepo, &job.BackupMetadata{
+		PVCUID:       cfg.fullBackupInput.TargetPVCUID,
+		RBDImageName: cfg.fullBackupInput.TargetRBDImageName,
+		Raw: &job.BackupMetadataEntry{
+			SnapID:    cfg.fullBackupInput.TargetSnapshotID,
+			SnapName:  cfg.fullSnapshot.Name,
+			SnapSize:  snapshotSize,
+			PartSize:  maxPartSize,
+			CreatedAt: cfg.fullSnapshot.Timestamp.Time,
+		},
+		Diff: []*job.BackupMetadataEntry{
+			{
+				SnapID:    cfg.incrementalBackupInput.TargetSnapshotID,
+				SnapName:  cfg.incrementalSnapshot.Name,
+				SnapSize:  snapshotSize,
+				PartSize:  maxPartSize,
+				CreatedAt: cfg.incrementalSnapshot.Timestamp.Time,
+			},
+		},
+	})
 }
 
 func ensureDiffFileCorrect(t *testing.T, diffFilePath string, expected *fake.ExportedDiff) {
