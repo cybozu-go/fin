@@ -27,7 +27,7 @@ type setupInput struct {
 
 type setupOutput struct {
 	fullBackupInput, incrementalBackupInput *input.Backup
-	k8sRepo                                 model.KubernetesRepository
+	k8sRepo                                 *fake.KubernetesRepository
 	finRepo                                 model.FinRepository
 	nlvRepo                                 model.NodeLocalVolumeRepository
 	fullSnapshot, incrementalSnapshot       *model.RBDSnapshot
@@ -151,6 +151,7 @@ func TestFullBackup_Success(t *testing.T) {
 }
 
 func TestIncrementalBackup_Success(t *testing.T) {
+	// CSATEST-1495, CSATEST-1501
 	// Description:
 	//   Create an incremental backup with no error.
 	//
@@ -172,6 +173,25 @@ func TestIncrementalBackup_Success(t *testing.T) {
 	// Create a full backup
 	fullBackup := NewBackup(cfg.fullBackupInput)
 	err := fullBackup.Perform()
+	require.NoError(t, err)
+
+	// Change PVC and PV annotations to non-nil values.
+	// This step is necessary to ensure that pv.yaml and pvc.yaml won't be changed after the incremental backup.
+	pvc, err := cfg.k8sRepo.GetPVC(cfg.incrementalBackupInput.TargetPVCName, cfg.incrementalBackupInput.TargetPVCNamespace)
+	require.NoError(t, err)
+	require.Nil(t, pvc.Annotations)
+	pvc.Annotations = map[string]string{"test": "pvc"}
+	cfg.k8sRepo.SetPVC(cfg.incrementalBackupInput.TargetPVCName, cfg.incrementalBackupInput.TargetPVCNamespace, pvc)
+
+	pv, err := cfg.k8sRepo.GetPV(cfg.targetPVName)
+	require.NoError(t, err)
+	require.Nil(t, pv.Annotations)
+	pv.Annotations = map[string]string{"test": "pv"}
+	cfg.k8sRepo.SetPV(pv.Name, pv)
+
+	expectedPVC, err := nlvRepo.GetPVC()
+	require.NoError(t, err)
+	expectedPV, err := nlvRepo.GetPV()
 	require.NoError(t, err)
 
 	// Act
@@ -216,6 +236,14 @@ func TestIncrementalBackup_Success(t *testing.T) {
 			},
 		},
 	})
+
+	// Ensure that the PVC and PV are not changed after the incremental backup.
+	gotPVC, err := nlvRepo.GetPVC()
+	assert.NoError(t, err)
+	assert.Equal(t, expectedPVC, gotPVC)
+	gotPV, err := nlvRepo.GetPV()
+	assert.NoError(t, err)
+	assert.Equal(t, expectedPV, gotPV)
 }
 
 func TestBackup_ErrorBusy(t *testing.T) {
