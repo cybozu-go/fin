@@ -33,36 +33,69 @@ type ExportedDiff struct {
 }
 
 type RBDRepository struct {
-	snapshots map[PoolImageName][]*model.RBDSnapshot
+	poolName, imageName string
+	lastSnapID          int
+	snapshots           []*model.RBDSnapshot
 }
 
 var _ model.RBDRepository = &RBDRepository{}
 
+// deprecated: this function will be removed later as a result of refactoring.
 func NewRBDRepository(
-	snapshots map[PoolImageName][]*model.RBDSnapshot,
+	s map[PoolImageName][]*model.RBDSnapshot,
 ) *RBDRepository {
-	return &RBDRepository{snapshots: snapshots}
+	if len(s) > 1 {
+		panic("multiple pool/image names are not supported")
+	}
+	repo := &RBDRepository{
+		snapshots: make([]*model.RBDSnapshot, 0),
+	}
+	if len(s) == 0 {
+		return repo
+	}
+
+	for poolImageName, snapshots := range s {
+		repo.poolName = poolImageName.PoolName
+		repo.imageName = poolImageName.ImageName
+		repo.snapshots = append(repo.snapshots, snapshots...)
+		repo.lastSnapID = snapshots[len(snapshots)-1].ID
+	}
+
+	return repo
+}
+
+// CreateFakeSnapshot creates a fake snapshot for the specified pool and image.
+// It returns the snapshot ID of the created one.
+func (r *RBDRepository) CreateFakeSnapshot(name string, size int, timestamp time.Time) int {
+	r.lastSnapID++
+	snapshot := &model.RBDSnapshot{
+		ID:        r.lastSnapID,
+		Name:      name,
+		Size:      size,
+		Timestamp: model.NewRBDTimeStamp(timestamp),
+	}
+	r.snapshots = append(r.snapshots, snapshot)
+	return snapshot.ID
 }
 
 func (r *RBDRepository) ListSnapshots(poolName, imageName string) ([]*model.RBDSnapshot, error) {
-	if snapshots, ok := r.snapshots[PoolImageName{poolName, imageName}]; ok {
-		return snapshots, nil
+	if poolName == r.poolName && imageName == r.imageName {
+		return r.snapshots, nil
 	}
 	return nil, model.ErrNotFound
 }
 
 func (r *RBDRepository) ExportDiff(input *model.ExportDiffInput) error {
-	snapshots, ok := r.snapshots[PoolImageName{PoolName: input.PoolName, ImageName: input.ImageName}]
-	if !ok {
+	if len(r.snapshots) == 0 {
 		return errors.New("source image not found")
 	}
-	snapshotIndex := slices.IndexFunc(snapshots, func(snapshot *model.RBDSnapshot) bool {
+	snapshotIndex := slices.IndexFunc(r.snapshots, func(snapshot *model.RBDSnapshot) bool {
 		return snapshot.Name == input.TargetSnapName
 	})
 	if snapshotIndex == -1 {
 		return errors.New("source snapshot not found")
 	}
-	snapshot := snapshots[snapshotIndex]
+	snapshot := r.snapshots[snapshotIndex]
 
 	file, err := os.Create(input.OutputFile)
 	if err != nil {
