@@ -43,8 +43,8 @@ func TestRestoreFromFullBackup_Success(t *testing.T) {
 
 	rawImageChunkSize := 4096
 	targetSnapshotSize := rawImageChunkSize * 2
-	snapID := rbdRepo.CreateFakeSnapshot(utils.GetUniqueName("snap-"), targetSnapshotSize, time.Now())
-	backupInput := testutil.NewBackupInput(k8sRepo, volumeInfo, snapID, nil, rawImageChunkSize)
+	snap := rbdRepo.CreateFakeSnapshot(utils.GetUniqueName("snap-"), targetSnapshotSize, time.Now())
+	backupInput := testutil.NewBackupInput(k8sRepo, volumeInfo, snap.ID, nil, rawImageChunkSize)
 	backupInput.Repo = finRepo
 	backupInput.KubernetesRepo = k8sRepo
 	backupInput.RBDRepo = rbdRepo
@@ -114,20 +114,20 @@ func TestRestoreFromIncrementalBackup_Success(t *testing.T) {
 	rawImageChunkSize := 4096
 
 	fullSnapshotSize := rawImageChunkSize * 2
-	fullBKsnapID := rbdRepo.CreateFakeSnapshot(utils.GetUniqueName("snap-"),
+	fullSnapshot := rbdRepo.CreateFakeSnapshot(utils.GetUniqueName("snap-"),
 		fullSnapshotSize, time.Now())
 	fullBackupInput := testutil.NewBackupInput(k8sRepo, volumeInfo,
-		fullBKsnapID, nil, rawImageChunkSize)
+		fullSnapshot.ID, nil, rawImageChunkSize)
 	fullBackupInput.Repo = finRepo
 	fullBackupInput.KubernetesRepo = k8sRepo
 	fullBackupInput.RBDRepo = rbdRepo
 	fullBackupInput.NodeLocalVolumeRepo = nlvRepo
 
 	incrementalSnapshotSize := rawImageChunkSize * 3
-	incrementalBKsnapID := rbdRepo.CreateFakeSnapshot(utils.GetUniqueName("snap-"),
+	incrementalSnapshot := rbdRepo.CreateFakeSnapshot(utils.GetUniqueName("snap-"),
 		incrementalSnapshotSize, time.Now())
 	incrementalBackupInput := testutil.NewBackupInput(k8sRepo, volumeInfo,
-		incrementalBKsnapID, &fullBKsnapID, rawImageChunkSize)
+		incrementalSnapshot.ID, &fullSnapshot.ID, rawImageChunkSize)
 	incrementalBackupInput.Repo = finRepo
 	incrementalBackupInput.KubernetesRepo = k8sRepo
 	incrementalBackupInput.RBDRepo = rbdRepo

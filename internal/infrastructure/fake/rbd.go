@@ -66,7 +66,7 @@ func NewRBDRepository(
 
 // CreateFakeSnapshot creates a fake snapshot for the specified pool and image.
 // It returns the snapshot ID of the created one.
-func (r *RBDRepository) CreateFakeSnapshot(name string, size int, timestamp time.Time) int {
+func (r *RBDRepository) CreateFakeSnapshot(name string, size int, timestamp time.Time) *model.RBDSnapshot {
 	r.lastSnapID++
 	snapshot := &model.RBDSnapshot{
 		ID:        r.lastSnapID,
@@ -75,7 +75,7 @@ func (r *RBDRepository) CreateFakeSnapshot(name string, size int, timestamp time
 		Timestamp: model.NewRBDTimeStamp(timestamp),
 	}
 	r.snapshots = append(r.snapshots, snapshot)
-	return snapshot.ID
+	return snapshot
 }
 
 func (r *RBDRepository) ListSnapshots(poolName, imageName string) ([]*model.RBDSnapshot, error) {
