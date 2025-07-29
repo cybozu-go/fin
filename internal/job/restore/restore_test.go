@@ -44,9 +44,7 @@ func TestRestoreFromFullBackup_Success(t *testing.T) {
 	targetSnapshotName := "test-snap"
 	rawImageChunkSize := 4096
 	targetSnapshotSize := rawImageChunkSize * 2
-	ts, err := time.Parse(testutil.SnapshotTimeFormat, "Mon Jan  2 15:04:05 2006")
-	require.NoError(t, err)
-	targetSnapshotTimestamp := model.NewRBDTimeStamp(ts)
+	targetSnapshotTimestamp := model.RBDTimeStamp{Time: time.Now().UTC()}
 	targetPVName := "test-pv"
 
 	k8sRepo := fake.NewKubernetesRepository(
@@ -94,7 +92,7 @@ func TestRestoreFromFullBackup_Success(t *testing.T) {
 	backupInput.NodeLocalVolumeRepo = nlvRepo
 
 	backup := backup.NewBackup(backupInput)
-	err = backup.Perform()
+	err := backup.Perform()
 	require.NoError(t, err)
 
 	// Fill raw.img with random data. Although this file has some data
@@ -151,22 +149,21 @@ func TestRestoreFromIncrementalBackup_Success(t *testing.T) {
 	//     chunk2: zero filled.
 
 	// Arrange
+	today := time.Now().UTC()
+	yesterday := today.Add(-time.Hour)
+
 	fullBackupInput := testutil.NewBackupInputTemplate(1, 4096)
 	fullSnapshotName := "test-snap1"
 	rawImageChunkSize := 4096
 	fullSnapshotSize := rawImageChunkSize * 2
-	fts, err := time.Parse(testutil.SnapshotTimeFormat, "Mon Jan  2 15:03:05 2006")
-	require.NoError(t, err)
-	fullSnapshotTimestamp := model.NewRBDTimeStamp(fts)
+	fullSnapshotTimestamp := model.RBDTimeStamp{Time: yesterday}
 	targetPVName := "test-pv"
 
 	incrementalBackupInput := testutil.NewIncrementalBackupInputTemplate(fullBackupInput, 2)
 	incrementalBackupInput.SourceCandidateSnapshotID = &fullBackupInput.TargetSnapshotID
 	incrementalSnapshotName := "test-snap2"
 	incrementalSnapshotSize := rawImageChunkSize * 3
-	its, err := time.Parse(testutil.SnapshotTimeFormat, "Mon Jan  2 15:04:05 2006")
-	require.NoError(t, err)
-	incrementalSnapshotTimestamp := model.NewRBDTimeStamp(its)
+	incrementalSnapshotTimestamp := model.RBDTimeStamp{Time: today}
 
 	k8sRepo := fake.NewKubernetesRepository(
 		map[types.NamespacedName]*corev1.PersistentVolumeClaim{
@@ -225,7 +222,7 @@ func TestRestoreFromIncrementalBackup_Success(t *testing.T) {
 
 	// Create a full backup
 	fullBackup := backup.NewBackup(fullBackupInput)
-	err = fullBackup.Perform()
+	err := fullBackup.Perform()
 	require.NoError(t, err)
 
 	// Create an incremental backup
