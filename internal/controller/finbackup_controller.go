@@ -50,11 +50,12 @@ var (
 // FinBackupReconciler reconciles a FinBackup object
 type FinBackupReconciler struct {
 	client.Client
-	Scheme               *runtime.Scheme
-	cephClusterNamespace string
-	podImage             string
-	maxPartSize          *resource.Quantity
-	snapRepo             model.RBDSnapshotRepository
+	Scheme                  *runtime.Scheme
+	cephClusterNamespace    string
+	podImage                string
+	maxPartSize             *resource.Quantity
+	snapRepo                model.RBDSnapshotRepository
+	rawImgExpansionUnitSize int
 }
 
 func NewFinBackupReconciler(
@@ -64,14 +65,16 @@ func NewFinBackupReconciler(
 	podImage string,
 	maxPartSize *resource.Quantity,
 	snapRepo model.RBDSnapshotRepository,
+	rawImgExpansionUnitSize int,
 ) *FinBackupReconciler {
 	return &FinBackupReconciler{
-		Client:               client,
-		Scheme:               scheme,
-		cephClusterNamespace: cephClusterNamespace,
-		podImage:             podImage,
-		maxPartSize:          maxPartSize,
-		snapRepo:             snapRepo,
+		Client:                  client,
+		Scheme:                  scheme,
+		cephClusterNamespace:    cephClusterNamespace,
+		podImage:                podImage,
+		maxPartSize:             maxPartSize,
+		snapRepo:                snapRepo,
+		rawImgExpansionUnitSize: rawImgExpansionUnitSize,
 	}
 }
 
@@ -440,10 +443,6 @@ func (r *FinBackupReconciler) createOrUpdateBackupJob(
 						Value: string(backup.GetUID()),
 					},
 					{
-						Name:  "FIN_BACKUP_UID",
-						Value: string(backup.GetUID()),
-					},
-					{
 						Name:  "RBD_POOL",
 						Value: backup.GetAnnotations()[annotationRBDPool],
 					},
@@ -528,6 +527,12 @@ func (r *FinBackupReconciler) createOrUpdateBackupJob(
 					},
 				},
 			},
+		}
+		if r.rawImgExpansionUnitSize != 0 {
+			job.Spec.Template.Spec.Containers[0].Env = append(job.Spec.Template.Spec.Containers[0].Env, corev1.EnvVar{
+				Name:  "FIN_RAW_IMG_EXPANSION_UNIT_SIZE",
+				Value: strconv.Itoa(r.rawImgExpansionUnitSize),
+			})
 		}
 
 		job.Spec.Template.Spec.Volumes = []corev1.Volume{

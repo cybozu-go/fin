@@ -4,6 +4,7 @@ metadata:
   name: test-pvc
   namespace: test-ns
 spec:
+  volumeMode: Block
   accessModes:
   - ReadWriteOnce
   resources:

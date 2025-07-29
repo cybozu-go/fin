@@ -24,7 +24,6 @@ func NewBackupInputTemplate(snapID, maxPartSize int) *backup.BackupInput {
 	return &backup.BackupInput{
 		RetryInterval:             1 * time.Second,
 		ActionUID:                 uuid.New().String(),
-		TargetFinBackupUID:        uuid.New().String(),
 		TargetRBDPoolName:         "test-pool",
 		TargetRBDImageName:        "test-image",
 		TargetSnapshotID:          snapID,
@@ -42,7 +41,6 @@ func NewIncrementalBackupInputTemplate(src *backup.BackupInput, snapID int) *bac
 	ret.TargetSnapshotID = snapID
 	ret.SourceCandidateSnapshotID = &parentSnapID
 	ret.ActionUID = uuid.New().String()
-	ret.TargetFinBackupUID = uuid.New().String()
 	return &ret
 }
 

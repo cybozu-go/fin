@@ -98,7 +98,6 @@ func TestFullBackup_Success(t *testing.T) {
 
 	rawImage, err := fake.ReadRawImage(nlvRepo.GetRawImagePath())
 	assert.NoError(t, err)
-	assert.Equal(t, targetSnapshotSize, rawImage.Size)
 	assert.Equal(t, 2, len(rawImage.AppliedDiffs))
 	assert.Equal(t, 0, rawImage.AppliedDiffs[0].ReadOffset)
 	assert.Equal(t, backupInput.MaxPartSize, rawImage.AppliedDiffs[0].ReadLength)
@@ -115,7 +114,7 @@ func TestFullBackup_Success(t *testing.T) {
 	for _, diff := range rawImage.AppliedDiffs {
 		assert.Equal(t, backupInput.TargetRBDPoolName, diff.PoolName)
 		assert.Nil(t, diff.FromSnap)
-		assert.Equal(t, backupInput.TargetFinBackupUID, diff.MidSnapPrefix)
+		assert.Equal(t, targetSnapshotName, diff.MidSnapPrefix)
 		assert.Equal(t, backupInput.TargetRBDImageName, diff.ImageName)
 		assert.Equal(t, backupInput.TargetSnapshotID, diff.SnapID)
 		assert.Equal(t, targetSnapshotName, diff.SnapName)
@@ -240,7 +239,7 @@ func TestIncrementalBackup_Success(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, fullBackupInput.TargetRBDPoolName, diff.PoolName)
 		assert.Equal(t, fullSnapshotName, *diff.FromSnap)
-		assert.Equal(t, incrementalBackupInput.TargetFinBackupUID, diff.MidSnapPrefix)
+		assert.Equal(t, incrementalSnapshotName, diff.MidSnapPrefix)
 		assert.Equal(t, incrementalBackupInput.TargetRBDImageName, diff.ImageName)
 		assert.Equal(t, incrementalBackupInput.TargetSnapshotID, diff.SnapID)
 		assert.Equal(t, incrementalSnapshotName, diff.SnapName)
