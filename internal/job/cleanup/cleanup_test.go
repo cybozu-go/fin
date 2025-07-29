@@ -63,6 +63,9 @@ func TestCleanup_OnStoringDiffForFullBackup_Success(t *testing.T) {
 	_, err = os.Stat(filepath.Join(root, fmt.Sprintf("diff/%d", snapID)))
 	assert.ErrorIs(t, err, fs.ErrNotExist)
 
+	anotherActionUID := uuid.New().String()
+	err = finRepo.StartOrRestartAction(anotherActionUID, model.Backup)
+	require.NoError(t, err)
 }
 
 func TestCleanup_ErrorBusy(t *testing.T) {
