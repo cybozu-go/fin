@@ -10,10 +10,10 @@ import (
 	"time"
 
 	"github.com/cybozu-go/fin/internal/infrastructure/db"
-	"github.com/cybozu-go/fin/internal/infrastructure/kubernetes"
 	"github.com/cybozu-go/fin/internal/infrastructure/nlv"
 	rvol "github.com/cybozu-go/fin/internal/infrastructure/restore"
 	"github.com/cybozu-go/fin/internal/job"
+	"github.com/cybozu-go/fin/internal/job/input"
 	"github.com/cybozu-go/fin/internal/job/restore"
 	"github.com/cybozu-go/fin/internal/model"
 	"github.com/spf13/cobra"
@@ -53,12 +53,6 @@ func restoreJobMain() error {
 	defer func() { _ = finRepo.Close() }()
 	restoreVol := rvol.NewRestoreVolume(rvol.VolumePath)
 
-	clientSet, err := getClientSet()
-	if err != nil {
-		return fmt.Errorf("failed to get Kubernetes clientset: %w", err)
-	}
-	k8sRepo := kubernetes.NewKubernetesRepository(clientSet)
-
 	actionUID := os.Getenv("ACTION_UID")
 	if actionUID == "" {
 		return fmt.Errorf("ACTION_UID environment variable is not set")
@@ -84,7 +78,6 @@ func restoreJobMain() error {
 
 	r := restore.NewRestore(&restore.RestoreInput{
 		Repo:                finRepo,
-		KubernetesRepo:      k8sRepo,
 		NodeLocalVolumeRepo: nlvRepo,
 		RetryInterval:       job.RetryInterval,
 		ActionUID:           actionUID,

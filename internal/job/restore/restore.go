@@ -13,7 +13,6 @@ import (
 
 type Restore struct {
 	repo                model.FinRepository
-	kubernetesRepo      model.KubernetesRepository
 	nodeLocalVolumeRepo model.NodeLocalVolumeRepository
 	restoreVol          model.RestoreVolume
 	retryInterval       time.Duration
@@ -25,7 +24,6 @@ type Restore struct {
 
 type RestoreInput struct {
 	Repo                model.FinRepository
-	KubernetesRepo      model.KubernetesRepository
 	NodeLocalVolumeRepo model.NodeLocalVolumeRepository
 	RestoreVol          model.RestoreVolume
 	RetryInterval       time.Duration
@@ -38,7 +36,6 @@ type RestoreInput struct {
 func NewRestore(in *RestoreInput) *Restore {
 	return &Restore{
 		repo:                in.Repo,
-		kubernetesRepo:      in.KubernetesRepo,
 		nodeLocalVolumeRepo: in.NodeLocalVolumeRepo,
 		restoreVol:          in.RestoreVol,
 		retryInterval:       in.RetryInterval,
