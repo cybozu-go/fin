@@ -2,9 +2,11 @@ package utils
 
 import (
 	"fmt"
+	"math/rand"
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 
 	. "github.com/onsi/ginkgo/v2" //nolint:golint,revive
 )
@@ -16,6 +18,10 @@ const (
 
 	certmanagerVersion = "v1.14.4"
 	certmanagerURLTmpl = "https://github.com/jetstack/cert-manager/releases/download/%s/cert-manager.yaml"
+)
+
+var (
+	usedResourceNames = &sync.Map{}
 )
 
 func warnError(err error) {
@@ -130,4 +136,17 @@ func GetProjectDir() (string, error) {
 	}
 	wd = strings.ReplaceAll(wd, "/test/e2e", "")
 	return wd, nil
+}
+
+func GetUniqueName(prefix string) string {
+	const letters = "abcdefghijklmnopqrstuvwxyz0123456789"
+	buf := make([]byte, 8)
+	for i := range buf {
+		buf[i] = letters[rand.Intn(len(letters))]
+	}
+	name := fmt.Sprintf("%s%s", prefix, string(buf))
+	if _, exists := usedResourceNames.LoadOrStore(name, true); exists {
+		return GetUniqueName(prefix)
+	}
+	return name
 }
