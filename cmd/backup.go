@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"database/sql"
 	"fmt"
 	"log/slog"
 	"os"
@@ -10,9 +9,9 @@ import (
 	"time"
 
 	"github.com/cybozu-go/fin/internal/infrastructure/ceph"
+	"github.com/cybozu-go/fin/internal/infrastructure/db"
 	"github.com/cybozu-go/fin/internal/infrastructure/kubernetes"
 	"github.com/cybozu-go/fin/internal/infrastructure/nlv"
-	"github.com/cybozu-go/fin/internal/infrastructure/sqlite"
 	"github.com/cybozu-go/fin/internal/job/backup"
 	"github.com/spf13/cobra"
 	cgk8s "k8s.io/client-go/kubernetes"
@@ -58,16 +57,11 @@ func backupJobMain() error {
 	}
 	defer func() { _ = nlvRepo.Close() }()
 
-	dataSourceName := fmt.Sprintf("%s?%s", nlvRepo.GetDBPath(), "_txlock=exclusive")
-	db, err := sql.Open("sqlite3", dataSourceName)
-	if err != nil {
-		return fmt.Errorf("failed to open database: %w", err)
-	}
-	defer func() { _ = db.Close() }()
-	finRepo, err := sqlite.New(db)
+	finRepo, err := db.New(nlvRepo.GetDBPath())
 	if err != nil {
 		return fmt.Errorf("failed to create repository: %w", err)
 	}
+	defer func() { _ = finRepo.Close() }()
 
 	clientSet, err := getClientSet()
 	if err != nil {

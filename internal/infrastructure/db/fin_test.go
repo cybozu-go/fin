@@ -1,8 +1,6 @@
-package sqlite
+package db
 
 import (
-	"database/sql"
-	"fmt"
 	"os"
 	"testing"
 
@@ -12,16 +10,14 @@ import (
 )
 
 const (
-	testDatasource = "test.db"
-	testUID        = "test-uid"
-	testAction     = model.Backup
+	testDBFile = "test.db"
+	testUID    = "test-uid"
+	testAction = model.Backup
 )
 
 func CreateRepoForTest(t *testing.T) model.FinRepository {
-	db, err := sql.Open("sqlite3", fmt.Sprintf("file:%s?_txlock=exclusive", testDatasource))
-	t.Cleanup(func() { _ = db.Close(); _ = os.Remove(testDatasource) })
-	require.NoError(t, err)
-	repo, err := New(db)
+	repo, err := New(testDBFile)
+	t.Cleanup(func() { _ = repo.Close(); _ = os.Remove(testDBFile) })
 	require.NoError(t, err)
 
 	return repo
