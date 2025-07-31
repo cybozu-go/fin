@@ -2,90 +2,15 @@ package testutil
 
 import (
 	"crypto/rand"
-	"fmt"
 	"os"
 	"testing"
-	"time"
 
 	"github.com/cybozu-go/fin/internal/infrastructure/db"
-	"github.com/cybozu-go/fin/internal/infrastructure/fake"
 	"github.com/cybozu-go/fin/internal/infrastructure/nlv"
-	"github.com/cybozu-go/fin/internal/job/backup"
-	"github.com/cybozu-go/fin/internal/job/restore"
 	"github.com/cybozu-go/fin/internal/model"
-	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-const SnapshotTimeFormat = "Mon Jan  2 15:04:05 2006"
-
-// deprecated: this function will be removed later as a result of refactoring.
-func NewBackupInputTemplate(snapID, maxPartSize int) *backup.BackupInput {
-	return &backup.BackupInput{
-		RetryInterval:             1 * time.Second,
-		ActionUID:                 uuid.New().String(),
-		TargetRBDPoolName:         "test-pool",
-		TargetRBDImageName:        "test-image",
-		TargetSnapshotID:          snapID,
-		SourceCandidateSnapshotID: nil,
-		TargetPVCName:             "test-pvc",
-		TargetPVCNamespace:        "test-namespace",
-		TargetPVCUID:              uuid.New().String(),
-		MaxPartSize:               maxPartSize,
-	}
-}
-
-// NewBackupInput creates a BackupInput for testing using a KubernetesRepository and a fake.VolumeInfo.
-func NewBackupInput(k8sRepo model.KubernetesRepository, volume *fake.VolumeInfo,
-	targetSnapID int, sourceSnapID *int, maxPartSize int) *backup.BackupInput {
-	pvc, err := k8sRepo.GetPVC(volume.PVCName, volume.Namespace)
-	if err != nil {
-		panic(fmt.Sprintf("failed to get PVC: %v", err))
-	}
-	pv, err := k8sRepo.GetPV(volume.PVName)
-	if err != nil {
-		panic(fmt.Sprintf("failed to get PV: %v", err))
-	}
-
-	return &backup.BackupInput{
-		RetryInterval:             1 * time.Second,
-		ActionUID:                 uuid.New().String(),
-		TargetRBDPoolName:         pv.Spec.CSI.VolumeAttributes["pool"],
-		TargetRBDImageName:        pv.Spec.CSI.VolumeAttributes["imageName"],
-		TargetSnapshotID:          targetSnapID,
-		SourceCandidateSnapshotID: sourceSnapID,
-		TargetPVCName:             pvc.Name,
-		TargetPVCNamespace:        pvc.Namespace,
-		TargetPVCUID:              string(pvc.UID),
-		MaxPartSize:               maxPartSize,
-	}
-}
-
-// deprecated: this function will be removed later as a result of refactoring.
-func NewIncrementalBackupInputTemplate(src *backup.BackupInput, snapID int) *backup.BackupInput {
-	ret := *src
-	parentSnapID := ret.TargetSnapshotID
-	ret.TargetSnapshotID = snapID
-	ret.SourceCandidateSnapshotID = &parentSnapID
-	ret.ActionUID = uuid.New().String()
-	return &ret
-}
-
-func NewRestoreInputTemplate(bi *backup.BackupInput,
-	rVol model.RestoreVolume, chunkSize, snapID int) *restore.RestoreInput {
-	return &restore.RestoreInput{
-		Repo:                bi.Repo,
-		KubernetesRepo:      bi.KubernetesRepo,
-		NodeLocalVolumeRepo: bi.NodeLocalVolumeRepo,
-		RestoreVol:          rVol,
-		RawImageChunkSize:   int64(chunkSize),
-		TargetSnapshotID:    snapID,
-		RetryInterval:       bi.RetryInterval,
-		ActionUID:           bi.ActionUID,
-		TargetPVCUID:        bi.TargetPVCUID,
-	}
-}
 
 func FillRawImageWithRandomData(t *testing.T, rawImagePath string, size int) []byte {
 	t.Helper()

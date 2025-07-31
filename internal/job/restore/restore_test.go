@@ -1,4 +1,4 @@
-package restore_test
+package restore
 
 import (
 	"bytes"
@@ -9,8 +9,8 @@ import (
 	"github.com/cybozu-go/fin/internal/infrastructure/fake"
 	"github.com/cybozu-go/fin/internal/job"
 	"github.com/cybozu-go/fin/internal/job/backup"
-	"github.com/cybozu-go/fin/internal/job/restore"
 	"github.com/cybozu-go/fin/internal/job/testutil"
+	backuputil "github.com/cybozu-go/fin/internal/job/testutil/backup"
 	"github.com/cybozu-go/fin/test/utils"
 
 	"github.com/cybozu-go/fin/internal/model"
@@ -18,6 +18,21 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func newRestoreInputTemplate(bi *backup.BackupInput,
+	rVol model.RestoreVolume, chunkSize, snapID int) *RestoreInput {
+	return &RestoreInput{
+		Repo:                bi.Repo,
+		KubernetesRepo:      bi.KubernetesRepo,
+		NodeLocalVolumeRepo: bi.NodeLocalVolumeRepo,
+		RestoreVol:          rVol,
+		RawImageChunkSize:   int64(chunkSize),
+		TargetSnapshotID:    snapID,
+		RetryInterval:       bi.RetryInterval,
+		ActionUID:           bi.ActionUID,
+		TargetPVCUID:        bi.TargetPVCUID,
+	}
+}
 
 func TestRestoreFromFullBackup_Success(t *testing.T) {
 	// Description:
@@ -44,7 +59,7 @@ func TestRestoreFromFullBackup_Success(t *testing.T) {
 	rawImageChunkSize := 4096
 	targetSnapshotSize := rawImageChunkSize * 2
 	snapID := rbdRepo.CreateFakeSnapshot(utils.GetUniqueName("snap-"), targetSnapshotSize, time.Now())
-	backupInput := testutil.NewBackupInput(k8sRepo, volumeInfo, snapID, nil, rawImageChunkSize)
+	backupInput := backuputil.NewBackupInput(k8sRepo, volumeInfo, snapID, nil, rawImageChunkSize)
 	backupInput.Repo = finRepo
 	backupInput.KubernetesRepo = k8sRepo
 	backupInput.RBDRepo = rbdRepo
@@ -64,7 +79,7 @@ func TestRestoreFromFullBackup_Success(t *testing.T) {
 	rVol := fake.NewRestoreVolume(restorePath)
 
 	// Act
-	r := restore.NewRestore(testutil.NewRestoreInputTemplate(
+	r := NewRestore(newRestoreInputTemplate(
 		backupInput, rVol, rawImageChunkSize, backupInput.TargetSnapshotID))
 
 	err = r.Perform()
@@ -116,7 +131,7 @@ func TestRestoreFromIncrementalBackup_Success(t *testing.T) {
 	fullSnapshotSize := rawImageChunkSize * 2
 	fullBKsnapID := rbdRepo.CreateFakeSnapshot(utils.GetUniqueName("snap-"),
 		fullSnapshotSize, time.Now())
-	fullBackupInput := testutil.NewBackupInput(k8sRepo, volumeInfo,
+	fullBackupInput := backuputil.NewBackupInput(k8sRepo, volumeInfo,
 		fullBKsnapID, nil, rawImageChunkSize)
 	fullBackupInput.Repo = finRepo
 	fullBackupInput.KubernetesRepo = k8sRepo
@@ -126,7 +141,7 @@ func TestRestoreFromIncrementalBackup_Success(t *testing.T) {
 	incrementalSnapshotSize := rawImageChunkSize * 3
 	incrementalBKsnapID := rbdRepo.CreateFakeSnapshot(utils.GetUniqueName("snap-"),
 		incrementalSnapshotSize, time.Now())
-	incrementalBackupInput := testutil.NewBackupInput(k8sRepo, volumeInfo,
+	incrementalBackupInput := backuputil.NewBackupInput(k8sRepo, volumeInfo,
 		incrementalBKsnapID, &fullBKsnapID, rawImageChunkSize)
 	incrementalBackupInput.Repo = finRepo
 	incrementalBackupInput.KubernetesRepo = k8sRepo
@@ -153,7 +168,7 @@ func TestRestoreFromIncrementalBackup_Success(t *testing.T) {
 	rVol := fake.NewRestoreVolume(restorePath)
 
 	// Act
-	r := restore.NewRestore(testutil.NewRestoreInputTemplate(
+	r := NewRestore(newRestoreInputTemplate(
 		incrementalBackupInput, rVol, rawImageChunkSize, incrementalBackupInput.TargetSnapshotID))
 	err = r.Perform()
 	require.NoError(t, err)
@@ -191,7 +206,7 @@ func TestRestore_ErrorBusy(t *testing.T) {
 	require.NoError(t, err)
 
 	// Act
-	restore := restore.NewRestore(&restore.RestoreInput{
+	restore := NewRestore(&RestoreInput{
 		Repo:      finRepo,
 		ActionUID: actionUID,
 	})

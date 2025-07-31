@@ -1,4 +1,4 @@
-package backup_test
+package backup
 
 import (
 	"math"
@@ -7,7 +7,6 @@ import (
 
 	"github.com/cybozu-go/fin/internal/infrastructure/fake"
 	"github.com/cybozu-go/fin/internal/job"
-	"github.com/cybozu-go/fin/internal/job/backup"
 	"github.com/cybozu-go/fin/internal/job/testutil"
 	"github.com/cybozu-go/fin/internal/model"
 	"github.com/google/uuid"
@@ -18,6 +17,34 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 )
+
+const SnapshotTimeFormat = "Mon Jan  2 15:04:05 2006"
+
+// deprecated: this function will be removed later as a result of refactoring.
+func newBackupInputTemplate(snapID, maxPartSize int) *BackupInput {
+	return &BackupInput{
+		RetryInterval:             1 * time.Second,
+		ActionUID:                 uuid.New().String(),
+		TargetRBDPoolName:         "test-pool",
+		TargetRBDImageName:        "test-image",
+		TargetSnapshotID:          snapID,
+		SourceCandidateSnapshotID: nil,
+		TargetPVCName:             "test-pvc",
+		TargetPVCNamespace:        "test-namespace",
+		TargetPVCUID:              uuid.New().String(),
+		MaxPartSize:               maxPartSize,
+	}
+}
+
+// deprecated: this function will be removed later as a result of refactoring.
+func newIncrementalBackupInputTemplate(src *BackupInput, snapID int) *BackupInput {
+	ret := *src
+	parentSnapID := ret.TargetSnapshotID
+	ret.TargetSnapshotID = snapID
+	ret.SourceCandidateSnapshotID = &parentSnapID
+	ret.ActionUID = uuid.New().String()
+	return &ret
+}
 
 func TestFullBackup_Success(t *testing.T) {
 	// Description:
@@ -33,10 +60,10 @@ func TestFullBackup_Success(t *testing.T) {
 	//   Check if the contents of the node local volume is correct.
 
 	// Arrange
-	backupInput := testutil.NewBackupInputTemplate(1, 512)
+	backupInput := newBackupInputTemplate(1, 512)
 	targetSnapshotName := "test-snap"
 	targetSnapshotSize := 1000
-	ts, err := time.Parse(testutil.SnapshotTimeFormat, "Mon Jan  2 15:04:05 2006")
+	ts, err := time.Parse(SnapshotTimeFormat, "Mon Jan  2 15:04:05 2006")
 	require.NoError(t, err)
 	targetSnapshotTimestamp := model.NewRBDTimeStamp(ts)
 	targetPVName := "test-pv"
@@ -89,7 +116,7 @@ func TestFullBackup_Success(t *testing.T) {
 	backupInput.NodeLocalVolumeRepo = nlvRepo
 
 	// Act
-	backup := backup.NewBackup(backupInput)
+	backup := NewBackup(backupInput)
 	err = backup.Perform()
 	require.NoError(t, err)
 
@@ -150,18 +177,18 @@ func TestIncrementalBackup_Success(t *testing.T) {
 	//   Check if the contents of the incremental backup is correct.
 
 	// Arrange
-	fullBackupInput := testutil.NewBackupInputTemplate(1, 512)
+	fullBackupInput := newBackupInputTemplate(1, 512)
 	fullSnapshotName := "test-snap1"
 	fullSnapshotSize := 900
-	fts, err := time.Parse(testutil.SnapshotTimeFormat, "Mon Jan  2 15:03:05 2006")
+	fts, err := time.Parse(SnapshotTimeFormat, "Mon Jan  2 15:03:05 2006")
 	require.NoError(t, err)
 	fullSnapshotTimestamp := model.NewRBDTimeStamp(fts)
 	targetPVName := "test-pv"
 
-	incrementalBackupInput := testutil.NewIncrementalBackupInputTemplate(fullBackupInput, 2)
+	incrementalBackupInput := newIncrementalBackupInputTemplate(fullBackupInput, 2)
 	incrementalSnapshotName := "test-snap2"
 	incrementalSnapshotSize := 1000
-	its, err := time.Parse(testutil.SnapshotTimeFormat, "Mon Jan  2 15:04:05 2006")
+	its, err := time.Parse(SnapshotTimeFormat, "Mon Jan  2 15:04:05 2006")
 	require.NoError(t, err)
 	incrementalSnapshotTimestamp := model.NewRBDTimeStamp(its)
 
@@ -221,12 +248,12 @@ func TestIncrementalBackup_Success(t *testing.T) {
 	incrementalBackupInput.NodeLocalVolumeRepo = nlvRepo
 
 	// Create a full backup
-	fullBackup := backup.NewBackup(fullBackupInput)
+	fullBackup := NewBackup(fullBackupInput)
 	err = fullBackup.Perform()
 	require.NoError(t, err)
 
 	// Act
-	backup := backup.NewBackup(incrementalBackupInput)
+	backup := NewBackup(incrementalBackupInput)
 	err = backup.Perform()
 	require.NoError(t, err)
 
@@ -277,7 +304,7 @@ func TestBackup_ErrorBusy(t *testing.T) {
 	require.NoError(t, err)
 
 	// Act
-	backup := backup.NewBackup(&backup.BackupInput{
+	backup := NewBackup(&BackupInput{
 		Repo:      finRepo,
 		ActionUID: actionUID,
 	})
