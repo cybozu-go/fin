@@ -13,8 +13,8 @@ NS := rook-ceph
 NODE_NAME := minikube-worker
 LOOP_FILE := loop.img
 LOOP_DEV := /dev/loop0
-POLLING_INTERVAL := 1
-TIMEOUT_SECS := 180
+POLLING_INTERVAL := 2
+TIMEOUT_SECS := 300
 
 export MINIKUBE_HOME
 
