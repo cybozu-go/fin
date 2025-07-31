@@ -1,4 +1,4 @@
-package sqlite
+package db
 
 import (
 	"database/sql"
@@ -27,7 +27,16 @@ func isSQLiteBusy(err error) bool {
 	return false
 }
 
-func New(db *sql.DB) (*FinRepository, error) {
+// New opens the sqlite3 database with acquiring exclusive lock.
+// Callers must calls `Close` after using the returned repository.
+// In addition, callers are in charge of removing the database file.
+func New(filename string) (*FinRepository, error) {
+	dsn := fmt.Sprintf("file:%s?_txlock=exclusive", filename)
+	db, err := sql.Open("sqlite3", dsn)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open database: %w", err)
+	}
+
 	tx, err := db.Begin()
 	if err != nil {
 		if isSQLiteBusy(err) {
@@ -65,6 +74,13 @@ func New(db *sql.DB) (*FinRepository, error) {
 	return &FinRepository{
 		db: db,
 	}, nil
+}
+
+func (fr *FinRepository) Close() error {
+	if err := fr.db.Close(); err != nil {
+		return fmt.Errorf("failed to close sqlite3 database: %w", err)
+	}
+	return nil
 }
 
 func (fr *FinRepository) StartOrRestartAction(uid string, action model.ActionKind) error {

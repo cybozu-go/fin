@@ -2,15 +2,14 @@ package testutil
 
 import (
 	"crypto/rand"
-	"database/sql"
 	"fmt"
 	"os"
 	"testing"
 	"time"
 
+	"github.com/cybozu-go/fin/internal/infrastructure/db"
 	"github.com/cybozu-go/fin/internal/infrastructure/fake"
 	"github.com/cybozu-go/fin/internal/infrastructure/nlv"
-	"github.com/cybozu-go/fin/internal/infrastructure/sqlite"
 	"github.com/cybozu-go/fin/internal/job/backup"
 	"github.com/cybozu-go/fin/internal/job/restore"
 	"github.com/cybozu-go/fin/internal/model"
@@ -114,11 +113,9 @@ func CreateNLVAndFinRepoForTest(t *testing.T) (*nlv.NodeLocalVolumeRepository, m
 	nlvRepo, err := nlv.NewNodeLocalVolumeRepository(tempDir)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = nlvRepo.Close() })
-	db, err := sql.Open("sqlite3", fmt.Sprintf("file:%s?_txlock=exclusive", nlvRepo.GetDBPath()))
-	t.Cleanup(func() { _ = db.Close() })
+	repo, err := db.New(nlvRepo.GetDBPath())
 	require.NoError(t, err)
-	repo, err := sqlite.New(db)
-	require.NoError(t, err)
+	t.Cleanup(func() { _ = repo.Close(); _ = os.Remove(nlvRepo.GetDBPath()) })
 
 	return nlvRepo, repo, tempDir
 }
