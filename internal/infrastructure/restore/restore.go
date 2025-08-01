@@ -11,6 +11,10 @@ import (
 	"github.com/cybozu-go/fin/internal/model"
 )
 
+const (
+	VolumePath = "/dev/restore"
+)
+
 type RestoreVolume struct {
 	path string
 }

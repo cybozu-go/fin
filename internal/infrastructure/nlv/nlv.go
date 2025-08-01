@@ -18,6 +18,7 @@ const (
 	pvcFilePath   = "pvc.yaml"
 	pvFilePath    = "pv.yaml"
 	imageFilePath = "raw.img"
+	VolumePath    = "/volume"
 )
 
 type NodeLocalVolumeRepository struct {

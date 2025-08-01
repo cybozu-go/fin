@@ -6,17 +6,15 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"time"
 
 	"github.com/cybozu-go/fin/internal/infrastructure/ceph"
 	"github.com/cybozu-go/fin/internal/infrastructure/db"
 	"github.com/cybozu-go/fin/internal/infrastructure/kubernetes"
 	"github.com/cybozu-go/fin/internal/infrastructure/nlv"
+	"github.com/cybozu-go/fin/internal/job"
 	"github.com/cybozu-go/fin/internal/job/backup"
 	"github.com/cybozu-go/fin/internal/job/input"
 	"github.com/spf13/cobra"
-	cgk8s "k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/rest"
 )
 
 var backupCmd = &cobra.Command{
@@ -30,18 +28,6 @@ func init() {
 	rootCmd.AddCommand(backupCmd)
 }
 
-func getClientSet() (*cgk8s.Clientset, error) {
-	config, err := rest.InClusterConfig()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get in-cluster config: %w", err)
-	}
-	clientSet, err := cgk8s.NewForConfig(config)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create Kubernetes clientset: %w", err)
-	}
-	return clientSet, nil
-}
-
 func backupJobMain() error {
 	pvcName := os.Getenv("BACKUP_TARGET_PVC_NAME")
 	if pvcName == "" {
@@ -51,7 +37,7 @@ func backupJobMain() error {
 	if pvcNamespace == "" {
 		return fmt.Errorf("BACKUP_TARGET_PVC_NAMESPACE environment variable is not set")
 	}
-	rootPath := filepath.Join("/volume", pvcNamespace, pvcName)
+	rootPath := filepath.Join(nlv.VolumePath, pvcNamespace, pvcName)
 	nlvRepo, err := nlv.NewNodeLocalVolumeRepository(rootPath)
 	if err != nil {
 		return fmt.Errorf("failed to create NodeLocalVolumeRepository: %w", err)
@@ -124,7 +110,7 @@ func backupJobMain() error {
 		KubernetesRepo:            k8sRepo,
 		RBDRepo:                   rbdRepo,
 		NodeLocalVolumeRepo:       nlvRepo,
-		RetryInterval:             time.Duration(10) * time.Second,
+		RetryInterval:             job.RetryInterval,
 		ActionUID:                 actionUID,
 		TargetRBDPoolName:         rbdPool,
 		TargetRBDImageName:        rbdImageName,

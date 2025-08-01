@@ -11,6 +11,10 @@ import (
 
 var ErrCantLock = errors.New("can't lock")
 
+const (
+	RetryInterval = time.Duration(10) * time.Second
+)
+
 type BackupMetadata struct {
 	PVCUID       string                 `json:"pvcUID,omitempty"`
 	RBDImageName string                 `json:"rbdImageName,omitempty"`
