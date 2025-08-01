@@ -13,6 +13,7 @@ import (
 	"github.com/cybozu-go/fin/internal/infrastructure/nlv"
 	"github.com/cybozu-go/fin/internal/job"
 	"github.com/cybozu-go/fin/internal/job/cleanup"
+	"github.com/cybozu-go/fin/internal/job/input"
 	"github.com/cybozu-go/fin/internal/model"
 	"github.com/spf13/cobra"
 )
@@ -68,7 +69,7 @@ func cleanupJobMain() error {
 		return fmt.Errorf("invalid TARGET_SNAPSHOT_ID: %w", err)
 	}
 
-	d := cleanup.NewCleanup(&cleanup.CleanupInput{
+	d := cleanup.NewCleanup(&input.Cleanup{
 		Repo:                finRepo,
 		NodeLocalVolumeRepo: nlvRepo,
 		ActionUID:           actionUID,

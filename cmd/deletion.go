@@ -14,6 +14,7 @@ import (
 	"github.com/cybozu-go/fin/internal/infrastructure/nlv"
 	"github.com/cybozu-go/fin/internal/job"
 	"github.com/cybozu-go/fin/internal/job/deletion"
+	"github.com/cybozu-go/fin/internal/job/input"
 	"github.com/cybozu-go/fin/internal/model"
 	"github.com/spf13/cobra"
 )
@@ -70,7 +71,7 @@ func deletionJobMain() error {
 		return fmt.Errorf("invalid TARGET_SNAPSHOT_ID: %w", err)
 	}
 
-	d := deletion.NewDeletion(&deletion.DeletionInput{
+	d := deletion.NewDeletion(&input.Deletion{
 		Repo:                finRepo,
 		RBDRepo:             rbdRepo,
 		NodeLocalVolumeRepo: nlvRepo,
