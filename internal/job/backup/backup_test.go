@@ -1,4 +1,4 @@
-package backup_test
+package backup
 
 import (
 	"encoding/json"
@@ -10,7 +10,7 @@ import (
 
 	"github.com/cybozu-go/fin/internal/infrastructure/fake"
 	"github.com/cybozu-go/fin/internal/job"
-	"github.com/cybozu-go/fin/internal/job/backup"
+	"github.com/cybozu-go/fin/internal/job/input"
 	"github.com/cybozu-go/fin/internal/job/testutil"
 	"github.com/cybozu-go/fin/internal/model"
 	"github.com/cybozu-go/fin/test/utils"
@@ -26,7 +26,7 @@ type setupInput struct {
 }
 
 type setupOutput struct {
-	fullBackupInput, incrementalBackupInput *backup.BackupInput
+	fullBackupInput, incrementalBackupInput *input.Backup
 	k8sRepo                                 model.KubernetesRepository
 	finRepo                                 model.FinRepository
 	nlvRepo                                 model.NodeLocalVolumeRepository
@@ -99,7 +99,7 @@ func TestFullBackup_Success(t *testing.T) {
 	cfg := setup(t, &setupInput{})
 
 	// Act
-	backup := backup.NewBackup(cfg.fullBackupInput)
+	backup := NewBackup(cfg.fullBackupInput)
 	err := backup.Perform()
 	require.NoError(t, err)
 
@@ -170,12 +170,12 @@ func TestIncrementalBackup_Success(t *testing.T) {
 	nlvRepo := cfg.nlvRepo
 
 	// Create a full backup
-	fullBackup := backup.NewBackup(cfg.fullBackupInput)
+	fullBackup := NewBackup(cfg.fullBackupInput)
 	err := fullBackup.Perform()
 	require.NoError(t, err)
 
 	// Act
-	backup := backup.NewBackup(cfg.incrementalBackupInput)
+	backup := NewBackup(cfg.incrementalBackupInput)
 	err = backup.Perform()
 	require.NoError(t, err)
 
@@ -229,7 +229,7 @@ func TestBackup_ErrorBusy(t *testing.T) {
 	require.NoError(t, err)
 
 	// Act
-	backup := backup.NewBackup(&backup.BackupInput{
+	backup := NewBackup(&input.Backup{
 		Repo:      finRepo,
 		ActionUID: actionUID,
 	})
@@ -286,16 +286,16 @@ func Test_IncrementalBackup_Success_Resume(t *testing.T) {
 	err = cfg.finRepo.SetBackupMetadata(arrangedBackupMetadata)
 	require.NoError(t, err)
 
-	arrangedActionPrivateData, err := json.Marshal(backup.BackupPrivateData{
+	arrangedActionPrivateData, err := json.Marshal(BackupPrivateData{
 		NextStorePart: nextStorePart, // Set custom value to nextStorePart
-		Mode:          backup.ModeIncremental,
+		Mode:          ModeIncremental,
 	})
 	require.NoError(t, err)
 	err = cfg.finRepo.UpdateActionPrivateData(cfg.incrementalBackupInput.ActionUID, arrangedActionPrivateData)
 	require.NoError(t, err)
 
 	// Act
-	backup := backup.NewBackup(cfg.incrementalBackupInput)
+	backup := NewBackup(cfg.incrementalBackupInput)
 	err = backup.Perform()
 	require.NoError(t, err)
 

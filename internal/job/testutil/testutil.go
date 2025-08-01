@@ -10,7 +10,7 @@ import (
 	"github.com/cybozu-go/fin/internal/infrastructure/db"
 	"github.com/cybozu-go/fin/internal/infrastructure/fake"
 	"github.com/cybozu-go/fin/internal/infrastructure/nlv"
-	"github.com/cybozu-go/fin/internal/job/backup"
+	"github.com/cybozu-go/fin/internal/job/input"
 	"github.com/cybozu-go/fin/internal/job/restore"
 	"github.com/cybozu-go/fin/internal/model"
 	"github.com/google/uuid"
@@ -22,7 +22,7 @@ const SnapshotTimeFormat = "Mon Jan  2 15:04:05 2006"
 
 // NewBackupInput creates a BackupInput for testing using a KubernetesRepository and a fake.VolumeInfo.
 func NewBackupInput(k8sRepo model.KubernetesRepository, volume *fake.VolumeInfo,
-	targetSnapID int, sourceSnapID *int, maxPartSize int) *backup.BackupInput {
+	targetSnapID int, sourceSnapID *int, maxPartSize int) *input.Backup {
 	pvc, err := k8sRepo.GetPVC(volume.PVCName, volume.Namespace)
 	if err != nil {
 		panic(fmt.Sprintf("failed to get PVC: %v", err))
@@ -32,7 +32,7 @@ func NewBackupInput(k8sRepo model.KubernetesRepository, volume *fake.VolumeInfo,
 		panic(fmt.Sprintf("failed to get PV: %v", err))
 	}
 
-	return &backup.BackupInput{
+	return &input.Backup{
 		RetryInterval:             1 * time.Second,
 		ActionUID:                 uuid.New().String(),
 		TargetRBDPoolName:         pv.Spec.CSI.VolumeAttributes["pool"],
@@ -46,7 +46,7 @@ func NewBackupInput(k8sRepo model.KubernetesRepository, volume *fake.VolumeInfo,
 	}
 }
 
-func NewRestoreInputTemplate(bi *backup.BackupInput,
+func NewRestoreInputTemplate(bi *input.Backup,
 	rVol model.RestoreVolume, chunkSize, snapID int) *restore.RestoreInput {
 	return &restore.RestoreInput{
 		Repo:                bi.Repo,

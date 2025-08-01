@@ -13,6 +13,7 @@ import (
 	"github.com/cybozu-go/fin/internal/infrastructure/kubernetes"
 	"github.com/cybozu-go/fin/internal/infrastructure/nlv"
 	"github.com/cybozu-go/fin/internal/job/backup"
+	"github.com/cybozu-go/fin/internal/job/input"
 	"github.com/spf13/cobra"
 	cgk8s "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -118,7 +119,7 @@ func backupJobMain() error {
 		return fmt.Errorf("invalid MAX_PART_SIZE: %w", err)
 	}
 
-	job := backup.NewBackup(&backup.BackupInput{
+	job := backup.NewBackup(&input.Backup{
 		Repo:                      finRepo,
 		KubernetesRepo:            k8sRepo,
 		RBDRepo:                   rbdRepo,
