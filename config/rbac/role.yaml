@@ -5,6 +5,15 @@ metadata:
   name: manager-role
 rules:
 - apiGroups:
+  - ""
+  resources:
+  - persistentvolumeclaims
+  - persistentvolumes
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
   - batch
   resources:
   - jobs
@@ -17,50 +26,9 @@ rules:
   - update
   - watch
 - apiGroups:
-  - ""
-  resources:
-  - persistentvolumeclaims
-  verbs:
-  - get
-  - list
-  - watch
-- apiGroups:
-  - ""
-  resources:
-  - persistentvolumes
-  verbs:
-  - get
-  - list
-  - watch
-- apiGroups:
   - fin.cybozu.io
   resources:
   - finbackups
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - fin.cybozu.io
-  resources:
-  - finbackups/finalizers
-  verbs:
-  - update
-- apiGroups:
-  - fin.cybozu.io
-  resources:
-  - finbackups/status
-  verbs:
-  - get
-  - patch
-  - update
-- apiGroups:
-  - fin.cybozu.io
-  resources:
   - finrestores
   verbs:
   - create
@@ -73,12 +41,14 @@ rules:
 - apiGroups:
   - fin.cybozu.io
   resources:
+  - finbackups/finalizers
   - finrestores/finalizers
   verbs:
   - update
 - apiGroups:
   - fin.cybozu.io
   resources:
+  - finbackups/status
   - finrestores/status
   verbs:
   - get
