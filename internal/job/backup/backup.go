@@ -236,7 +236,7 @@ func getSnapshot(repo model.RBDRepository, poolName, imageName string, snapshotI
 }
 
 func (b *Backup) loopExportDiff(
-	privateData *BackupPrivateData,
+	privateData *backupPrivateData,
 	targetSnapshot *model.RBDSnapshot,
 	sourceSnapshotName *string,
 ) error {
@@ -287,7 +287,7 @@ func (b *Backup) declareStoringCompleted(targetSnapshot *model.RBDSnapshot) erro
 	return job.SetBackupMetadata(b.repo, metadata)
 }
 
-func (b *Backup) loopApplyDiff(privateData *BackupPrivateData, targetSnapshot *model.RBDSnapshot) error {
+func (b *Backup) loopApplyDiff(privateData *backupPrivateData, targetSnapshot *model.RBDSnapshot) error {
 	partCount := int(math.Ceil(float64(targetSnapshot.Size) / float64(b.maxPartSize)))
 	for i := privateData.NextPatchPart; i < partCount; i++ {
 		sourceSnapshotName := ""
@@ -335,30 +335,30 @@ func (b *Backup) declareFullBackupApplicationCompleted(targetSnapshot *model.RBD
 	return job.SetBackupMetadata(b.repo, metadata)
 }
 
-type BackupPrivateData struct {
+type backupPrivateData struct {
 	NextStorePart int    `json:"nextStorePart,omitempty"`
 	NextPatchPart int    `json:"nextPatchPart,omitempty"`
 	Mode          string `json:"mode,omitempty"`
 }
 
-func getBackupPrivateData(repo model.FinRepository, actionUID string) (*BackupPrivateData, error) {
+func getBackupPrivateData(repo model.FinRepository, actionUID string) (*backupPrivateData, error) {
 	privateData, err := repo.GetActionPrivateData(actionUID)
 	if err != nil {
 		return nil, err
 	}
 
 	if len(privateData) == 0 {
-		return &BackupPrivateData{}, nil
+		return &backupPrivateData{}, nil
 	}
 
-	var data BackupPrivateData
+	var data backupPrivateData
 	if err := json.Unmarshal(privateData, &data); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal private data: %w", err)
 	}
 	return &data, nil
 }
 
-func setBackupPrivateData(repo model.FinRepository, actionUID string, data *BackupPrivateData) error {
+func setBackupPrivateData(repo model.FinRepository, actionUID string, data *backupPrivateData) error {
 	privateData, err := json.Marshal(data)
 	if err != nil {
 		return fmt.Errorf("failed to marshal private data: %w", err)
