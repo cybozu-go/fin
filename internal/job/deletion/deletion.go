@@ -8,6 +8,7 @@ import (
 	"math"
 
 	"github.com/cybozu-go/fin/internal/job"
+	"github.com/cybozu-go/fin/internal/job/input"
 	"github.com/cybozu-go/fin/internal/model"
 )
 
@@ -23,16 +24,7 @@ type Deletion struct {
 	targetPVCUID        string
 }
 
-type DeletionInput struct {
-	Repo                model.FinRepository
-	RBDRepo             model.RBDRepository
-	NodeLocalVolumeRepo model.NodeLocalVolumeRepository
-	ActionUID           string
-	TargetSnapshotID    int
-	TargetPVCUID        string
-}
-
-func NewDeletion(in *DeletionInput) *Deletion {
+func NewDeletion(in *input.Deletion) *Deletion {
 	return &Deletion{
 		repo:                in.Repo,
 		rbdRepo:             in.RBDRepo,

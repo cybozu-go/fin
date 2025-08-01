@@ -9,6 +9,7 @@ import (
 
 	"github.com/cybozu-go/fin/internal/job"
 	"github.com/cybozu-go/fin/internal/job/cleanup"
+	"github.com/cybozu-go/fin/internal/job/input"
 	"github.com/cybozu-go/fin/internal/job/testutil"
 	"github.com/cybozu-go/fin/internal/model"
 	"github.com/google/uuid"
@@ -43,7 +44,7 @@ func TestCleanup_OnStoringDiffForFullBackup_Success(t *testing.T) {
 	err = nlvRepo.MakeDiffDir(snapID)
 	require.NoError(t, err)
 
-	input := cleanup.CleanupInput{
+	input := input.Cleanup{
 		Repo:                finRepo,
 		NodeLocalVolumeRepo: nlvRepo,
 		ActionUID:           backupActionUID,
@@ -79,7 +80,7 @@ func TestCleanup_ErrorBusy(t *testing.T) {
 	require.NoError(t, err)
 
 	// Act
-	backup := cleanup.NewCleanup(&cleanup.CleanupInput{
+	backup := cleanup.NewCleanup(&input.Cleanup{
 		Repo:      finRepo,
 		ActionUID: actionUID,
 	})

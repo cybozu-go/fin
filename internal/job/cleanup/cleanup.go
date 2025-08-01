@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/cybozu-go/fin/internal/job"
+	"github.com/cybozu-go/fin/internal/job/input"
 	"github.com/cybozu-go/fin/internal/model"
 )
 
@@ -16,15 +17,7 @@ type Cleanup struct {
 	targetPVCUID        string
 }
 
-type CleanupInput struct {
-	Repo                model.FinRepository
-	NodeLocalVolumeRepo model.NodeLocalVolumeRepository
-	ActionUID           string
-	TargetSnapshotID    int
-	TargetPVCUID        string
-}
-
-func NewCleanup(in *CleanupInput) *Cleanup {
+func NewCleanup(in *input.Cleanup) *Cleanup {
 	return &Cleanup{
 		repo:                in.Repo,
 		nodeLocalVolumeRepo: in.NodeLocalVolumeRepo,

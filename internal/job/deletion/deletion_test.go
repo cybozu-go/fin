@@ -9,6 +9,7 @@ import (
 
 	"github.com/cybozu-go/fin/internal/infrastructure/fake"
 	"github.com/cybozu-go/fin/internal/job"
+	"github.com/cybozu-go/fin/internal/job/input"
 	"github.com/cybozu-go/fin/internal/job/testutil"
 	"github.com/cybozu-go/fin/internal/model"
 	"github.com/google/uuid"
@@ -59,7 +60,7 @@ func TestDelete_RawOnlyCase_Success(t *testing.T) {
 	require.NoError(t, file.Close())
 
 	// Act
-	deletionJob := NewDeletion(&DeletionInput{
+	deletionJob := NewDeletion(&input.Deletion{
 		Repo:                finRepo,
 		NodeLocalVolumeRepo: nlvRepo,
 		ActionUID:           actionUID,
@@ -112,7 +113,7 @@ func TestDelete_NoExistsRawCase_Success(t *testing.T) {
 	require.NoError(t, job.SetBackupMetadata(finRepo, metadata))
 
 	// Act
-	deletionJob := NewDeletion(&DeletionInput{
+	deletionJob := NewDeletion(&input.Deletion{
 		Repo:                finRepo,
 		NodeLocalVolumeRepo: nlvRepo,
 		ActionUID:           actionUID,
@@ -227,7 +228,7 @@ func TestDelete_RawAndDiffCase_Success(t *testing.T) {
 		})
 		require.NoError(t, err)
 	}
-	deletionJob := NewDeletion(&DeletionInput{
+	deletionJob := NewDeletion(&input.Deletion{
 		Repo:                finRepo,
 		RBDRepo:             rbdRepo,
 		NodeLocalVolumeRepo: nlvRepo,
@@ -396,7 +397,7 @@ func TestDelete_Retry_RawAndDiffCase_Success(t *testing.T) {
 	err = setDeletePrivateData(finRepo, actionUID, &deletePrivateData{NextPatchPart: 1})
 	require.NoError(t, err)
 
-	deletionJob := NewDeletion(&DeletionInput{
+	deletionJob := NewDeletion(&input.Deletion{
 		Repo:                finRepo,
 		RBDRepo:             rbdRepo,
 		NodeLocalVolumeRepo: nlvRepo,
@@ -462,7 +463,7 @@ func TestBackup_ErrorBusy(t *testing.T) {
 	require.NoError(t, err)
 
 	// Act
-	deletionJob := NewDeletion(&DeletionInput{
+	deletionJob := NewDeletion(&input.Deletion{
 		Repo:      finRepo,
 		ActionUID: actionUID,
 	})
@@ -500,7 +501,7 @@ func TestDelete_BackupMetadataEmpty_NoAction(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, file.Close())
 
-	deletionJob := NewDeletion(&DeletionInput{
+	deletionJob := NewDeletion(&input.Deletion{
 		Repo:      finRepo,
 		ActionUID: actionUID,
 	})
@@ -560,7 +561,7 @@ func TestDelete_TargetSnapIDGreaterThanRawSnapID_Error(t *testing.T) {
 	}
 	require.NoError(t, job.SetBackupMetadata(finRepo, metadata))
 
-	deletionJob := NewDeletion(&DeletionInput{
+	deletionJob := NewDeletion(&input.Deletion{
 		Repo:                finRepo,
 		NodeLocalVolumeRepo: nlvRepo,
 		ActionUID:           actionUID,
@@ -625,7 +626,7 @@ func TestDelete_TargetSnapIDSmallerThanRawSnapID_NoAction(t *testing.T) {
 	}
 	require.NoError(t, job.SetBackupMetadata(finRepo, metadata))
 
-	deletionJob := NewDeletion(&DeletionInput{
+	deletionJob := NewDeletion(&input.Deletion{
 		Repo:                finRepo,
 		NodeLocalVolumeRepo: nlvRepo,
 		ActionUID:           actionUID,
@@ -671,7 +672,7 @@ func TestDelete_InvalidPVCUID_Error(t *testing.T) {
 	}
 	require.NoError(t, job.SetBackupMetadata(finRepo, metadata))
 
-	deletionJob := NewDeletion(&DeletionInput{
+	deletionJob := NewDeletion(&input.Deletion{
 		Repo:             finRepo,
 		ActionUID:        actionUID,
 		TargetSnapshotID: targetSnapshotID,
@@ -712,7 +713,7 @@ func TestDelete_InvalidState_RawEmpty_Error(t *testing.T) {
 	}
 	require.NoError(t, job.SetBackupMetadata(finRepo, metadata))
 
-	deletionJob := NewDeletion(&DeletionInput{
+	deletionJob := NewDeletion(&input.Deletion{
 		Repo:             finRepo,
 		ActionUID:        actionUID,
 		TargetSnapshotID: targetSnapshotID,
