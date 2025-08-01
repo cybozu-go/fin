@@ -1,11 +1,13 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"strconv"
+	"time"
 
 	"github.com/cybozu-go/fin/internal/infrastructure/ceph"
 	"github.com/cybozu-go/fin/internal/infrastructure/db"
@@ -14,6 +16,7 @@ import (
 	"github.com/cybozu-go/fin/internal/job"
 	"github.com/cybozu-go/fin/internal/job/backup"
 	"github.com/cybozu-go/fin/internal/job/input"
+	"github.com/cybozu-go/fin/internal/model"
 	"github.com/spf13/cobra"
 )
 
@@ -105,7 +108,7 @@ func backupJobMain() error {
 		return fmt.Errorf("invalid MAX_PART_SIZE: %w", err)
 	}
 
-	job := backup.NewBackup(&input.Backup{
+	b := backup.NewBackup(&input.Backup{
 		Repo:                      finRepo,
 		KubernetesRepo:            k8sRepo,
 		RBDRepo:                   rbdRepo,
@@ -121,12 +124,16 @@ func backupJobMain() error {
 		TargetPVCUID:              pvcUID,
 		MaxPartSize:               maxPartSize,
 	})
-	err = job.Perform()
-	if err != nil {
-		return fmt.Errorf("failed to perform backup: %w", err)
+	for {
+		err = b.Perform()
+		if err == nil {
+			slog.Info("Backup job completed successfully")
+			return nil
+		}
+		if !errors.Is(err, model.ErrBusy) {
+			return fmt.Errorf("failed to perform backup: %w", err)
+		}
+		slog.Warn("failed to acquire lock, will retry.")
+		time.Sleep(job.RetryInterval)
 	}
-
-	slog.Info("Backup job completed successfully")
-
-	return nil
 }
