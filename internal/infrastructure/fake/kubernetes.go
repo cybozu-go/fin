@@ -36,3 +36,11 @@ func (r *KubernetesRepository) GetPV(name string) (*corev1.PersistentVolume, err
 	}
 	return nil, model.ErrNotFound
 }
+
+func (r *KubernetesRepository) SetPVC(name, namespace string, newPVC *corev1.PersistentVolumeClaim) {
+	r.pvcMap[types.NamespacedName{Name: name, Namespace: namespace}] = newPVC
+}
+
+func (r *KubernetesRepository) SetPV(name string, newPV *corev1.PersistentVolume) {
+	r.pvMap[name] = newPV
+}
