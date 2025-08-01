@@ -1,14 +1,19 @@
 package utils
 
 import (
+	"crypto/sha256"
 	"fmt"
+	"io"
 	"math/rand"
 	"os"
 	"os/exec"
 	"strings"
 	"sync"
+	"testing"
 
 	. "github.com/onsi/ginkgo/v2" //nolint:golint,revive
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 const (
@@ -149,4 +154,26 @@ func GetUniqueName(prefix string) string {
 		return GetUniqueName(prefix)
 	}
 	return name
+}
+
+func CompareReaders(t *testing.T, gotReader, expectedReader io.Reader) {
+	t.Helper()
+
+	gotHash, err := calcFileHash(gotReader)
+	require.NoError(t, err)
+
+	expectedHash, err := calcFileHash(expectedReader)
+	require.NoError(t, err)
+
+	assert.Equal(t, expectedHash, gotHash)
+}
+
+func calcFileHash(file io.Reader) ([]byte, error) {
+	h := sha256.New()
+	if _, err := io.Copy(h, file); err != nil {
+		return nil, err
+	}
+	hash := h.Sum(nil)
+
+	return hash, nil
 }

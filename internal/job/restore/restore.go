@@ -14,6 +14,7 @@ import (
 
 type Restore struct {
 	repo                model.FinRepository
+	rbdRepo             model.RBDRepository
 	nodeLocalVolumeRepo model.NodeLocalVolumeRepository
 	restoreVol          model.RestoreVolume
 	retryInterval       time.Duration
@@ -26,6 +27,7 @@ type Restore struct {
 func NewRestore(in *input.Restore) *Restore {
 	return &Restore{
 		repo:                in.Repo,
+		rbdRepo:             in.RBDRepo,
 		nodeLocalVolumeRepo: in.NodeLocalVolumeRepo,
 		restoreVol:          in.RestoreVol,
 		retryInterval:       in.RetryInterval,
@@ -180,9 +182,17 @@ func (r *Restore) doRestoreDiffPhase(privateData *restorePrivateData, diffs []*j
 func (r *Restore) loopApplyDiff(privateData *restorePrivateData, diff *job.BackupMetadataEntry) error {
 	partCount := int(math.Ceil(float64(diff.SnapSize) / float64(diff.PartSize)))
 	for i := privateData.NextDiffPart; i < partCount; i++ {
-		if err := r.restoreVol.ApplyDiff(
+		sourceSnapshotName := diff.SnapName
+		if i != 0 {
+			sourceSnapshotName = fmt.Sprintf("%s-offset-%d", diff.SnapName, uint64(i)*diff.PartSize)
+		}
+		targetSnapshotName := diff.SnapName
+		if i != partCount-1 {
+			targetSnapshotName = fmt.Sprintf("%s-offset-%d", diff.SnapName, uint64(i+1)*diff.PartSize)
+		}
+		if err := r.rbdRepo.ApplyDiffToBlockDevice(r.restoreVol.GetPath(),
 			r.nodeLocalVolumeRepo.GetDiffPartPath(diff.SnapID, i),
-		); err != nil {
+			sourceSnapshotName, targetSnapshotName); err != nil {
 			return fmt.Errorf("failed to apply diff: %w", err)
 		}
 
