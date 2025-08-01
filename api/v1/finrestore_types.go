@@ -1,6 +1,7 @@
 package v1
 
 import (
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -37,6 +38,10 @@ type FinRestoreStatus struct {
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
 
+const (
+	RestoreConditionReadyToUse = "ReadyToUse"
+)
+
 //+kubebuilder:object:root=true
 //+kubebuilder:subresource:status
 //+kubebuilder:printcolumn:name="BACKUP",type="string",JSONPath=".spec.backup"
@@ -59,6 +64,10 @@ type FinRestoreList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []FinRestore `json:"items"`
+}
+
+func (fr *FinRestore) IsReady() bool {
+	return meta.IsStatusConditionTrue(fr.Status.Conditions, BackupConditionReadyToUse)
 }
 
 func init() {

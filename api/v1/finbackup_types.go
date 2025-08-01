@@ -1,6 +1,7 @@
 package v1
 
 import (
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -74,6 +75,10 @@ type FinBackupList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []FinBackup `json:"items"`
+}
+
+func (fb *FinBackup) IsReady() bool {
+	return meta.IsStatusConditionTrue(fb.Status.Conditions, BackupConditionReadyToUse)
 }
 
 func init() {

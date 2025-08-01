@@ -11,7 +11,7 @@ import (
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
-	aerrors "k8s.io/apimachinery/pkg/api/errors"
+	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -23,11 +23,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
-	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
-	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	finv1 "github.com/cybozu-go/fin/api/v1"
 	"github.com/cybozu-go/fin/internal/model"
@@ -108,7 +106,7 @@ func (r *FinBackupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	var backup finv1.FinBackup
 	err := r.Get(ctx, req.NamespacedName, &backup)
 	if err != nil {
-		if aerrors.IsNotFound(err) {
+		if k8serrors.IsNotFound(err) {
 			return ctrl.Result{}, nil
 		}
 		logger.Error(err, "failed to get FinBackup")
@@ -123,7 +121,7 @@ func (r *FinBackupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, nil
 	}
 
-	if meta.IsStatusConditionTrue(backup.Status.Conditions, finv1.BackupConditionReadyToUse) {
+	if backup.IsReady() {
 		return ctrl.Result{}, nil
 	}
 
@@ -245,7 +243,7 @@ func (r *FinBackupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	var job batchv1.Job
 	err = r.Get(ctx, client.ObjectKey{Namespace: backup.GetNamespace(), Name: backupJobName(&backup)}, &job)
 	if err != nil {
-		if aerrors.IsNotFound(err) {
+		if k8serrors.IsNotFound(err) {
 			return ctrl.Result{}, nil
 		}
 		return ctrl.Result{}, err
@@ -287,7 +285,7 @@ func (r *FinBackupReconciler) reconcileDelete(ctx context.Context, backup *finv1
 	}
 	err := r.Delete(ctx, backupJob)
 	if err != nil {
-		if !aerrors.IsNotFound(err) {
+		if !k8serrors.IsNotFound(err) {
 			logger.Error(err, "failed to delete backup job")
 			return ctrl.Result{}, err
 		}
@@ -336,14 +334,14 @@ func (r *FinBackupReconciler) reconcileDelete(ctx context.Context, backup *finv1
 		}
 
 		err = r.Delete(ctx, &deletionJob)
-		if err != nil && !aerrors.IsNotFound(err) {
+		if err != nil && !k8serrors.IsNotFound(err) {
 			logger.Error(err, "failed to delete deletion job")
 			return ctrl.Result{}, err
 		}
 	}
 
 	err = r.Delete(ctx, &cleanupJob)
-	if err != nil && !aerrors.IsNotFound(err) {
+	if err != nil && !k8serrors.IsNotFound(err) {
 		logger.Error(err, "failed to delete cleanup job")
 		return ctrl.Result{}, err
 	}
@@ -424,7 +422,7 @@ func snapIDPreconditionSatisfied(
 			return false
 		}
 		if *fb.Status.SnapID < *backup.Status.SnapID {
-			if !meta.IsStatusConditionTrue(fb.Status.Conditions, finv1.BackupConditionReadyToUse) &&
+			if !fb.IsReady() &&
 				fb.DeletionTimestamp.IsZero() &&
 				fb.Spec.Node == backup.Spec.Node {
 				logger.Info("found another FinBackup which has smaller SnapID and is not ready",
@@ -460,22 +458,6 @@ func findDiffSourceSnapID(backup *finv1.FinBackup, finBackupList *finv1.FinBacku
 	return diffFromStr, updated
 }
 
-func jobCompleted(job *batchv1.Job) (done bool, err error) {
-	for _, c := range job.Status.Conditions {
-		switch c.Type {
-		case batchv1.JobComplete:
-			if c.Status == corev1.ConditionTrue {
-				return true, nil
-			}
-		case batchv1.JobFailed:
-			if c.Status == corev1.ConditionTrue {
-				return false, fmt.Errorf("job %s/%s failed: %s", job.Namespace, job.Name, c.Message)
-			}
-		}
-	}
-	return false, nil
-}
-
 func backupJobName(backup *finv1.FinBackup) string {
 	return "fin-backup-" + string(backup.GetUID())
 }
@@ -486,11 +468,6 @@ func deletionJobName(backup *finv1.FinBackup) string {
 
 func cleanupJobName(backup *finv1.FinBackup) string {
 	return "fin-cleanup-" + string(backup.GetUID())
-}
-
-func finVolumePVCName(backup *finv1.FinBackup) string {
-	// FIXME: The naming convention has not been decided yet.
-	return "fin-volume-" + backup.Spec.Node
 }
 
 func (r *FinBackupReconciler) createOrUpdateBackupJob(
@@ -701,53 +678,13 @@ func (r *FinBackupReconciler) createOrUpdateCleanupJob(ctx context.Context, back
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *FinBackupReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	// Use `mapFunc` and `updateFunc` to enqueue FinBackup
-	// when the corresponding backupJob is completed.
-	mapFunc := func(ctx context.Context, obj client.Object) []reconcile.Request {
-		job, ok := obj.(*batchv1.Job)
-		if !ok {
-			return []reconcile.Request{}
-		}
-		if name, exist := job.GetAnnotations()[annotationFinBackupName]; exist {
-			if namespace, exist := job.GetAnnotations()[annotationFinBackupNamespace]; exist {
-				// Enqueue the FinBackup corresponding to the job
-				return []reconcile.Request{
-					{
-						NamespacedName: types.NamespacedName{
-							Name:      name,
-							Namespace: namespace,
-						},
-					},
-				}
-			}
-		}
-		return []reconcile.Request{}
-	}
-	// Enqueue the FinBackup only if the job has just completed.
-	updateFunc := func(e event.UpdateEvent) bool {
-		newJob, ok := e.ObjectNew.(*batchv1.Job)
-		if !ok {
-			return false
-		}
-		newCompleted, _ := jobCompleted(newJob)
-		if !newCompleted {
-			return false
-		}
-
-		oldJob, ok := e.ObjectOld.(*batchv1.Job)
-		if !ok {
-			return false
-		}
-		oldCompleted, _ := jobCompleted(oldJob)
-		return !oldCompleted
-	}
-
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&finv1.FinBackup{}).
 		Watches(&batchv1.Job{},
-			handler.EnqueueRequestsFromMapFunc(mapFunc),
+			handler.EnqueueRequestsFromMapFunc(enqueueOnJobEvent(
+				annotationFinBackupName, annotationFinBackupNamespace)),
 			builder.WithPredicates(predicate.Funcs{
-				UpdateFunc: updateFunc,
+				UpdateFunc: enqueueOnJobCompletion,
 			})).
 		Complete(r)
 }
