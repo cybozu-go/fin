@@ -76,7 +76,7 @@ func restoreJobMain() error {
 		return fmt.Errorf("invalid TARGET_SNAPSHOT_ID: %w", err)
 	}
 
-	r := restore.NewRestore(&restore.RestoreInput{
+	r := restore.NewRestore(&input.Restore{
 		Repo:                finRepo,
 		NodeLocalVolumeRepo: nlvRepo,
 		RetryInterval:       job.RetryInterval,

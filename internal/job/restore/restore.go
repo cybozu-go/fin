@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/cybozu-go/fin/internal/job"
+	"github.com/cybozu-go/fin/internal/job/input"
 	"github.com/cybozu-go/fin/internal/model"
 )
 
@@ -22,18 +23,7 @@ type Restore struct {
 	targetPVCUID        string
 }
 
-type RestoreInput struct {
-	Repo                model.FinRepository
-	NodeLocalVolumeRepo model.NodeLocalVolumeRepository
-	RestoreVol          model.RestoreVolume
-	RetryInterval       time.Duration
-	ActionUID           string
-	TargetSnapshotID    int
-	RawImageChunkSize   int64
-	TargetPVCUID        string
-}
-
-func NewRestore(in *RestoreInput) *Restore {
+func NewRestore(in *input.Restore) *Restore {
 	return &Restore{
 		repo:                in.Repo,
 		nodeLocalVolumeRepo: in.NodeLocalVolumeRepo,

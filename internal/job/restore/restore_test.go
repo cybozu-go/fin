@@ -1,4 +1,4 @@
-package restore_test
+package restore
 
 import (
 	"bytes"
@@ -10,7 +10,7 @@ import (
 	"github.com/cybozu-go/fin/internal/job"
 	"github.com/cybozu-go/fin/internal/job/backup"
 	"github.com/cybozu-go/fin/internal/job/deletion"
-	"github.com/cybozu-go/fin/internal/job/restore"
+	"github.com/cybozu-go/fin/internal/job/input"
 	"github.com/cybozu-go/fin/internal/job/testutil"
 	"github.com/cybozu-go/fin/test/utils"
 
@@ -31,7 +31,7 @@ type setupInput struct {
 type setupOutput struct {
 	// RestoreInput instance used when calling the restore module.
 	// 0 index is for the full backup, and 1 index is for the incremental backup.
-	restoreInputs []*restore.RestoreInput
+	restoreInputs []*input.Restore
 }
 
 func setup(t *testing.T, config *setupInput) *setupOutput {
@@ -44,7 +44,7 @@ func setup(t *testing.T, config *setupInput) *setupOutput {
 	targetSnapshotSize := rawImageChunkSize * 2
 
 	snapIDs := make([]int, 0)
-	restoreInputs := make([]*restore.RestoreInput, 0)
+	restoreInputs := make([]*input.Restore, 0)
 
 	// Create backups.
 	backupCount := 1
@@ -52,13 +52,13 @@ func setup(t *testing.T, config *setupInput) *setupOutput {
 		backupCount = 2
 	}
 	for i := 0; i < backupCount; i++ {
-		snapID := rbdRepo.CreateFakeSnapshot(utils.GetUniqueName("snap-"), targetSnapshotSize, time.Now())
-		snapIDs = append(snapIDs, snapID)
+		snapshot := rbdRepo.CreateFakeSnapshot(utils.GetUniqueName("snap-"), targetSnapshotSize, time.Now())
+		snapIDs = append(snapIDs, snapshot.ID)
 		var srcSnapID *int
 		if i != 0 {
 			srcSnapID = &snapIDs[i-1]
 		}
-		backupInput := testutil.NewBackupInput(k8sRepo, volumeInfo, snapID, srcSnapID, rawImageChunkSize)
+		backupInput := testutil.NewBackupInput(k8sRepo, volumeInfo, snapshot.ID, srcSnapID, rawImageChunkSize)
 		backupInput.Repo = finRepo
 		backupInput.KubernetesRepo = k8sRepo
 		backupInput.RBDRepo = rbdRepo
@@ -142,7 +142,7 @@ func TestRestore_FullBackup_Success(t *testing.T) {
 	rVol := fake.NewRestoreVolume(restorePath)
 
 	// Act
-	r := restore.NewRestore(testutil.NewRestoreInputTemplate(
+	r := NewRestore(testutil.NewRestoreInputTemplate(
 		backupInput, rVol, rawImageChunkSize, backupInput.TargetSnapshotID))
 
 	err = r.Perform()
@@ -232,7 +232,7 @@ func TestRestore_IncrementalBackup_Success(t *testing.T) {
 	rVol := fake.NewRestoreVolume(restorePath)
 
 	// Act
-	r := restore.NewRestore(testutil.NewRestoreInputTemplate(
+	r := NewRestore(testutil.NewRestoreInputTemplate(
 		incrementalBackupInput, rVol, rawImageChunkSize, incrementalBackupInput.TargetSnapshotID))
 	err = r.Perform()
 	require.NoError(t, err)
@@ -276,7 +276,7 @@ func TestRestore_ErrorBusy(t *testing.T) {
 
 	// Act:
 	//    Try to run the restore process.
-	restore := restore.NewRestore(&restore.RestoreInput{
+	restore := NewRestore(&input.Restore{
 		Repo:      finRepo,
 		ActionUID: actionUID,
 	})
@@ -300,7 +300,7 @@ func TestRestoreCheckError_SnapshotID_FullBackup(t *testing.T) {
 	// Act:
 	//   Call the restore process specifying a snapshot ID that differs from the backup data.
 	restoreInput.TargetSnapshotID = restoreInput.TargetSnapshotID + 1
-	r := restore.NewRestore(restoreInput)
+	r := NewRestore(restoreInput)
 	err := r.Perform()
 
 	// Assert:
@@ -323,7 +323,7 @@ func TestRestoreCheckError_SnapshotID_IncrementalBackup(t *testing.T) {
 	// Act:
 	//   Call the restore process specifying a snapshot ID that differs from the backup data.
 	restoreInput.TargetSnapshotID = restoreInput.TargetSnapshotID + 1
-	r := restore.NewRestore(restoreInput)
+	r := NewRestore(restoreInput)
 	err := r.Perform()
 
 	// Assert:
@@ -344,7 +344,7 @@ func TestRestoreCheckError_PVCUID(t *testing.T) {
 	// Act:
 	//   Call the restore process specifying a PVC UID that differs from the backup data.
 	restoreInput.TargetPVCUID = uuid.New().String()
-	r := restore.NewRestore(restoreInput)
+	r := NewRestore(restoreInput)
 	err := r.Perform()
 
 	// Assert:
@@ -368,7 +368,7 @@ func TestRestoreCheckError_FullBackupDeleted(t *testing.T) {
 
 	// Act:
 	//   Call the restore process with the deleted backup.
-	r := restore.NewRestore(restoreInput)
+	r := NewRestore(restoreInput)
 	err := r.Perform()
 
 	// Assert:
@@ -393,7 +393,7 @@ func TestRestoreCheckError_IncrementalBackupDeleted(t *testing.T) {
 
 	// Act:
 	//   Call the restore process with the deleted backup.
-	r := restore.NewRestore(restoreInput)
+	r := NewRestore(restoreInput)
 	err := r.Perform()
 
 	// Assert:
