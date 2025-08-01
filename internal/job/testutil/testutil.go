@@ -49,6 +49,7 @@ func NewRestoreInputTemplate(bi *input.Backup,
 	rVol model.RestoreVolume, chunkSize, snapID int) *input.Restore {
 	return &input.Restore{
 		Repo:                bi.Repo,
+		RBDRepo:             bi.RBDRepo,
 		NodeLocalVolumeRepo: bi.NodeLocalVolumeRepo,
 		RestoreVol:          rVol,
 		RawImageChunkSize:   int64(chunkSize),

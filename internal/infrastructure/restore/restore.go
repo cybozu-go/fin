@@ -45,10 +45,6 @@ func (r *RestoreVolume) ZeroOut() error {
 	return nil
 }
 
-func (r *RestoreVolume) ApplyDiff(diffPath string) error {
-	return errors.New("not implemented")
-}
-
 func (r *RestoreVolume) CopyChunk(rawPath string, index int, chunkSize int64) error {
 	rawFile, err := os.Open(rawPath)
 	if err != nil {
