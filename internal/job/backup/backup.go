@@ -14,8 +14,8 @@ import (
 )
 
 const (
-	ModeFull        = "full"
-	ModeIncremental = "incremental"
+	modeFull        = "full"
+	modeIncremental = "incremental"
 )
 
 type Backup struct {
@@ -85,11 +85,11 @@ func (b *Backup) doBackup() error {
 		}
 
 		switch tmpMode {
-		case ModeFull:
+		case modeFull:
 			if err := b.prepareFullBackup(); err != nil {
 				return fmt.Errorf("failed to prepare full backup: %w", err)
 			}
-		case ModeIncremental:
+		case modeIncremental:
 			if err := b.prepareIncrementalBackup(); err != nil {
 				return fmt.Errorf("failed to prepare incremental backup: %w", err)
 			}
@@ -113,7 +113,7 @@ func (b *Backup) doBackup() error {
 	}
 
 	var sourceSnapshotName *string
-	if privateData.Mode == ModeIncremental {
+	if privateData.Mode == modeIncremental {
 		sourceSnapshot, err := getSnapshot(b.rbdRepo, b.targetRBDPool, b.targetRBDImageName, *b.sourceCandidateSnapshotID)
 		if err != nil {
 			return fmt.Errorf("failed to get source snapshot: %w", err)
@@ -131,7 +131,7 @@ func (b *Backup) doBackup() error {
 
 	// FIXME: We need to verify the backup.
 
-	if privateData.Mode == ModeFull {
+	if privateData.Mode == modeFull {
 		if err := b.loopApplyDiff(privateData, targetSnapshot); err != nil {
 			return fmt.Errorf("failed to loop apply diff: %w", err)
 		}
@@ -148,15 +148,15 @@ func (b *Backup) doBackup() error {
 
 func (b *Backup) decideBackupMode() (string, error) {
 	if b.sourceCandidateSnapshotID == nil {
-		return ModeFull, nil
+		return modeFull, nil
 	}
 	if _, err := job.GetBackupMetadata(b.repo); err != nil {
 		if !errors.Is(err, model.ErrNotFound) {
 			return "", fmt.Errorf("failed to get backup metadata: %w", err)
 		}
-		return ModeFull, nil
+		return modeFull, nil
 	}
-	return ModeIncremental, nil
+	return modeIncremental, nil
 }
 
 func (b *Backup) prepareFullBackup() error {

@@ -288,7 +288,7 @@ func Test_IncrementalBackup_Success_Resume(t *testing.T) {
 
 	arrangedActionPrivateData, err := json.Marshal(BackupPrivateData{
 		NextStorePart: nextStorePart, // Set custom value to nextStorePart
-		Mode:          ModeIncremental,
+		Mode:          modeIncremental,
 	})
 	require.NoError(t, err)
 	err = cfg.finRepo.UpdateActionPrivateData(cfg.incrementalBackupInput.ActionUID, arrangedActionPrivateData)
