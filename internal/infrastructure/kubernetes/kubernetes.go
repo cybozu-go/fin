@@ -9,16 +9,16 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	cgk8s "k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/kubernetes"
 )
 
 type KubernetesRepository struct {
-	clientSet *cgk8s.Clientset
+	clientSet *kubernetes.Clientset
 }
 
 var _ model.KubernetesRepository = &KubernetesRepository{}
 
-func NewKubernetesRepository(clientSet *cgk8s.Clientset) *KubernetesRepository {
+func NewKubernetesRepository(clientSet *kubernetes.Clientset) *KubernetesRepository {
 	return &KubernetesRepository{
 		clientSet: clientSet,
 	}
