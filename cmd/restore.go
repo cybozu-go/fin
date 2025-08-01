@@ -1,11 +1,13 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"strconv"
+	"time"
 
 	"github.com/cybozu-go/fin/internal/infrastructure/db"
 	"github.com/cybozu-go/fin/internal/infrastructure/kubernetes"
@@ -13,6 +15,7 @@ import (
 	rvol "github.com/cybozu-go/fin/internal/infrastructure/restore"
 	"github.com/cybozu-go/fin/internal/job"
 	"github.com/cybozu-go/fin/internal/job/restore"
+	"github.com/cybozu-go/fin/internal/model"
 	"github.com/spf13/cobra"
 )
 
@@ -90,12 +93,16 @@ func restoreJobMain() error {
 		RestoreVol:          restoreVol,
 	})
 
-	err = r.Perform()
-	if err != nil {
-		return fmt.Errorf("failed to perform restore: %w", err)
+	for {
+		err = r.Perform()
+		if err == nil {
+			slog.Info("restore job completed successfully")
+			return nil
+		}
+		if !errors.Is(err, model.ErrBusy) {
+			return fmt.Errorf("failed to perform restore: %w", err)
+		}
+		slog.Warn("failed to acquire lock, will retry.")
+		time.Sleep(job.RetryInterval)
 	}
-
-	slog.Info("restore job completed successfully")
-
-	return nil
 }
