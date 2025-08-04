@@ -33,9 +33,11 @@ const (
 	FinBackupFinalizerName = "finbackup.fin.cybozu.io/finalizer"
 
 	// Labels
-	labelBackupTargetPVCUID = "fin.cybozu.io/backup-target-pvc-uid"
-	labelAppNameValue       = "fin"
-	labelComponentBackupJob = "backup-job"
+	labelBackupTargetPVCUID   = "fin.cybozu.io/backup-target-pvc-uid"
+	labelAppNameValue         = "fin"
+	labelComponentBackupJob   = "backup-job"
+	labelComponentCleanupJob  = "cleanup-job"
+	labelComponentDeletionJob = "deletion-job"
 
 	// Annotations
 	annotationBackupTargetRBDImage = "fin.cybozu.io/backup-target-rbd-image"
@@ -107,8 +109,7 @@ func (r *FinBackupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 
 	if !backup.DeletionTimestamp.IsZero() {
-		// FIXME: implement.
-		return ctrl.Result{}, nil
+		return r.reconcileDelete(ctx, &backup)
 	}
 
 	if backup.GetNamespace() != r.cephClusterNamespace {
@@ -269,6 +270,87 @@ func (r *FinBackupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	return ctrl.Result{}, nil
 }
 
+func (r *FinBackupReconciler) reconcileDelete(ctx context.Context, backup *finv1.FinBackup) (ctrl.Result, error) {
+	logger := log.FromContext(ctx)
+	backupJob := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      backupJobName(backup),
+			Namespace: backup.GetNamespace(),
+		},
+	}
+	err := r.Delete(ctx, backupJob)
+	if err != nil {
+		if !aerrors.IsNotFound(err) {
+			logger.Error(err, "failed to delete backup job")
+			return ctrl.Result{}, err
+		}
+	} else {
+		return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+	}
+
+	// If backup job does not exist, proceed to next step
+	err = r.createOrUpdateCleanupJob(ctx, backup)
+	if err != nil {
+		logger.Error(err, "failed to create or update cleanup job")
+		return ctrl.Result{}, err
+	}
+
+	var cleanupJob batchv1.Job
+	err = r.Get(ctx, client.ObjectKey{Namespace: backup.GetNamespace(), Name: cleanupJobName(backup)}, &cleanupJob)
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf("failed to get cleanup job: %w", err)
+	}
+	done, err := jobCompleted(&cleanupJob)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if !done {
+		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+	}
+
+	if backup.Status.SnapID != nil {
+		err = r.createOrUpdateDeletionJob(ctx, backup)
+		if err != nil {
+			logger.Error(err, "failed to create or update deletion job")
+			return ctrl.Result{}, err
+		}
+
+		var deletionJob batchv1.Job
+		err = r.Get(ctx, client.ObjectKey{Namespace: backup.GetNamespace(), Name: deletionJobName(backup)}, &deletionJob)
+		if err != nil {
+			return ctrl.Result{}, fmt.Errorf("failed to get deletion job: %w", err)
+		}
+		done, err = jobCompleted(&deletionJob)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		if !done {
+			return ctrl.Result{RequeueAfter: 1 * time.Minute}, nil
+		}
+
+		err = r.Delete(ctx, &deletionJob)
+		if err != nil && !aerrors.IsNotFound(err) {
+			logger.Error(err, "failed to delete deletion job")
+			return ctrl.Result{}, err
+		}
+	}
+
+	err = r.Delete(ctx, &cleanupJob)
+	if err != nil && !aerrors.IsNotFound(err) {
+		logger.Error(err, "failed to delete cleanup job")
+		return ctrl.Result{}, err
+	}
+
+	// TODO: remove rbd snapshot
+
+	controllerutil.RemoveFinalizer(backup, FinBackupFinalizerName)
+	if err = r.Update(ctx, backup); err != nil {
+		logger.Error(err, "failed to remove finalizer")
+		return ctrl.Result{}, err
+	}
+	return ctrl.Result{}, nil
+}
+
 func (r *FinBackupReconciler) createSnapshotIfNeeded(rbdPool, rbdImage, snapName string) (*model.RBDSnapshot, error) {
 	snap, err := r.getSnapshot(rbdPool, rbdImage, snapName)
 	if err != nil {
@@ -389,6 +471,14 @@ func jobCompleted(job *batchv1.Job) (done bool, err error) {
 
 func backupJobName(backup *finv1.FinBackup) string {
 	return "fin-backup-" + string(backup.GetUID())
+}
+
+func deletionJobName(backup *finv1.FinBackup) string {
+	return "fin-deletion-" + string(backup.GetUID())
+}
+
+func cleanupJobName(backup *finv1.FinBackup) string {
+	return "fin-cleanup-" + string(backup.GetUID())
 }
 
 func finVolumePVCName(backup *finv1.FinBackup) string {
@@ -586,6 +676,16 @@ func (r *FinBackupReconciler) createOrUpdateBackupJob(
 		return err
 	}
 
+	return nil
+}
+
+func (r *FinBackupReconciler) createOrUpdateDeletionJob(ctx context.Context, backup *finv1.FinBackup) error {
+	// TODO: Implement the deletion job creation logic.
+	return nil
+}
+
+func (r *FinBackupReconciler) createOrUpdateCleanupJob(ctx context.Context, backup *finv1.FinBackup) error {
+	// TODO: Implement the cleanup job creation logic.
 	return nil
 }
 
