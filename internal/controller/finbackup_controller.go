@@ -20,9 +20,14 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/event"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	finv1 "github.com/cybozu-go/fin/api/v1"
 	"github.com/cybozu-go/fin/internal/model"
@@ -41,6 +46,8 @@ const (
 	annotationBackupTargetRBDImage = "fin.cybozu.io/backup-target-rbd-image"
 	annotationRBDPool              = "fin.cybozu.io/rbd-pool"
 	annotationDiffFrom             = "fin.cybozu.io/diff-from"
+	annotationFinBackupName        = "fin.cybozu.io/finbackup-name"
+	annotationFinBackupNamespace   = "fin.cybozu.io/finbackup-namespace"
 )
 
 var (
@@ -412,10 +419,13 @@ func (r *FinBackupReconciler) createOrUpdateBackupJob(
 		labels["app.kubernetes.io/component"] = labelComponentBackupJob
 		job.SetLabels(labels)
 
-		owners := []metav1.OwnerReference{
-			*metav1.NewControllerRef(backup, finv1.GroupVersion.WithKind("FinBackup")),
+		annotations := job.GetAnnotations()
+		if annotations == nil {
+			annotations = map[string]string{}
 		}
-		job.SetOwnerReferences(owners)
+		annotations[annotationFinBackupName] = backup.GetName()
+		annotations[annotationFinBackupNamespace] = backup.GetNamespace()
+		job.SetAnnotations(annotations)
 
 		job.Spec.BackoffLimit = ptr.To(int32(65535))
 
@@ -591,8 +601,53 @@ func (r *FinBackupReconciler) createOrUpdateBackupJob(
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *FinBackupReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	// Use `mapFunc` and `updateFunc` to enqueue FinBackup
+	// when the corresponding backupJob is completed.
+	mapFunc := func(ctx context.Context, obj client.Object) []reconcile.Request {
+		job, ok := obj.(*batchv1.Job)
+		if !ok {
+			return []reconcile.Request{}
+		}
+		if name, exist := job.GetAnnotations()[annotationFinBackupName]; exist {
+			if namespace, exist := job.GetAnnotations()[annotationFinBackupNamespace]; exist {
+				// Enqueue the FinBackup corresponding to the job
+				return []reconcile.Request{
+					{
+						NamespacedName: types.NamespacedName{
+							Name:      name,
+							Namespace: namespace,
+						},
+					},
+				}
+			}
+		}
+		return []reconcile.Request{}
+	}
+	// Enqueue the FinBackup only if the job has just completed.
+	updateFunc := func(e event.UpdateEvent) bool {
+		newJob, ok := e.ObjectNew.(*batchv1.Job)
+		if !ok {
+			return false
+		}
+		newCompleted, _ := jobCompleted(newJob)
+		if !newCompleted {
+			return false
+		}
+
+		oldJob, ok := e.ObjectOld.(*batchv1.Job)
+		if !ok {
+			return false
+		}
+		oldCompleted, _ := jobCompleted(oldJob)
+		return !oldCompleted
+	}
+
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&finv1.FinBackup{}).
-		Owns(&batchv1.Job{}).
+		Watches(&batchv1.Job{},
+			handler.EnqueueRequestsFromMapFunc(mapFunc),
+			builder.WithPredicates(predicate.Funcs{
+				UpdateFunc: updateFunc,
+			})).
 		Complete(r)
 }
