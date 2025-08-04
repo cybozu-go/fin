@@ -188,6 +188,8 @@ func applyDiffDataRecords(
 		return fmt.Errorf("failed to stat raw image file: %s: %w", dstFilePath, err)
 	}
 	fileSize := stat.Size()
+	prevOffset := uint64(0)
+	prevLength := uint64(0)
 	for {
 		tag, err := diffFileReader.ReadByte()
 		if err != nil {
@@ -203,6 +205,14 @@ func applyDiffDataRecords(
 			if err != nil {
 				return fmt.Errorf("failed to read length: %w", err)
 			}
+
+			// Detect overlapping ranges
+			if prevOffset+prevLength > offset {
+				return fmt.Errorf("overlapping ranges detected: previous (%d, %d), current (%d, %d)",
+					prevOffset, prevLength, offset, length)
+			}
+			prevOffset = offset
+			prevLength = length
 
 			// Expand raw image file if necessary
 			if !isDstBlockDevice && offset+length > uint64(fileSize) {
