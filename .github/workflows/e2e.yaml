@@ -3,9 +3,13 @@ on:
   pull_request:
     paths-ignore:
       - "**/*.md"
+      - "NOTICE"
+      - "LICENSE"
   push:
     paths-ignore:
       - "**/*.md"
+      - "NOTICE"
+      - "LICENSE"
     branches:
       - "main"
 
