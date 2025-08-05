@@ -577,6 +577,37 @@ func Test_FullBackup_Error_NonExistentTargetPVAndPVC(t *testing.T) {
 	assert.Error(t, err)
 }
 
+func Test_FullBackup_Error_DifferentRBDImageName(t *testing.T) {
+	// CSATEST-1500
+	// Description:
+	//   Creation of a full backup fails when the target PV has a different RBD image name.
+	//
+	// Arrange:
+	//   - Set up a full backup input.
+	//   - Set a different image name from the environment variable to the target PV.
+	//
+	// Act:
+	//   Run the backup process to create an full backup.
+	//
+	// Assert:
+	//   Check if the full backup creation fails with an error.
+
+	// Arrange
+	cfg := setup(t, &setupInput{})
+
+	pv, err := cfg.k8sRepo.GetPV(cfg.targetPVName)
+	require.NoError(t, err)
+	pv.Spec.CSI.VolumeAttributes["imageName"] = fmt.Sprintf("recreated-%s", pv.Spec.CSI.VolumeAttributes["imageName"])
+	cfg.k8sRepo.SetPV(cfg.targetPVName, pv)
+
+	// Act
+	backup := NewBackup(cfg.fullBackupInput)
+	err = backup.Perform()
+
+	// Assert
+	assert.Error(t, err)
+}
+
 func ensureDiffFileCorrect(t *testing.T, diffFilePath string, expected *fake.ExportedDiff) {
 	t.Helper()
 	diff, err := fake.ReadDiff(diffFilePath)
