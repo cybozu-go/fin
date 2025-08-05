@@ -78,7 +78,7 @@ func setup(t *testing.T, config *setupInput) *setupOutput {
 
 	// Delete backups if specified.
 	for i := 0; i < config.deleteBackups; i++ {
-		del := deletion.NewDeletion(&deletion.DeletionInput{
+		del := deletion.NewDeletion(&input.Deletion{
 			Repo:                finRepo,
 			RBDRepo:             rbdRepo,
 			NodeLocalVolumeRepo: nlvRepo,
