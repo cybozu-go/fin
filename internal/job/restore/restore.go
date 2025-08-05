@@ -8,12 +8,12 @@ import (
 	"time"
 
 	"github.com/cybozu-go/fin/internal/job"
+	"github.com/cybozu-go/fin/internal/job/input"
 	"github.com/cybozu-go/fin/internal/model"
 )
 
 type Restore struct {
 	repo                model.FinRepository
-	kubernetesRepo      model.KubernetesRepository
 	nodeLocalVolumeRepo model.NodeLocalVolumeRepository
 	restoreVol          model.RestoreVolume
 	retryInterval       time.Duration
@@ -23,22 +23,9 @@ type Restore struct {
 	targetPVCUID        string
 }
 
-type RestoreInput struct {
-	Repo                model.FinRepository
-	KubernetesRepo      model.KubernetesRepository
-	NodeLocalVolumeRepo model.NodeLocalVolumeRepository
-	RestoreVol          model.RestoreVolume
-	RetryInterval       time.Duration
-	ActionUID           string
-	TargetSnapshotID    int
-	RawImageChunkSize   int64
-	TargetPVCUID        string
-}
-
-func NewRestore(in *RestoreInput) *Restore {
+func NewRestore(in *input.Restore) *Restore {
 	return &Restore{
 		repo:                in.Repo,
-		kubernetesRepo:      in.KubernetesRepo,
 		nodeLocalVolumeRepo: in.NodeLocalVolumeRepo,
 		restoreVol:          in.RestoreVol,
 		retryInterval:       in.RetryInterval,

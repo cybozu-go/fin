@@ -11,7 +11,6 @@ import (
 	"github.com/cybozu-go/fin/internal/infrastructure/fake"
 	"github.com/cybozu-go/fin/internal/infrastructure/nlv"
 	"github.com/cybozu-go/fin/internal/job/input"
-	"github.com/cybozu-go/fin/internal/job/restore"
 	"github.com/cybozu-go/fin/internal/model"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -47,10 +46,9 @@ func NewBackupInput(k8sRepo model.KubernetesRepository, volume *fake.VolumeInfo,
 }
 
 func NewRestoreInputTemplate(bi *input.Backup,
-	rVol model.RestoreVolume, chunkSize, snapID int) *restore.RestoreInput {
-	return &restore.RestoreInput{
+	rVol model.RestoreVolume, chunkSize, snapID int) *input.Restore {
+	return &input.Restore{
 		Repo:                bi.Repo,
-		KubernetesRepo:      bi.KubernetesRepo,
 		NodeLocalVolumeRepo: bi.NodeLocalVolumeRepo,
 		RestoreVol:          rVol,
 		RawImageChunkSize:   int64(chunkSize),
