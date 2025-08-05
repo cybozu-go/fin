@@ -549,6 +549,34 @@ func Test_FullBackup_Success_DifferentNode(t *testing.T) {
 	})
 }
 
+func Test_FullBackup_Error_NonExistentTargetPVAndPVC(t *testing.T) {
+	// CSATEST-1498
+	// Description:
+	//   Creation of a full backup fails when the target PV and PVC do not exist.
+	//
+	// Arrange:
+	//   - Set up a full backup input.
+	//   - Delete the target PV and PVC.
+	//
+	// Act:
+	//   Run the backup process to create an full backup.
+	//
+	// Assert:
+	//   Check if the full backup creation fails with an error.
+
+	// Arrange
+	cfg := setup(t, &setupInput{})
+	cfg.k8sRepo.DeletePV(cfg.targetPVName)
+	cfg.k8sRepo.DeletePVC(cfg.fullBackupInput.TargetPVCName, cfg.fullBackupInput.TargetPVCNamespace)
+
+	// Act
+	backup := NewBackup(cfg.fullBackupInput)
+	err := backup.Perform()
+
+	// Assert
+	assert.Error(t, err)
+}
+
 func ensureDiffFileCorrect(t *testing.T, diffFilePath string, expected *fake.ExportedDiff) {
 	t.Helper()
 	diff, err := fake.ReadDiff(diffFilePath)
