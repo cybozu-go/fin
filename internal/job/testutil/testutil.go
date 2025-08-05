@@ -1,12 +1,16 @@
 package testutil
 
 import (
+	"bytes"
 	"crypto/rand"
 	"fmt"
 	"os"
+	"os/exec"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/cybozu-go/fin/internal/infrastructure/ceph"
 	"github.com/cybozu-go/fin/internal/infrastructure/db"
 	"github.com/cybozu-go/fin/internal/infrastructure/fake"
 	"github.com/cybozu-go/fin/internal/infrastructure/nlv"
@@ -48,8 +52,9 @@ func NewBackupInput(k8sRepo model.KubernetesRepository, volume *fake.VolumeInfo,
 func NewRestoreInputTemplate(bi *input.Backup,
 	rVol model.RestoreVolume, chunkSize, snapID int) *input.Restore {
 	return &input.Restore{
-		Repo:                bi.Repo,
-		RBDRepo:             bi.RBDRepo,
+		Repo: bi.Repo,
+		// Restore module uses only ApplyDiffToBlockDevice, so fake is not need here.
+		RBDRepo:             ceph.NewRBDRepository(),
 		NodeLocalVolumeRepo: bi.NodeLocalVolumeRepo,
 		RestoreVol:          rVol,
 		RawImageChunkSize:   int64(chunkSize),
@@ -93,17 +98,38 @@ func CreateNLVAndFinRepoForTest(t *testing.T) (*nlv.NodeLocalVolumeRepository, m
 	return nlvRepo, repo, tempDir
 }
 
-func CreateRestoreFileForTest(t *testing.T, size int64) string {
+func CreateLoopDevice(t *testing.T, size int64) string {
 	t.Helper()
 
-	restoreFile, err := os.CreateTemp("", "fake-restore-*.img")
+	loopbackFile, err := os.CreateTemp("", "fake-restore-*.img")
 	require.NoError(t, err)
-	defer func() { _ = restoreFile.Close() }()
-	restorePath := restoreFile.Name()
-	t.Cleanup(func() { _ = os.Remove(restorePath) })
-	err = restoreFile.Truncate(size)
+	defer func() { _ = loopbackFile.Close() }()
+
+	err = loopbackFile.Truncate(size)
 	require.NoError(t, err)
-	return restorePath
+
+	loopbackFilePath := loopbackFile.Name()
+	_, _, err = execute("sudo", "losetup", "-f", loopbackFilePath)
+	require.NoError(t, err, "failed to create loop device")
+	// get loop device path
+	stdout, _, err := execute("sudo", "losetup", "-j", loopbackFilePath)
+	require.NoError(t, err, "failed to get loop device path")
+	devicePath := strings.Split(string(stdout), ":")[0]
+	require.NotEmpty(t, devicePath, "loop device path should not be empty")
+	_, _, err = execute("sudo", "chmod", "666", devicePath)
+	require.NoError(t, err, "failed to change permissions of loop device")
+
+	t.Cleanup(func() {
+		_, _, err := execute("sudo", "chmod", "660", devicePath)
+		require.NoError(t, err, "failed to change permissions of loop device back")
+
+		_, _, err = execute("sudo", "losetup", "-d", devicePath)
+		require.NoError(t, err, "failed to delete loop device")
+
+		_ = os.Remove(loopbackFilePath)
+	})
+
+	return devicePath
 }
 
 func CreateFakeRawImgFileForTest(t *testing.T, nlvRepo model.NodeLocalVolumeRepository, size int64) string {
@@ -120,4 +146,15 @@ func CreateFakeRawImgFileForTest(t *testing.T, nlvRepo model.NodeLocalVolumeRepo
 	_, err = f.Write(buf)
 	require.NoError(t, err)
 	return filePath
+}
+
+func execute(command string, args ...string) ([]byte, []byte, error) {
+	cmd := exec.Command(command, args...)
+
+	var stdoutBuf, stderrBuf bytes.Buffer
+	cmd.Stdout = &stdoutBuf
+	cmd.Stderr = &stderrBuf
+
+	err := cmd.Run()
+	return stdoutBuf.Bytes(), stderrBuf.Bytes(), err
 }
