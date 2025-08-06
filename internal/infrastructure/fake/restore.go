@@ -3,12 +3,12 @@ package fake
 import (
 	"fmt"
 
-	r "github.com/cybozu-go/fin/internal/infrastructure/restore"
+	"github.com/cybozu-go/fin/internal/infrastructure/restore"
 	"github.com/cybozu-go/fin/internal/model"
 )
 
 type restoreVolume struct {
-	real         *r.RestoreVolume
+	real         *restore.RestoreVolume
 	appliedDiffs []*ExportedDiff
 }
 
@@ -18,7 +18,7 @@ func NewRestoreVolume(
 	path string,
 ) *restoreVolume {
 	return &restoreVolume{
-		real:         r.NewRestoreVolume(path),
+		real:         restore.NewRestoreVolume(path),
 		appliedDiffs: make([]*ExportedDiff, 0),
 	}
 }
