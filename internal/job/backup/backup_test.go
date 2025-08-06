@@ -3,6 +3,7 @@ package backup
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math"
 	"os"
 	"testing"
@@ -30,6 +31,7 @@ type setupOutput struct {
 	k8sRepo                                 *fake.KubernetesRepository
 	finRepo                                 model.FinRepository
 	nlvRepo                                 model.NodeLocalVolumeRepository
+	rbdRepo                                 *fake.RBDRepository
 	fullSnapshot, incrementalSnapshot       *model.RBDSnapshot
 	targetPVName                            string
 }
@@ -76,6 +78,7 @@ func setup(t *testing.T, input *setupInput) *setupOutput {
 		k8sRepo:                k8sRepo,
 		finRepo:                finRepo,
 		nlvRepo:                nlvRepo,
+		rbdRepo:                rbdRepo,
 		fullSnapshot:           fullSnapshot,
 		incrementalSnapshot:    incrementalSnapshot,
 		targetPVName:           volumeInfo.PVName,
@@ -265,6 +268,121 @@ func TestBackup_ErrorBusy(t *testing.T) {
 
 	// Assert
 	assert.ErrorIs(t, err, job.ErrCantLock)
+}
+
+func Test_FullBackup_Success_Resume(t *testing.T) {
+	// CSATEST-1508, CSATEST-1510
+	// Description:
+	//   Resume full backup that was interrupted after setting nextStorePart or nextPatchPart to 1.
+	//
+	// Arrange:
+	//   - Set backup_metadata.raw to be empty.
+	//   - Set max part num to 3.
+	//   - Set action_status.nextStorePart or action_status.nextPatchPart to 1.
+	//
+	// Act:
+	//   Run the backup process to create an full backup.
+	//
+	// Assert:
+	//   Check if the contents of the full backup is correct.
+
+	testcases := []struct{ nextStorePart, nextPatchPart int }{
+		{nextStorePart: 1 /* in progress */, nextPatchPart: 0 /* not started yet */},
+		{nextStorePart: 3 /* completed */, nextPatchPart: 1 /* in progress */},
+	}
+	for _, tc := range testcases {
+		t.Run(
+			fmt.Sprintf("nextStorePart=%d nextPatchPart=%d", tc.nextStorePart, tc.nextPatchPart),
+			func(t *testing.T) {
+				// Arrange
+				snapshotSize, maxPartSize := 1000, 400 // max part size will be 3 (= ceil(1000/400))
+				cfg := setup(t, &setupInput{
+					fullSnapshotSize:        snapshotSize,
+					incrementalSnapshotSize: snapshotSize,
+					maxPartSize:             maxPartSize,
+				})
+
+				// Set up multipart diff files
+				err := cfg.nlvRepo.MakeDiffDir(cfg.fullSnapshot.ID)
+				require.NoError(t, err)
+				for i := 0; i < tc.nextStorePart; i++ {
+					err := cfg.rbdRepo.ExportDiff(&model.ExportDiffInput{
+						PoolName:       cfg.fullBackupInput.TargetRBDPoolName,
+						ReadOffset:     cfg.fullBackupInput.MaxPartSize * i,
+						ReadLength:     cfg.fullBackupInput.MaxPartSize,
+						FromSnap:       nil,
+						MidSnapPrefix:  cfg.fullSnapshot.Name,
+						ImageName:      cfg.fullBackupInput.TargetRBDImageName,
+						TargetSnapName: cfg.fullSnapshot.Name,
+						OutputFile:     cfg.nlvRepo.GetDiffPartPath(cfg.fullBackupInput.TargetSnapshotID, i),
+					})
+					require.NoError(t, err)
+				}
+
+				// Set up fin.sqlite3 for the test
+				err = cfg.finRepo.StartOrRestartAction(cfg.fullBackupInput.ActionUID, model.Backup)
+				require.NoError(t, err)
+
+				arrangedBackupMetadata, err := json.Marshal(job.BackupMetadata{
+					PVCUID:       cfg.fullBackupInput.TargetPVCUID,
+					RBDImageName: cfg.fullBackupInput.TargetRBDImageName,
+					Raw:          nil, // Raw should be empty
+					Diff:         nil,
+				})
+				require.NoError(t, err)
+				err = cfg.finRepo.SetBackupMetadata(arrangedBackupMetadata)
+				require.NoError(t, err)
+
+				arrangedActionPrivateData, err := json.Marshal(backupPrivateData{
+					NextStorePart: tc.nextStorePart, // Set custom value to nextStorePart
+					NextPatchPart: tc.nextPatchPart, // Set custom value to nextPatchPart
+					Mode:          modeFull,
+				})
+				require.NoError(t, err)
+				err = cfg.finRepo.UpdateActionPrivateData(cfg.fullBackupInput.ActionUID, arrangedActionPrivateData)
+				require.NoError(t, err)
+
+				// Act
+				backup := NewBackup(cfg.fullBackupInput)
+				err = backup.Perform()
+				require.NoError(t, err)
+
+				// Assert
+				testutil.AssertActionPrivateDataIsEmpty(t, cfg.finRepo, cfg.fullBackupInput.ActionUID)
+				rawImage, err := fake.ReadRawImage(cfg.nlvRepo.GetRawImagePath())
+				assert.NoError(t, err)
+
+				assert.Equal(t, 3-tc.nextPatchPart, len(rawImage.AppliedDiffs))
+				off := tc.nextPatchPart * maxPartSize
+				for _, diff := range rawImage.AppliedDiffs {
+					assert.Equal(t, cfg.fullBackupInput.TargetRBDPoolName, diff.PoolName)
+					assert.Nil(t, diff.FromSnap)
+					assert.Equal(t, cfg.fullSnapshot.Name, diff.MidSnapPrefix)
+					assert.Equal(t, cfg.fullBackupInput.TargetRBDImageName, diff.ImageName)
+					assert.Equal(t, cfg.fullBackupInput.TargetSnapshotID, diff.SnapID)
+					assert.Equal(t, cfg.fullSnapshot.Name, diff.SnapName)
+					assert.Equal(t, cfg.fullSnapshot.Size, diff.SnapSize)
+					assert.True(t, cfg.fullSnapshot.Timestamp.Equal(diff.SnapTimestamp))
+
+					assert.Equal(t, off, diff.ReadOffset)
+					assert.Equal(t, maxPartSize, diff.ReadLength)
+					off += maxPartSize
+				}
+
+				ensureBackupMetadataCorrect(t, cfg.finRepo, &job.BackupMetadata{
+					PVCUID:       cfg.fullBackupInput.TargetPVCUID,
+					RBDImageName: cfg.fullBackupInput.TargetRBDImageName,
+					Raw: &job.BackupMetadataEntry{
+						SnapID:    cfg.fullBackupInput.TargetSnapshotID,
+						SnapName:  cfg.fullSnapshot.Name,
+						SnapSize:  cfg.fullSnapshot.Size,
+						PartSize:  cfg.fullBackupInput.MaxPartSize,
+						CreatedAt: cfg.fullSnapshot.Timestamp.Time,
+					},
+				})
+			},
+		)
+	}
 }
 
 func Test_IncrementalBackup_Success_Resume(t *testing.T) {
