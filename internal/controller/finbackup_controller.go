@@ -28,6 +28,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	finv1 "github.com/cybozu-go/fin/api/v1"
+	"github.com/cybozu-go/fin/internal/infrastructure/nlv"
 	"github.com/cybozu-go/fin/internal/model"
 	"github.com/go-logr/logr"
 )
@@ -48,6 +49,8 @@ const (
 	annotationDiffFrom             = "fin.cybozu.io/diff-from"
 	annotationFinBackupName        = "fin.cybozu.io/finbackup-name"
 	annotationFinBackupNamespace   = "fin.cybozu.io/finbackup-namespace"
+
+	maxJobBackoffLimit = 65535
 )
 
 var (
@@ -294,26 +297,26 @@ func (r *FinBackupReconciler) reconcileDelete(ctx context.Context, backup *finv1
 	}
 
 	// If backup job does not exist, proceed to next step
-	err = r.createOrUpdateCleanupJob(ctx, backup)
-	if err != nil {
-		logger.Error(err, "failed to create or update cleanup job")
-		return ctrl.Result{}, err
-	}
-
-	var cleanupJob batchv1.Job
-	err = r.Get(ctx, client.ObjectKey{Namespace: backup.GetNamespace(), Name: cleanupJobName(backup)}, &cleanupJob)
-	if err != nil {
-		return ctrl.Result{}, fmt.Errorf("failed to get cleanup job: %w", err)
-	}
-	done, err := jobCompleted(&cleanupJob)
-	if err != nil {
-		return ctrl.Result{}, err
-	}
-	if !done {
-		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
-	}
-
 	if backup.Status.SnapID != nil {
+		err = r.createOrUpdateCleanupJob(ctx, backup)
+		if err != nil {
+			logger.Error(err, "failed to create or update cleanup job")
+			return ctrl.Result{}, err
+		}
+
+		var cleanupJob batchv1.Job
+		err = r.Get(ctx, client.ObjectKey{Namespace: backup.GetNamespace(), Name: cleanupJobName(backup)}, &cleanupJob)
+		if err != nil {
+			return ctrl.Result{}, fmt.Errorf("failed to get cleanup job: %w", err)
+		}
+		done, err := jobCompleted(&cleanupJob)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		if !done {
+			return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+		}
+
 		err = r.createOrUpdateDeletionJob(ctx, backup)
 		if err != nil {
 			logger.Error(err, "failed to create or update deletion job")
@@ -338,12 +341,11 @@ func (r *FinBackupReconciler) reconcileDelete(ctx context.Context, backup *finv1
 			logger.Error(err, "failed to delete deletion job")
 			return ctrl.Result{}, err
 		}
-	}
-
-	err = r.Delete(ctx, &cleanupJob)
-	if err != nil && !k8serrors.IsNotFound(err) {
-		logger.Error(err, "failed to delete cleanup job")
-		return ctrl.Result{}, err
+		err = r.Delete(ctx, &cleanupJob)
+		if err != nil && !k8serrors.IsNotFound(err) {
+			logger.Error(err, "failed to delete cleanup job")
+			return ctrl.Result{}, err
+		}
 	}
 
 	// TODO: remove rbd snapshot
@@ -476,7 +478,7 @@ func (r *FinBackupReconciler) createOrUpdateBackupJob(
 ) error {
 	var job batchv1.Job
 	job.SetName("fin-backup-" + string(backup.GetUID()))
-	job.SetNamespace(backup.GetNamespace())
+	job.SetNamespace(r.cephClusterNamespace)
 	if _, err := ctrl.CreateOrUpdate(ctx, r.Client, &job, func() error {
 		labels := job.GetLabels()
 		if labels == nil {
@@ -494,7 +496,7 @@ func (r *FinBackupReconciler) createOrUpdateBackupJob(
 		annotations[annotationFinBackupNamespace] = backup.GetNamespace()
 		job.SetAnnotations(annotations)
 
-		job.Spec.BackoffLimit = ptr.To(int32(65535))
+		job.Spec.BackoffLimit = ptr.To(int32(maxJobBackoffLimit))
 
 		job.Spec.Template.Spec.NodeName = backup.Spec.Node
 
@@ -560,7 +562,7 @@ func (r *FinBackupReconciler) createOrUpdateBackupJob(
 						Name:      "ceph-config",
 					},
 					{
-						MountPath: "/volume",
+						MountPath: nlv.VolumePath,
 						Name:      "fin-volume",
 					},
 				},
@@ -666,13 +668,170 @@ func (r *FinBackupReconciler) createOrUpdateBackupJob(
 	return nil
 }
 
+//nolint:dupl
 func (r *FinBackupReconciler) createOrUpdateDeletionJob(ctx context.Context, backup *finv1.FinBackup) error {
-	// TODO: Implement the deletion job creation logic.
+	var job batchv1.Job
+	job.SetName(deletionJobName(backup))
+	job.SetNamespace(r.cephClusterNamespace)
+	if _, err := ctrl.CreateOrUpdate(ctx, r.Client, &job, func() error {
+		labels := job.GetLabels()
+		if labels == nil {
+			labels = map[string]string{}
+		}
+		labels["app.kubernetes.io/name"] = labelAppNameValue
+		labels["app.kubernetes.io/component"] = labelComponentDeletionJob
+		job.SetLabels(labels)
+
+		job.Spec.BackoffLimit = ptr.To(int32(maxJobBackoffLimit))
+
+		job.Spec.Template.Spec.NodeName = backup.Spec.Node
+
+		job.Spec.Template.Spec.SecurityContext = &corev1.PodSecurityContext{
+			FSGroup:      ptr.To(int64(10000)),
+			RunAsGroup:   ptr.To(int64(10000)),
+			RunAsNonRoot: ptr.To(true),
+			RunAsUser:    ptr.To(int64(10000)),
+		}
+
+		job.Spec.Template.Spec.RestartPolicy = corev1.RestartPolicyOnFailure
+
+		job.Spec.Template.Spec.Containers = []corev1.Container{
+			{
+				Name:    "deletion",
+				Command: []string{"/manager"},
+				Args:    []string{"deletion"},
+				Env: []corev1.EnvVar{
+					{
+						Name:  "ACTION_UID",
+						Value: string(backup.GetUID()),
+					},
+					{
+						Name:  "TARGET_SNAPSHOT_ID",
+						Value: strconv.Itoa(*backup.Status.SnapID),
+					},
+					{
+						Name:  "BACKUP_TARGET_PVC_NAME",
+						Value: backup.Spec.PVC,
+					},
+					{
+						Name:  "BACKUP_TARGET_PVC_NAMESPACE",
+						Value: backup.Spec.PVCNamespace,
+					},
+					{
+						Name:  "BACKUP_TARGET_PVC_UID",
+						Value: labels[labelBackupTargetPVCUID],
+					},
+				},
+				Image:           r.podImage,
+				ImagePullPolicy: corev1.PullIfNotPresent,
+				VolumeMounts: []corev1.VolumeMount{
+					{
+						MountPath: nlv.VolumePath,
+						Name:      "fin-volume",
+					},
+				},
+			},
+		}
+
+		job.Spec.Template.Spec.Volumes = []corev1.Volume{
+			{
+				Name: "fin-volume",
+				VolumeSource: corev1.VolumeSource{
+					PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+						ClaimName: finVolumePVCName(backup),
+					},
+				},
+			},
+		}
+
+		return nil
+	}); err != nil {
+		return err
+	}
 	return nil
 }
 
+//nolint:dupl
 func (r *FinBackupReconciler) createOrUpdateCleanupJob(ctx context.Context, backup *finv1.FinBackup) error {
-	// TODO: Implement the cleanup job creation logic.
+	var job batchv1.Job
+	job.SetName(cleanupJobName(backup))
+	job.SetNamespace(r.cephClusterNamespace)
+	if _, err := ctrl.CreateOrUpdate(ctx, r.Client, &job, func() error {
+		labels := job.GetLabels()
+		if labels == nil {
+			labels = map[string]string{}
+		}
+		labels["app.kubernetes.io/name"] = labelAppNameValue
+		labels["app.kubernetes.io/component"] = labelComponentCleanupJob
+		job.SetLabels(labels)
+
+		job.Spec.BackoffLimit = ptr.To(int32(maxJobBackoffLimit))
+
+		job.Spec.Template.Spec.NodeName = backup.Spec.Node
+
+		job.Spec.Template.Spec.SecurityContext = &corev1.PodSecurityContext{
+			FSGroup:      ptr.To(int64(10000)),
+			RunAsGroup:   ptr.To(int64(10000)),
+			RunAsNonRoot: ptr.To(true),
+			RunAsUser:    ptr.To(int64(10000)),
+		}
+
+		job.Spec.Template.Spec.RestartPolicy = corev1.RestartPolicyOnFailure
+
+		job.Spec.Template.Spec.Containers = []corev1.Container{
+			{
+				Name:    "cleanup",
+				Command: []string{"/manager"},
+				Args:    []string{"cleanup"},
+				Env: []corev1.EnvVar{
+					{
+						Name:  "ACTION_UID",
+						Value: string(backup.GetUID()),
+					},
+					{
+						Name:  "TARGET_SNAPSHOT_ID",
+						Value: strconv.Itoa(*backup.Status.SnapID),
+					},
+					{
+						Name:  "BACKUP_TARGET_PVC_NAME",
+						Value: backup.Spec.PVC,
+					},
+					{
+						Name:  "BACKUP_TARGET_PVC_NAMESPACE",
+						Value: backup.Spec.PVCNamespace,
+					},
+					{
+						Name:  "BACKUP_TARGET_PVC_UID",
+						Value: labels[labelBackupTargetPVCUID],
+					},
+				},
+				Image:           r.podImage,
+				ImagePullPolicy: corev1.PullIfNotPresent,
+				VolumeMounts: []corev1.VolumeMount{
+					{
+						MountPath: nlv.VolumePath,
+						Name:      "fin-volume",
+					},
+				},
+			},
+		}
+
+		job.Spec.Template.Spec.Volumes = []corev1.Volume{
+			{
+				Name: "fin-volume",
+				VolumeSource: corev1.VolumeSource{
+					PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+						ClaimName: finVolumePVCName(backup),
+					},
+				},
+			},
+		}
+
+		return nil
+	}); err != nil {
+		return err
+	}
+
 	return nil
 }
 
