@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/cybozu-go/fin/internal/infrastructure/fake"
+	"github.com/cybozu-go/fin/internal/infrastructure/restore"
 	"github.com/cybozu-go/fin/internal/job"
 	"github.com/cybozu-go/fin/internal/job/backup"
 	"github.com/cybozu-go/fin/internal/job/deletion"
@@ -69,8 +70,8 @@ func setup(t *testing.T, config *setupInput) *setupOutput {
 		require.NoError(t, err)
 
 		// Create the restore file
-		restorePath := testutil.CreateRestoreFileForTest(t, int64(targetSnapshotSize))
-		rVol := fake.NewRestoreVolume(restorePath)
+		restorePath := testutil.CreateLoopDevice(t, int64(targetSnapshotSize))
+		rVol := restore.NewRestoreVolume(restorePath)
 
 		restoreInputs = append(restoreInputs, testutil.NewRestoreInputTemplate(
 			backupInput, rVol, rawImageChunkSize, backupInput.TargetSnapshotID))
@@ -138,8 +139,8 @@ func TestRestore_FullBackup_Success(t *testing.T) {
 	buf := testutil.FillRawImageWithRandomData(t, nlvRepo.GetRawImagePath(), targetSnapshotSize)
 
 	// Create the restore file
-	restorePath := testutil.CreateRestoreFileForTest(t, int64(targetSnapshotSize))
-	rVol := fake.NewRestoreVolume(restorePath)
+	restorePath := testutil.CreateLoopDevice(t, int64(targetSnapshotSize))
+	rVol := restore.NewRestoreVolume(restorePath)
 
 	// Act
 	r := NewRestore(testutil.NewRestoreInputTemplate(
@@ -228,8 +229,8 @@ func TestRestore_IncrementalBackup_Success(t *testing.T) {
 	buf := testutil.FillRawImageWithRandomData(t, nlvRepo.GetRawImagePath(), fullSnapshotSize)
 
 	// Create the restore file
-	restorePath := testutil.CreateRestoreFileForTest(t, int64(incrementalSnapshotSize))
-	rVol := fake.NewRestoreVolume(restorePath)
+	restorePath := testutil.CreateLoopDevice(t, int64(incrementalSnapshotSize))
+	rVol := restore.NewRestoreVolume(restorePath)
 
 	// Act
 	r := NewRestore(testutil.NewRestoreInputTemplate(
