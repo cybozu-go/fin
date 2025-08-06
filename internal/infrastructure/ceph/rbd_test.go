@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"unsafe"
 
+	"github.com/cybozu-go/fin/internal/diffgenerator"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sys/unix"
@@ -110,6 +111,273 @@ func TestZeroFill_success(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, byte(0xff), readByte)
 	}
+}
+
+func TestApplyDiffToRawImage_error_InvalidHeader(t *testing.T) {
+	// Description:
+	// Check the header of the incremental data file
+	//
+	// Arrange:
+	// An incremental data file A with a header other than "rbd diff v1\n" exists
+	//
+	// Act:
+	// Call the apply process on A
+	//
+	// Assert:
+	// Should terminate abnormally
+	//
+
+	// Arrange
+	reader, err := diffgenerator.Run(
+		diffgenerator.WithToSnapName("toSnap"),
+		diffgenerator.WithImageSize(10),
+		diffgenerator.WithHeader("invalid header"),
+	)
+	require.NoError(t, err)
+
+	// Act
+	err = applyDiffToRawImage(getRawImagePathForTest(t), reader, "", "toSnap", 10)
+
+	// Assert
+	assert.Error(t, err)
+}
+
+func TestApplyDiffToRawImage_error_MissingToSnap(t *testing.T) {
+	// Description:
+	// Check the metadata of the incremental data file
+	//
+	// Arrange:
+	// TO SNAP does not exist in the METADATA RECORDS of the incremental data file
+	//
+	// Act:
+	// Call the apply process using the incremental data file
+	//
+	// Assert:
+	// Should terminate abnormally
+
+	// Arrange
+	reader, err := diffgenerator.Run(
+		diffgenerator.WithImageSize(10),
+	)
+	require.NoError(t, err)
+
+	// Act
+	err = applyDiffToRawImage(getRawImagePathForTest(t), reader, "", "toSnap", 10)
+
+	// Assert
+	assert.Error(t, err)
+}
+
+func TestApplyDiffToRawImage_error_MissingDiffFileName(t *testing.T) {
+	// Description:
+	// Check when incremental data file is missing during raw image application
+	//
+	// Arrange:
+	// Incremental data file name is missing
+	//
+	// Act:
+	// Call the incremental data application process
+	//
+	// Assert:
+	// Should terminate abnormally
+
+	// Arrange
+	rbdRepository := NewRBDRepository()
+
+	// Act
+	err := rbdRepository.ApplyDiffToRawImage(
+		getRawImagePathForTest(t),
+		"non existing file",
+		"",
+		"toSnap",
+	)
+
+	// Assert
+	assert.Error(t, err)
+}
+
+func TestApplyDiffToRawImage_error_MissingToSnapNameArg(t *testing.T) {
+	// Description:
+	// Check when incremental data snapshot name is missing during raw image application
+	//
+	// Arrange:
+	// Incremental data snapshot name is empty
+	//
+	// Act:
+	// Call the incremental data application process
+	//
+	// Assert:
+	// Should terminate abnormally
+
+	// Arrange
+	reader, err := diffgenerator.Run(
+		diffgenerator.WithToSnapName("toSnap"),
+		diffgenerator.WithImageSize(10),
+	)
+	require.NoError(t, err)
+
+	// Act
+	err = applyDiffToRawImage(getRawImagePathForTest(t), reader, "", "" /* missing to-snap */, 10)
+
+	// Assert
+	assert.Error(t, err)
+}
+
+func TestApplyDiffToRawImage_error_ExpansionUnitSizeNonPositive(t *testing.T) {
+	// Description:
+	// Check when expansion unit size is 0 or less during raw image application
+	//
+	// Arrange:
+	// File expansion unit size is 0 or a negative value
+	//
+	// Act:
+	// Call the incremental data application process
+	//
+	// Assert:
+	// Should terminate abnormally
+
+	// Arrange
+	reader, err := diffgenerator.Run(
+		diffgenerator.WithToSnapName("toSnap"),
+		diffgenerator.WithImageSize(10),
+	)
+	require.NoError(t, err)
+
+	// Act
+	err = applyDiffToRawImage(getRawImagePathForTest(t), reader, "", "toSnap", 0 /* non positive expansion unit size */)
+
+	// Assert
+	assert.Error(t, err)
+}
+
+func TestApplyDiffToRawImage_error_FromSnapNameMismatch(t *testing.T) {
+	// Description:
+	// Check when from-snap name does not match during raw image application
+	//
+	// Arrange:
+	// An incremental data file containing a FROM SNAP name exists
+	//
+	// Act:
+	// Call the apply process with a target snapshot name different from the FROM SNAP value in the incremental data file
+	//
+	// Assert:
+	// Should terminate abnormally
+
+	// Arrange
+	reader, err := diffgenerator.Run(
+		diffgenerator.WithFromSnapName("fromSnap1"),
+		diffgenerator.WithToSnapName("toSnap"),
+		diffgenerator.WithImageSize(10),
+	)
+	require.NoError(t, err)
+
+	// Act
+	err = applyDiffToRawImage(getRawImagePathForTest(t), reader, "fromSnap2", "toSnap", 10)
+
+	// Assert
+	assert.Error(t, err)
+}
+
+func TestApplyDiffToRawImage_error_ToSnapNameMismatch(t *testing.T) {
+	// Description:
+	// Check when to-snap name does not match during raw image application
+	//
+	// Arrange:
+	// An incremental data file containing a TO SNAP name exists
+	//
+	// Act:
+	// Call the apply process with an incremental data snapshot name different
+	// from the TO SNAP value in the incremental data file
+	//
+	// Assert:
+	// Should terminate abnormally
+
+	// Arrange
+	reader, err := diffgenerator.Run(
+		diffgenerator.WithFromSnapName("fromSnap"),
+		diffgenerator.WithToSnapName("toSnap1"),
+		diffgenerator.WithImageSize(10),
+	)
+	require.NoError(t, err)
+
+	// Act
+	err = applyDiffToRawImage(getRawImagePathForTest(t), reader, "fromSnap", "toSnap2", 10)
+
+	// Assert
+	assert.Error(t, err)
+}
+
+func TestApplyDiffToRawImage_error_UnsortedDataRecords(t *testing.T) {
+	// Description:
+	// Check that an error occurs when DATA RECORDS
+	// in the incremental data file are not sorted in ascending order by offset address
+	//
+	// Arrange:
+	// An incremental data file exists with DATA RECORDS as follows:
+	// 	- UPDATED DATA: offset = 1KiB, length = 1KiB, data = random
+	// 	- UPDATED DATA: offset = 0, length = 1KiB, data = random
+	//
+	// Act:
+	// Call the apply process using the incremental data file
+	//
+	// Assert:
+	// Should terminate abnormally
+
+	// Arrange
+	reader, err := diffgenerator.Run(
+		diffgenerator.WithToSnapName("toSnap"),
+		diffgenerator.WithImageSize(2*1024),
+		diffgenerator.WithRecords([]*diffgenerator.DataRecord{
+			diffgenerator.NewRandomUpdatedDataRecord(1*1024, 1*1024),
+			diffgenerator.NewRandomUpdatedDataRecord(0, 1*1024),
+		}),
+	)
+	require.NoError(t, err)
+
+	// Act
+	err = applyDiffToRawImage(getRawImagePathForTest(t), reader, "", "toSnap", 10)
+
+	// Assert
+	assert.Error(t, err)
+}
+
+func TestApplyDiffToRawImage_error_OverlappedDataRecords(t *testing.T) {
+	// Description:
+	// Check that an error occurs when DATA RECORDS
+	// in the incremental data file contain overlaps in offset ~ offset + length
+	//
+	// Arrange:
+	// An incremental data file exists with DATA RECORDS as follows:
+	// 	- UPDATED DATA: offset = 1KiB, length = 2KiB, data = random
+	// 	- UPDATED DATA: offset = 2KiB, length = 1KiB, data = random
+	//
+	// Act:
+	// Call the apply process using the incremental data file
+	//
+	// Assert:
+	// Should terminate abnormally
+
+	// Arrange
+	reader, err := diffgenerator.Run(
+		diffgenerator.WithToSnapName("toSnap"),
+		diffgenerator.WithImageSize(3*1024),
+		diffgenerator.WithRecords([]*diffgenerator.DataRecord{
+			diffgenerator.NewRandomUpdatedDataRecord(1*1024, 2*1024),
+			diffgenerator.NewRandomUpdatedDataRecord(2*1024, 1*1024),
+		}),
+	)
+	require.NoError(t, err)
+
+	// Act
+	err = applyDiffToRawImage(getRawImagePathForTest(t), reader, "", "toSnap", 10)
+
+	// Assert
+	assert.Error(t, err)
+}
+
+func getRawImagePathForTest(t *testing.T) string {
+	t.Helper()
+	return filepath.Join(t.TempDir(), "raw.img")
 }
 
 func openFile(t *testing.T, path string) *os.File {
