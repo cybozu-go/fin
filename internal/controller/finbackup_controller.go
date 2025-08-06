@@ -175,8 +175,7 @@ func (r *FinBackupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			return ctrl.Result{}, err
 		}
 
-		snapName := fmt.Sprintf("fin-backup-%s", backup.GetUID())
-		snap, err := r.createSnapshotIfNeeded(rbdPool, rbdImage, snapName)
+		snap, err := r.createSnapshotIfNeeded(rbdPool, rbdImage, snapshotName(&backup))
 		if err != nil {
 			logger.Error(err, "failed to create or get snapshot")
 			return ctrl.Result{}, err
@@ -348,7 +347,16 @@ func (r *FinBackupReconciler) reconcileDelete(ctx context.Context, backup *finv1
 		}
 	}
 
-	// TODO: remove rbd snapshot
+	rbdPool := backup.GetAnnotations()[annotationRBDPool]
+	rbdImage := backup.GetAnnotations()[annotationBackupTargetRBDImage]
+	snapshotName := snapshotName(backup)
+	if err := r.removeSnapshot(rbdPool, rbdImage, snapshotName); err != nil {
+		if !errors.Is(err, errSnapshotNotFound) {
+			logger.Error(err, "failed to remove RBD snapshot")
+			return ctrl.Result{}, err
+		}
+		logger.Info("RBD snapshot not found, skipping removal", "pool", rbdPool, "image", rbdImage, "snapName", snapshotName)
+	}
 
 	controllerutil.RemoveFinalizer(backup, FinBackupFinalizerName)
 	if err = r.Update(ctx, backup); err != nil {
@@ -374,6 +382,18 @@ func (r *FinBackupReconciler) createSnapshotIfNeeded(rbdPool, rbdImage, snapName
 		}
 	}
 	return snap, nil
+}
+
+func (r *FinBackupReconciler) removeSnapshot(rbdPool, rbdImage, snapName string) error {
+	_, err := r.getSnapshot(rbdPool, rbdImage, snapName)
+	if err != nil {
+		return err
+	}
+	err = r.snapRepo.RemoveSnapshot(rbdPool, rbdImage, snapName)
+	if err != nil {
+		return fmt.Errorf("failed to remove snapshot: %w", err)
+	}
+	return nil
 }
 
 func (r *FinBackupReconciler) getSnapshot(rbdPool, rbdImage, snapName string) (*model.RBDSnapshot, error) {
@@ -458,6 +478,10 @@ func findDiffSourceSnapID(backup *finv1.FinBackup, finBackupList *finv1.FinBacku
 		updated = true
 	}
 	return diffFromStr, updated
+}
+
+func snapshotName(backup *finv1.FinBackup) string {
+	return fmt.Sprintf("fin-backup-%s", backup.GetUID())
 }
 
 func backupJobName(backup *finv1.FinBackup) string {

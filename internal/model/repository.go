@@ -101,6 +101,10 @@ type RBDSnapshotCreateRepository interface {
 	// CreateSnapshot create a snapshot for the specified pool and image.
 	CreateSnapshot(poolName, imageName, snapName string) error
 }
+type RBDSnapshotRemoveRepository interface {
+	// RemoveSnapshot removes the snapshot for the specified pool and image.
+	RemoveSnapshot(poolName, imageName, snapName string) error
+}
 
 type RBDSnapshotListRepository interface {
 	// ListSnapshots retrieves a list of snapshots for the specified pool and image.
@@ -109,6 +113,7 @@ type RBDSnapshotListRepository interface {
 
 type RBDSnapshotRepository interface {
 	RBDSnapshotCreateRepository
+	RBDSnapshotRemoveRepository
 	RBDSnapshotListRepository
 }
 
