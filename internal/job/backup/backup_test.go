@@ -20,6 +20,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/utils/ptr"
 )
 
 type setupInput struct {
@@ -634,6 +635,46 @@ func Test_FullBackup_Error_DifferentPVCUID(t *testing.T) {
 
 	// Act
 	backup := NewBackup(cfg.fullBackupInput)
+	err = backup.Perform()
+
+	// Assert
+	assert.Error(t, err)
+}
+
+func Test_IncrementalBackup_Error_WrongSourceCandidateSnapshotID(t *testing.T) {
+	// CSATEST-1504
+	// Description:
+	//   Creation of an incremental backup fails when the source candidate
+	//   snapshot ID does not match with the environment variable.
+	//
+	// Arrange:
+	//   - Set up an incremental backup input.
+	//   - Create a record in backup_metadata table.
+	//   - Set a different snapshot ID to the source candidate snapshot ID.
+	//
+	// Act:
+	//   Run the backup process to create an incremental backup.
+	//
+	// Assert:
+	//   Check if the incremental backup creation fails with an error.
+
+	// Arrange
+	cfg := setup(t, &setupInput{})
+
+	// Create a full backup to create a record in backup_metadata table
+	fullBackup := NewBackup(cfg.fullBackupInput)
+	err := fullBackup.Perform()
+	require.NoError(t, err)
+
+	// Set a different snapshot ID to the source candidate snapshot ID.
+	// Use a clearly invalid/fake snapshot ID to ensure mismatch.
+	cfg.incrementalBackupInput.SourceCandidateSnapshotID = ptr.To(math.MaxInt)
+	metadata, err := job.GetBackupMetadata(cfg.finRepo)
+	require.NoError(t, err)
+	require.NotEqual(t, metadata.Raw.SnapID, *cfg.incrementalBackupInput.SourceCandidateSnapshotID)
+
+	// Act
+	backup := NewBackup(cfg.incrementalBackupInput)
 	err = backup.Perform()
 
 	// Assert
