@@ -136,10 +136,20 @@ func controllerMain(args []string) {
 		setupLog.Error(err, "unable to create controller", "controller", "FinBackup")
 		os.Exit(1)
 	}
-	if err = (&controller.FinRestoreReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
-	}).SetupWithManager(mgr); err != nil {
+
+	rawImageChunkSize, err := resource.ParseQuantity(os.Getenv("RAW_IMAGE_CHUNK_SIZE"))
+	if err != nil {
+		setupLog.Error(err, "failed to parse RAW_IMAGE_CHUNK_SIZE environment variable")
+		os.Exit(1)
+	}
+	finRestoreReconciler := controller.NewFinRestoreReconciler(
+		mgr.GetClient(),
+		mgr.GetScheme(),
+		os.Getenv("POD_NAMESPACE"),
+		os.Getenv("POD_IMAGE"),
+		&rawImageChunkSize,
+	)
+	if err = finRestoreReconciler.SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "FinRestore")
 		os.Exit(1)
 	}
