@@ -71,6 +71,5 @@ func enqueueOnJobCompletion(e event.UpdateEvent) bool {
 }
 
 func finVolumePVCName(backup *finv1.FinBackup) string {
-	// FIXME: The naming convention has not been decided yet.
-	return "fin-volume-" + backup.Spec.Node
+	return "fin-" + backup.Spec.Node
 }
