@@ -15,7 +15,7 @@ const (
 	testAction = model.Backup
 )
 
-func CreateRepoForTest(t *testing.T) model.FinRepository {
+func CreateRepoForTest(t *testing.T) *FinRepository {
 	repo, err := New(testDBFile)
 	t.Cleanup(func() { _ = repo.Close(); _ = os.Remove(testDBFile) })
 	require.NoError(t, err)
@@ -140,6 +140,38 @@ func TestGetBackupMetadataAndSetBackupMetadata_success(t *testing.T) {
 	assert.NoError(t, err1)
 	assert.NoError(t, err2)
 	assert.Equal(t, "{}", string(metadata))
+}
+
+func TestGetBackupMetadata_error_moreThanOneRow(t *testing.T) {
+	// CSATEST-1502
+	// Description:
+	//   Backups should fail if the backup_metadata table contains more than one row.
+	//
+	// Arrange:
+	//   Make a backup_metadata table with more than one row.
+	//
+	// Act:
+	//   Try to get the backup metadata.
+	//
+	// Assert:
+	//   Check that an error is returned.
+
+	// Arrange
+	repo := CreateRepoForTest(t)
+	require.NotNil(t, repo)
+
+	err := repo.SetBackupMetadata([]byte("{}"))
+	require.NoError(t, err)
+
+	// Insert another row to cause an error
+	_, err = repo.db.Exec("INSERT INTO backup_metadata (data) VALUES (?)", "{}")
+	require.NoError(t, err)
+
+	// Act
+	_, err = repo.GetBackupMetadata()
+
+	// Assert
+	assert.Error(t, err)
 }
 
 func TestDeleteBackupMetadata_success(t *testing.T) {
