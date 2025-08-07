@@ -126,3 +126,38 @@ func TestUpdateActionPrivateData_failToUpdateBeforeStart(t *testing.T) {
 	err := repo.UpdateActionPrivateData(testUID, []byte("test-private-data"))
 	require.Error(t, err)
 }
+
+func TestGetBackupMetadataAndSetBackupMetadata_success(t *testing.T) {
+	// Arrange
+	repo := CreateRepoForTest(t)
+	require.NotNil(t, repo)
+
+	// Act
+	err1 := repo.SetBackupMetadata([]byte("{}"))
+	metadata, err2 := repo.GetBackupMetadata()
+
+	// Assert
+	assert.NoError(t, err1)
+	assert.NoError(t, err2)
+	assert.Equal(t, "{}", string(metadata))
+}
+
+func TestDeleteBackupMetadata_success(t *testing.T) {
+	// Arrange
+	repo := CreateRepoForTest(t)
+	require.NotNil(t, repo)
+
+	err := repo.SetBackupMetadata([]byte("{}"))
+	require.NoError(t, err)
+	metadata, err := repo.GetBackupMetadata()
+	require.NoError(t, err)
+	require.Equal(t, "{}", string(metadata))
+
+	// Act
+	err = repo.DeleteBackupMetadata()
+
+	// Assert
+	assert.NoError(t, err)
+	_, err = repo.GetBackupMetadata()
+	assert.ErrorIs(t, err, model.ErrNotFound)
+}
