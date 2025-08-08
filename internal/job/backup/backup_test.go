@@ -491,6 +491,64 @@ func Test_IncrementalBackup_Success_Resume(t *testing.T) {
 	})
 }
 
+func Test_FullBackup_Success_DifferentNode(t *testing.T) {
+	// CSATEST-1496
+	// Description:
+	//   Create a full backup with no error on a node different from its previous backup.
+	//
+	// Arrange:
+	//   - Set SourceCandidateSnapshotID to an non-empty value.
+	//   - Set backup_metadata table to be empty.
+	//
+	// Act:
+	//   Run the backup process to create an full backup.
+	//
+	// Assert:
+	//   Check if the contents of the full backup is correct.
+
+	// Arrange
+	cfg := setup(t, &setupInput{})
+	require.NotNil(t, cfg.incrementalBackupInput.SourceCandidateSnapshotID)
+
+	// Act
+	backup := NewBackup(cfg.incrementalBackupInput /* Use incrementalBackupInput to set SourceCandidateSnapshotID */)
+	err := backup.Perform()
+	require.NoError(t, err)
+
+	// Assert
+	testutil.AssertActionPrivateDataIsEmpty(t, cfg.finRepo, cfg.incrementalBackupInput.ActionUID)
+	rawImage, err := fake.ReadRawImage(cfg.nlvRepo.GetRawImagePath())
+	assert.NoError(t, err)
+
+	assert.Len(t, rawImage.AppliedDiffs, 2)
+	for i, diff := range rawImage.AppliedDiffs {
+		assert.Equal(t, cfg.incrementalBackupInput.TargetRBDPoolName, diff.PoolName)
+		assert.Nil(t, diff.FromSnap)
+		assert.Equal(t, cfg.incrementalSnapshot.Name, diff.MidSnapPrefix)
+		assert.Equal(t, cfg.incrementalBackupInput.TargetRBDImageName, diff.ImageName)
+		assert.Equal(t, cfg.incrementalBackupInput.TargetSnapshotID, diff.SnapID)
+		assert.Equal(t, cfg.incrementalSnapshot.Name, diff.SnapName)
+		assert.Equal(t, cfg.incrementalSnapshot.Size, diff.SnapSize)
+		assert.True(t, cfg.incrementalSnapshot.Timestamp.Equal(diff.SnapTimestamp))
+
+		assert.Equal(t, i*cfg.incrementalBackupInput.MaxPartSize, diff.ReadOffset)
+		assert.Equal(t, cfg.incrementalBackupInput.MaxPartSize, diff.ReadLength)
+	}
+
+	ensureBackupMetadataCorrect(t, cfg.finRepo, &job.BackupMetadata{
+		PVCUID:       cfg.incrementalBackupInput.TargetPVCUID,
+		RBDImageName: cfg.incrementalBackupInput.TargetRBDImageName,
+		Raw: &job.BackupMetadataEntry{
+			SnapID:    cfg.incrementalBackupInput.TargetSnapshotID,
+			SnapName:  cfg.incrementalSnapshot.Name,
+			SnapSize:  cfg.incrementalSnapshot.Size,
+			PartSize:  cfg.incrementalBackupInput.MaxPartSize,
+			CreatedAt: cfg.incrementalSnapshot.Timestamp.Time,
+		},
+		// Diff should be empty because this is a full backup
+	})
+}
+
 func ensureDiffFileCorrect(t *testing.T, diffFilePath string, expected *fake.ExportedDiff) {
 	t.Helper()
 	diff, err := fake.ReadDiff(diffFilePath)
