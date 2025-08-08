@@ -53,7 +53,7 @@ func TestApplyDiffToRawImage_success(t *testing.T) {
 }
 
 func TestApplyDiffToBlockDevice_success(t *testing.T) {
-	blockDevicePath := os.Getenv("TEST_BLOCK_DEV")
+	blockDevicePath := getBlockDevicePathForTest(t)
 	zerooutWholeBlockDevice(t, blockDevicePath)
 
 	err := applyDiffToBlockDevice(blockDevicePath, openGZFile(t, "testdata/full.gz"), "", "snap20")
@@ -517,9 +517,186 @@ func TestApplyDiffToRawImage_error_OverlappedDataRecords(t *testing.T) {
 	assert.Error(t, err)
 }
 
+func TestApplyDiffToBlockDevice_success_ExistentFromSnap(t *testing.T) {
+	// Description:
+	// Success case of diff application to block device when FROM SNAP exists
+	//
+	// Arrange:
+	// - block device exists
+	// - Incremental data file exists containing UPDATED DATA, ZERO DATA and FROM SNAP
+	//
+	// Act:
+	// Call the incremental data file application process with target snapshot name
+	//
+	// Assert:
+	// All of the following conditions are met:
+	// - Process completes successfully
+	// - Block device is overwritten for length bytes from offset according to UPDATED DATA
+	// - Block device is overwritten for length bytes from offset with 0 according to ZERO DATA
+	// - Areas not included in either UPDATED DATA or ZERO DATA remain unchanged
+
+	// Arrange
+	reader, err := diffgenerator.Run(
+		diffgenerator.WithFromSnapName("fromSnap"),
+		diffgenerator.WithToSnapName("toSnap"),
+		diffgenerator.WithImageSize(30),
+		diffgenerator.WithRecords([]*diffgenerator.DataRecord{
+			diffgenerator.NewUpdatedDataRecord(0, 10, []byte("0123456789")),
+			diffgenerator.NewZeroDataRecord(10, 20),
+		}),
+	)
+	require.NoError(t, err)
+
+	blockDevicePath := getBlockDevicePathForTest(t)
+	zerooutWholeBlockDevice(t, blockDevicePath)
+
+	file := openFileWriteOnly(t, blockDevicePath)
+	_, err = io.Copy(file, bytes.NewReader(bytes.Repeat([]byte{0xff}, 35)))
+	require.NoError(t, err)
+
+	// Act
+	err = applyDiffToBlockDevice(blockDevicePath, reader, "fromSnap", "toSnap")
+
+	// Assert
+	assert.NoError(t, err)
+
+	file = openFile(t, blockDevicePath)
+	head := make([]byte, 35)
+	_, err = io.ReadFull(file, head)
+	require.NoError(t, err)
+	assert.Equal(
+		t,
+		// UPDATED DATA ("0123456789") + ZERO DATA (20 bytes) + old 0xff data (5 bytes)
+		[]byte("0123456789\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"+
+			"\x00\x00\x00\x00\x00\x00\x00\x00\x00\xff\xff\xff\xff\xff"),
+		head,
+	)
+
+	// Ensure the rest of the block device is zeroed out
+	compareReaders(t, file, io.LimitReader(&zeroReader{}, int64(getBlockDeviceSize(t, file)-35)))
+}
+
+func TestApplyDiffToBlockDevice_success_MissingFromSnap(t *testing.T) {
+	// Description:
+	// Success case of diff application to block device when FROM SNAP does not exist
+	//
+	// Arrange:
+	// - block device exists
+	// - Incremental data file exists containing UPDATED DATA and ZERO DATA, but no FROM SNAP
+	//
+	// Act:
+	// Call the incremental data file application process with target snapshot name set to empty
+	//
+	// Assert:
+	// All of the following conditions are met:
+	// - Process completes successfully
+	// - Block device is overwritten for length bytes from offset according to UPDATED DATA
+	// - Block device is overwritten for length bytes from offset with 0 according to ZERO DATA
+	// - Areas not included in either UPDATED DATA or ZERO DATA remain unchanged
+
+	// Arrange
+	reader, err := diffgenerator.Run(
+		diffgenerator.WithToSnapName("toSnap"),
+		diffgenerator.WithImageSize(30),
+		diffgenerator.WithRecords([]*diffgenerator.DataRecord{
+			diffgenerator.NewUpdatedDataRecord(0, 10, []byte("0123456789")),
+			diffgenerator.NewZeroDataRecord(10, 20),
+		}),
+	)
+	require.NoError(t, err)
+
+	blockDevicePath := getBlockDevicePathForTest(t)
+	zerooutWholeBlockDevice(t, blockDevicePath)
+
+	// Act
+	err = applyDiffToBlockDevice(blockDevicePath, reader, "", "toSnap")
+
+	// Assert
+	assert.NoError(t, err)
+
+	file := openFile(t, blockDevicePath)
+	head := make([]byte, 30)
+	_, err = io.ReadFull(file, head)
+	require.NoError(t, err)
+	assert.Equal(
+		t,
+		// UPDATED DATA ("0123456789") + ZERO DATA (20 bytes)
+		[]byte("0123456789\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"+
+			"\x00\x00\x00\x00\x00\x00\x00\x00\x00"),
+		head,
+	)
+
+	// Ensure the rest of the block device is zeroed out
+	compareReaders(t, file, io.LimitReader(&zeroReader{}, int64(getBlockDeviceSize(t, file)-30)))
+}
+
+func TestApplyDiffToBlockDevice_success_AlignedOffset(t *testing.T) {
+	blockDevicePath := getBlockDevicePathForTest(t)
+	file := openFile(t, blockDevicePath)
+	blockDeviceSectorSize := getBlockDeviceSectorSize(t, file)
+
+	zerooutWholeBlockDevice(t, blockDevicePath)
+	file = openFileWriteOnly(t, blockDevicePath)
+	_, err := io.Copy(file, bytes.NewReader(bytes.Repeat([]byte{0xff}, blockDeviceSectorSize*3)))
+	require.NoError(t, err)
+
+	reader, err := diffgenerator.Run(
+		diffgenerator.WithToSnapName("toSnap"),
+		diffgenerator.WithImageSize(30),
+		diffgenerator.WithRecords([]*diffgenerator.DataRecord{
+			diffgenerator.NewZeroDataRecord(uint64(blockDeviceSectorSize), uint64(blockDeviceSectorSize)),
+		}),
+	)
+	require.NoError(t, err)
+
+	err = applyDiffToBlockDevice(blockDevicePath, reader, "", "toSnap")
+	assert.NoError(t, err)
+
+	file = openFile(t, blockDevicePath)
+	head := make([]byte, blockDeviceSectorSize)
+	_, err = io.ReadFull(file, head)
+	require.NoError(t, err)
+	assert.Equal(t, bytes.Repeat([]byte{0xff}, blockDeviceSectorSize), head)
+
+	_, err = io.ReadFull(file, head)
+	require.NoError(t, err)
+	assert.Equal(t, bytes.Repeat([]byte{0}, blockDeviceSectorSize), head)
+
+	_, err = io.ReadFull(file, head)
+	require.NoError(t, err)
+	assert.Equal(t, bytes.Repeat([]byte{0xff}, blockDeviceSectorSize), head)
+
+	compareReaders(t, file, io.LimitReader(&zeroReader{}, int64(getBlockDeviceSize(t, file)-3*blockDeviceSectorSize)))
+}
+
 func getRawImagePathForTest(t *testing.T) string {
 	t.Helper()
 	return filepath.Join(t.TempDir(), "raw.img")
+}
+
+func getBlockDevicePathForTest(t *testing.T) string {
+	t.Helper()
+
+	blockDevicePath := os.Getenv("TEST_BLOCK_DEV")
+	require.NotEmpty(t, blockDevicePath)
+
+	return blockDevicePath
+}
+
+func getBlockDeviceSize(t *testing.T, file *os.File) int {
+	t.Helper()
+	n, err := unix.IoctlGetInt(int(file.Fd()), unix.BLKGETSIZE64)
+	require.NoError(t, err)
+
+	return n
+}
+
+func getBlockDeviceSectorSize(t *testing.T, file *os.File) int {
+	t.Helper()
+	n, err := unix.IoctlGetInt(int(file.Fd()), unix.BLKSSZGET)
+	require.NoError(t, err)
+
+	return n
 }
 
 func openFile(t *testing.T, path string) *os.File {
