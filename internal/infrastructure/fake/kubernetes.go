@@ -44,3 +44,11 @@ func (r *KubernetesRepository) SetPVC(name, namespace string, newPVC *corev1.Per
 func (r *KubernetesRepository) SetPV(name string, newPV *corev1.PersistentVolume) {
 	r.pvMap[name] = newPV
 }
+
+func (r *KubernetesRepository) DeletePVC(name, namespace string) {
+	delete(r.pvcMap, types.NamespacedName{Name: name, Namespace: namespace})
+}
+
+func (r *KubernetesRepository) DeletePV(name string) {
+	delete(r.pvMap, name)
+}

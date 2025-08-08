@@ -19,6 +19,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/api/equality"
+	"k8s.io/apimachinery/pkg/types"
 )
 
 type setupInput struct {
@@ -547,6 +548,96 @@ func Test_FullBackup_Success_DifferentNode(t *testing.T) {
 		},
 		// Diff should be empty because this is a full backup
 	})
+}
+
+func Test_FullBackup_Error_NonExistentTargetPVAndPVC(t *testing.T) {
+	// CSATEST-1498
+	// Description:
+	//   Creation of a full backup fails when the target PV and PVC do not exist.
+	//
+	// Arrange:
+	//   - Set up a full backup input.
+	//   - Delete the target PV and PVC.
+	//
+	// Act:
+	//   Run the backup process to create an full backup.
+	//
+	// Assert:
+	//   Check if the full backup creation fails with an error.
+
+	// Arrange
+	cfg := setup(t, &setupInput{})
+	cfg.k8sRepo.DeletePV(cfg.targetPVName)
+	cfg.k8sRepo.DeletePVC(cfg.fullBackupInput.TargetPVCName, cfg.fullBackupInput.TargetPVCNamespace)
+
+	// Act
+	backup := NewBackup(cfg.fullBackupInput)
+	err := backup.Perform()
+
+	// Assert
+	assert.Error(t, err)
+}
+
+func Test_FullBackup_Error_DifferentRBDImageName(t *testing.T) {
+	// CSATEST-1500
+	// Description:
+	//   Creation of a full backup fails when the target PV has a different RBD image name.
+	//
+	// Arrange:
+	//   - Set up a full backup input.
+	//   - Set a different image name from the environment variable to the target PV.
+	//
+	// Act:
+	//   Run the backup process to create an full backup.
+	//
+	// Assert:
+	//   Check if the full backup creation fails with an error.
+
+	// Arrange
+	cfg := setup(t, &setupInput{})
+
+	pv, err := cfg.k8sRepo.GetPV(cfg.targetPVName)
+	require.NoError(t, err)
+	pv.Spec.CSI.VolumeAttributes["imageName"] = fmt.Sprintf("recreated-%s", pv.Spec.CSI.VolumeAttributes["imageName"])
+	cfg.k8sRepo.SetPV(cfg.targetPVName, pv)
+
+	// Act
+	backup := NewBackup(cfg.fullBackupInput)
+	err = backup.Perform()
+
+	// Assert
+	assert.Error(t, err)
+}
+
+func Test_FullBackup_Error_DifferentPVCUID(t *testing.T) {
+	// CSATEST-1499
+	// Description:
+	//   Creation of a full backup fails when the target PVC has a different UID.
+	//
+	// Arrange:
+	//   - Set up a full backup input.
+	//   - Set a different PVC UID from the environment variable to the target PVC.
+	//
+	// Act:
+	//   Run the backup process to create an full backup.
+	//
+	// Assert:
+	//   Check if the full backup creation fails with an error.
+
+	// Arrange
+	cfg := setup(t, &setupInput{})
+
+	pvc, err := cfg.k8sRepo.GetPVC(cfg.fullBackupInput.TargetPVCName, cfg.fullBackupInput.TargetPVCNamespace)
+	require.NoError(t, err)
+	pvc.UID = types.UID(fmt.Sprintf("recreated-%s", pvc.UID))
+	cfg.k8sRepo.SetPVC(cfg.fullBackupInput.TargetPVCName, cfg.fullBackupInput.TargetPVCNamespace, pvc)
+
+	// Act
+	backup := NewBackup(cfg.fullBackupInput)
+	err = backup.Perform()
+
+	// Assert
+	assert.Error(t, err)
 }
 
 func ensureDiffFileCorrect(t *testing.T, diffFilePath string, expected *fake.ExportedDiff) {
