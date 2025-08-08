@@ -49,8 +49,6 @@ const (
 	annotationDiffFrom             = "fin.cybozu.io/diff-from"
 	annotationFinBackupName        = "fin.cybozu.io/finbackup-name"
 	annotationFinBackupNamespace   = "fin.cybozu.io/finbackup-namespace"
-
-	maxJobBackoffLimit = 65535
 )
 
 var (

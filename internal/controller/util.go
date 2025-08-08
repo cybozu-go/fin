@@ -14,6 +14,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
+const (
+	maxJobBackoffLimit = 65535
+)
+
 func jobCompleted(job *batchv1.Job) (done bool, err error) {
 	for _, c := range job.Status.Conditions {
 		switch c.Type {

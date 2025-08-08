@@ -2,17 +2,21 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"strconv"
 	"time"
 
 	"errors"
 
 	batchv1 "k8s.io/api/batch/v1"
+	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -22,14 +26,20 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	finv1 "github.com/cybozu-go/fin/api/v1"
+	"github.com/cybozu-go/fin/internal/infrastructure/nlv"
+	rvol "github.com/cybozu-go/fin/internal/infrastructure/restore"
 )
 
 const (
 	FinRestoreFinalizerName = "finrestore.fin.cybozu.io/finalizer"
 
+	// labels
+	labelComponentRestoreJob = "restore-job"
+
 	// annotations
 	annotationFinRestoreName      = "fin.cybozu.io/finrestore-name"
 	annotationFinRestoreNamespace = "fin.cybozu.io/finrestore-namespace"
+	annotationRestoredBy          = "fin.cybozu.io/restored-by"
 )
 
 // FinRestoreReconciler reconciles a FinRestore object
@@ -59,6 +69,20 @@ func NewFinRestoreReconciler(
 
 func restoreJobName(restore *finv1.FinRestore) string {
 	return "fin-restore-" + string(restore.GetUID())
+}
+
+func restorePVCName(restore *finv1.FinRestore) string {
+	if restore.Spec.PVC != "" {
+		return restore.Spec.PVC
+	}
+	return restore.Name
+}
+
+func restorePVCNamespace(restore *finv1.FinRestore) string {
+	if restore.Spec.PVCNamespace != "" {
+		return restore.Spec.PVCNamespace
+	}
+	return restore.Namespace
 }
 
 //+kubebuilder:rbac:groups=fin.cybozu.io,resources=finrestores,verbs=get;list;watch;create;update;patch;delete
@@ -103,8 +127,10 @@ func (r *FinRestoreReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	}
 }
 
-func (r *FinRestoreReconciler) reconcileCreateOrUpdate(ctx context.Context,
-	restore *finv1.FinRestore) (ctrl.Result, error) {
+func (r *FinRestoreReconciler) reconcileCreateOrUpdate(
+	ctx context.Context,
+	restore *finv1.FinRestore,
+) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
 	if restore.IsReady() {
@@ -131,16 +157,38 @@ func (r *FinRestoreReconciler) reconcileCreateOrUpdate(ctx context.Context,
 		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 	}
 
-	if err := r.createOrUpdateRestorePVC(ctx, restore, &backup); err != nil {
+	src, err := r.getRestorePVCSource(&backup)
+	if err != nil {
+		logger.Error(err, "failed to get restore PVC source from backup",
+			"backup", backup.Name, "namespace", backup.Namespace)
+		return ctrl.Result{}, err
+	}
+	if err := r.createOrUpdateRestorePVC(ctx, restore, &backup, src); err != nil {
 		logger.Error(err, "failed to create restore PV")
 	}
 
-	if err := r.createOrUpdateRestoreJobPV(ctx, restore); err != nil {
+	var restorePVC corev1.PersistentVolumeClaim
+	if err := r.Get(ctx, client.ObjectKey{
+		Namespace: restorePVCNamespace(restore),
+		Name:      restorePVCName(restore),
+	}, &restorePVC); err != nil {
+		logger.Error(err, "failed to get restore PVC")
+		return ctrl.Result{}, err
+	}
+	var restorePV corev1.PersistentVolume
+	if err := r.Get(ctx, client.ObjectKey{
+		Name: restorePVC.Spec.VolumeName,
+	}, &restorePV); err != nil {
+		logger.Error(err, "failed to get restore PV")
+		return ctrl.Result{}, err
+	}
+
+	if err := r.createOrUpdateRestoreJobPV(ctx, restore, &restorePV); err != nil {
 		logger.Error(err, "failed to create restore job PV")
 		return ctrl.Result{}, err
 	}
 
-	if err := r.createOrUpdateRestoreJobPVC(ctx, restore); err != nil {
+	if err := r.createOrUpdateRestoreJobPVC(ctx, restore, &restorePVC); err != nil {
 		logger.Error(err, "failed to create restore job PVC")
 		return ctrl.Result{}, err
 	}
@@ -185,20 +233,228 @@ func (r *FinRestoreReconciler) createOrUpdateRestoreJob(
 	ctx context.Context, restore *finv1.FinRestore, backup *finv1.FinBackup,
 	rawImageChunkSize *resource.Quantity,
 ) error {
-	return errors.New("not implemented")
+	var job batchv1.Job
+	job.SetName(restoreJobName(restore))
+	job.SetNamespace(r.cephClusterNamespace)
+	_, err := ctrl.CreateOrUpdate(ctx, r.Client, &job, func() error {
+		labels := job.GetLabels()
+		if labels == nil {
+			labels = map[string]string{}
+		}
+		labels["app.kubernetes.io/name"] = labelAppNameValue
+		labels["app.kubernetes.io/component"] = labelComponentRestoreJob
+		job.SetLabels(labels)
+
+		annotations := job.GetAnnotations()
+		if annotations == nil {
+			annotations = map[string]string{}
+		}
+		annotations[annotationFinRestoreName] = restore.GetName()
+		annotations[annotationFinRestoreNamespace] = restore.GetNamespace()
+		job.SetAnnotations(annotations)
+
+		job.Spec.BackoffLimit = ptr.To(int32(maxJobBackoffLimit))
+
+		job.Spec.Template.Spec.NodeName = backup.Spec.Node
+
+		job.Spec.Template.Spec.SecurityContext = &corev1.PodSecurityContext{
+			RunAsUser:  ptr.To(int64(0)),
+			RunAsGroup: ptr.To(int64(0)),
+		}
+
+		job.Spec.Template.Spec.RestartPolicy = corev1.RestartPolicyOnFailure
+
+		job.Spec.Template.Spec.Containers = []corev1.Container{
+			{
+				Name:    "restore",
+				Command: []string{"/manager"},
+				Args:    []string{"restore"},
+				Env: []corev1.EnvVar{
+					{
+						Name:  "ACTION_UID",
+						Value: string(restore.GetUID()),
+					},
+					{
+						Name:  "TARGET_SNAPSHOT_ID",
+						Value: strconv.Itoa(*backup.Status.SnapID),
+					},
+					{
+						Name:  "BACKUP_TARGET_PVC_NAME",
+						Value: backup.Spec.PVC,
+					},
+					{
+						Name:  "BACKUP_TARGET_PVC_NAMESPACE",
+						Value: backup.Spec.PVCNamespace,
+					},
+					{
+						Name:  "RAW_IMAGE_CHUNK_SIZE",
+						Value: strconv.FormatInt(rawImageChunkSize.Value(), 10),
+					},
+				},
+				Image:           r.podImage,
+				ImagePullPolicy: corev1.PullIfNotPresent,
+				VolumeMounts: []corev1.VolumeMount{
+					{
+						MountPath: nlv.VolumePath,
+						Name:      "fin-volume",
+					},
+				},
+				VolumeDevices: []corev1.VolumeDevice{
+					{
+						DevicePath: rvol.VolumePath,
+						Name:       "restore-job-volume",
+					},
+				},
+			},
+		}
+
+		job.Spec.Template.Spec.Volumes = []corev1.Volume{
+			{
+				Name: "fin-volume",
+				VolumeSource: corev1.VolumeSource{
+					PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+						ClaimName: finVolumePVCName(backup),
+					},
+				},
+			},
+			{
+				Name: "restore-job-volume",
+				VolumeSource: corev1.VolumeSource{
+					PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+						ClaimName: restorePVCName(restore),
+					},
+				},
+			},
+		}
+
+		return nil
+	})
+	return err
 }
 
-func (r *FinRestoreReconciler) createOrUpdateRestorePVC(ctx context.Context, restore *finv1.FinRestore,
-	backup *finv1.FinBackup) error {
-	return errors.New("not implemented")
+func (r *FinRestoreReconciler) getRestorePVCSource(backup *finv1.FinBackup) (*corev1.PersistentVolumeClaim, error) {
+	var src corev1.PersistentVolumeClaim
+	if err := json.Unmarshal([]byte(backup.Status.PVCManifest), &src); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal pvc stored in FinBackup %s/%s: %w",
+			backup.GetNamespace(), backup.GetName(), err)
+	}
+	return &src, nil
 }
 
-func (r *FinRestoreReconciler) createOrUpdateRestoreJobPV(ctx context.Context, restore *finv1.FinRestore) error {
-	return errors.New("not implemented")
+func (r *FinRestoreReconciler) createOrUpdateRestorePVC(
+	ctx context.Context,
+	restore *finv1.FinRestore,
+	backup *finv1.FinBackup,
+	src *corev1.PersistentVolumeClaim,
+) error {
+	var pvc corev1.PersistentVolumeClaim
+	name := restorePVCName(restore)
+	namespace := restorePVCNamespace(restore)
+	pvc.SetName(name)
+	pvc.SetNamespace(namespace)
+	_, err := ctrl.CreateOrUpdate(ctx, r.Client, &pvc, func() error {
+		pvc = *src.DeepCopy()
+		// We need to reset name and namespace to create
+		// the same resource as src besides these fields.
+		// In addition, we should clear Spec.{DataSource,DataSourceRef}
+		// since the restore volume's source is the backup data.
+		pvc.SetName(name)
+		pvc.SetNamespace(namespace)
+		pvc.Spec.DataSource = nil
+		pvc.Spec.DataSourceRef = nil
+		if pvc.Annotations == nil {
+			pvc.Annotations = map[string]string{}
+		}
+		restoredBy := string(restore.GetUID())
+		if pvc.CreationTimestamp.IsZero() {
+			pvc.Annotations[annotationRestoredBy] = restoredBy
+		} else if pvc.Annotations[annotationRestoredBy] != restoredBy {
+			return fmt.Errorf("failed to manage restore pvc due to uid mismatch: %s/%s",
+				namespace, name)
+		}
+
+		pvc.Spec.Resources.Requests.Storage().Set(*backup.Status.SnapSize)
+
+		return nil
+	})
+	return err
 }
 
-func (r *FinRestoreReconciler) createOrUpdateRestoreJobPVC(ctx context.Context, restore *finv1.FinRestore) error {
-	return errors.New("not implemented")
+func (r *FinRestoreReconciler) createOrUpdateRestoreJobPV(
+	ctx context.Context,
+	restore *finv1.FinRestore,
+	restorePV *corev1.PersistentVolume,
+) error {
+	var pv corev1.PersistentVolume
+	pv.SetName(restoreJobName(restore))
+	_, err := ctrl.CreateOrUpdate(ctx, r.Client, &pv, func() error {
+		labels := pv.GetLabels()
+		if labels == nil {
+			labels = map[string]string{}
+		}
+		labels["app.kubernetes.io/name"] = labelAppNameValue
+		labels["app.kubernetes.io/component"] = labelComponentRestoreJob
+		pv.SetLabels(labels)
+
+		pv.Spec.AccessModes = []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce}
+		pv.Spec.Capacity = restorePV.Spec.Capacity
+		pv.Spec.PersistentVolumeReclaimPolicy = corev1.PersistentVolumeReclaimRetain
+		pv.Spec.StorageClassName = ""
+
+		volumeMode := corev1.PersistentVolumeBlock
+		pv.Spec.VolumeMode = &volumeMode
+
+		if pv.Spec.CSI == nil {
+			pv.Spec.CSI = &corev1.CSIPersistentVolumeSource{}
+		}
+		pv.Spec.CSI.Driver = restorePV.Spec.CSI.Driver
+		pv.Spec.CSI.ControllerExpandSecretRef = restorePV.Spec.CSI.ControllerExpandSecretRef
+		pv.Spec.CSI.NodeStageSecretRef = restorePV.Spec.CSI.NodeStageSecretRef
+		pv.Spec.CSI.VolumeHandle = restorePV.Spec.CSI.VolumeAttributes["imageName"]
+
+		if pv.Spec.CSI.VolumeAttributes == nil {
+			pv.Spec.CSI.VolumeAttributes = map[string]string{}
+		}
+		pv.Spec.CSI.VolumeAttributes["clusterID"] = restorePV.Spec.CSI.VolumeAttributes["clusterID"]
+		pv.Spec.CSI.VolumeAttributes["imageFeatures"] = restorePV.Spec.CSI.VolumeAttributes["imageFeatures"]
+		pv.Spec.CSI.VolumeAttributes["imageFormat"] = restorePV.Spec.CSI.VolumeAttributes["imageFormat"]
+		pv.Spec.CSI.VolumeAttributes["pool"] = restorePV.Spec.CSI.VolumeAttributes["pool"]
+		pv.Spec.CSI.VolumeAttributes["staticVolume"] = "true"
+
+		return nil
+	})
+	return err
+}
+
+func (r *FinRestoreReconciler) createOrUpdateRestoreJobPVC(
+	ctx context.Context,
+	restore *finv1.FinRestore,
+	restorePVC *corev1.PersistentVolumeClaim,
+) error {
+	var pvc corev1.PersistentVolumeClaim
+	pvc.SetName(restoreJobName(restore))
+	pvc.SetNamespace(r.cephClusterNamespace)
+	_, err := ctrl.CreateOrUpdate(ctx, r.Client, &pvc, func() error {
+		labels := pvc.GetLabels()
+		if labels == nil {
+			labels = map[string]string{}
+		}
+		labels["app.kubernetes.io/name"] = labelAppNameValue
+		labels["app.kubernetes.io/component"] = labelComponentRestoreJob
+		pvc.SetLabels(labels)
+
+		storageClassName := ""
+		pvc.Spec.StorageClassName = &storageClassName
+		pvc.Spec.AccessModes = []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce}
+		pvc.Spec.Resources = restorePVC.Spec.Resources
+		pvc.Spec.VolumeName = restoreJobName(restore)
+
+		volumeMode := corev1.PersistentVolumeBlock
+		pvc.Spec.VolumeMode = &volumeMode
+
+		return nil
+	})
+	return err
 }
 
 func (r *FinRestoreReconciler) reconcileDelete(ctx context.Context, restore *finv1.FinRestore) (ctrl.Result, error) {
