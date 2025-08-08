@@ -630,6 +630,45 @@ func TestApplyDiffToBlockDevice_success_MissingFromSnap(t *testing.T) {
 	compareReaders(t, file, io.LimitReader(&zeroReader{}, int64(getBlockDeviceSize(t, file)-30)))
 }
 
+func TestApplyDiffToBlockDevice_success_AlignedOffset(t *testing.T) {
+	blockDevicePath := getBlockDevicePathForTest(t)
+	file := openFile(t, blockDevicePath)
+	blockDeviceSectorSize := getBlockDeviceSectorSize(t, file)
+
+	zerooutWholeBlockDevice(t, blockDevicePath)
+	file = openFileWriteOnly(t, blockDevicePath)
+	_, err := io.Copy(file, bytes.NewReader(bytes.Repeat([]byte{0xff}, blockDeviceSectorSize*3)))
+	require.NoError(t, err)
+
+	reader, err := diffgenerator.Run(
+		diffgenerator.WithToSnapName("toSnap"),
+		diffgenerator.WithImageSize(30),
+		diffgenerator.WithRecords([]*diffgenerator.DataRecord{
+			diffgenerator.NewZeroDataRecord(uint64(blockDeviceSectorSize), uint64(blockDeviceSectorSize)),
+		}),
+	)
+	require.NoError(t, err)
+
+	err = applyDiffToBlockDevice(blockDevicePath, reader, "", "toSnap")
+	assert.NoError(t, err)
+
+	file = openFile(t, blockDevicePath)
+	head := make([]byte, blockDeviceSectorSize)
+	_, err = io.ReadFull(file, head)
+	require.NoError(t, err)
+	assert.Equal(t, bytes.Repeat([]byte{0xff}, blockDeviceSectorSize), head)
+
+	_, err = io.ReadFull(file, head)
+	require.NoError(t, err)
+	assert.Equal(t, bytes.Repeat([]byte{0}, blockDeviceSectorSize), head)
+
+	_, err = io.ReadFull(file, head)
+	require.NoError(t, err)
+	assert.Equal(t, bytes.Repeat([]byte{0xff}, blockDeviceSectorSize), head)
+
+	compareReaders(t, file, io.LimitReader(&zeroReader{}, int64(getBlockDeviceSize(t, file)-3*blockDeviceSectorSize)))
+}
+
 func getRawImagePathForTest(t *testing.T) string {
 	t.Helper()
 	return filepath.Join(t.TempDir(), "raw.img")
@@ -647,6 +686,14 @@ func getBlockDevicePathForTest(t *testing.T) string {
 func getBlockDeviceSize(t *testing.T, file *os.File) int {
 	t.Helper()
 	n, err := unix.IoctlGetInt(int(file.Fd()), unix.BLKGETSIZE64)
+	require.NoError(t, err)
+
+	return n
+}
+
+func getBlockDeviceSectorSize(t *testing.T, file *os.File) int {
+	t.Helper()
+	n, err := unix.IoctlGetInt(int(file.Fd()), unix.BLKSSZGET)
 	require.NoError(t, err)
 
 	return n
