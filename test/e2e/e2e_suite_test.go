@@ -22,3 +22,8 @@ func TestE2E(t *testing.T) {
 	}
 	RunSpecs(t, "e2e suite")
 }
+
+var _ = Describe("Fin", func() {
+	Context("wait environment", waitEnvironment)
+	Context("backup", backupTestSuite)
+})
