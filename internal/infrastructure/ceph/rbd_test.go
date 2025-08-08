@@ -219,6 +219,42 @@ func TestApplyDiffToRawImage_success_ExistentRawImage(t *testing.T) {
 	)
 }
 
+func TestApplyDiffToRawImage_success_EmptyDataRecords(t *testing.T) {
+	// Description:
+	// Ensure that the application process to a raw image completes successfully even when there are no Data Records
+	//
+	// Arrange:
+	// Incremental data file exists with no Data Records
+	//
+	// Act:
+	// Execute the incremental data application process to a raw image
+	//
+	// Assert:
+	// - the process completes successfully
+	// - raw.img is created with the file expansion unit size
+
+	// Arrange
+	reader, err := diffgenerator.Run(
+		diffgenerator.WithFromSnapName("fromSnap"),
+		diffgenerator.WithToSnapName("toSnap"),
+		diffgenerator.WithImageSize(30),
+	)
+	require.NoError(t, err)
+
+	expansionUnitSize := 7
+	rawImageFilePath := getRawImagePathForTest(t)
+
+	// Act
+	err = applyDiffToRawImage(rawImageFilePath, reader, "fromSnap", "toSnap", uint64(expansionUnitSize))
+
+	// Assert
+	assert.NoError(t, err)
+
+	fileInfo, err := os.Stat(rawImageFilePath)
+	require.NoError(t, err)
+	assert.Equal(t, int64(expansionUnitSize), fileInfo.Size())
+}
+
 func TestApplyDiffToRawImage_error_InvalidHeader(t *testing.T) {
 	// Description:
 	// Check the header of the incremental data file
