@@ -113,6 +113,112 @@ func TestZeroFill_success(t *testing.T) {
 	}
 }
 
+func TestApplyDiffToRawImage_success_MissingRawImage(t *testing.T) {
+	// Description:
+	// Success case of diff application to raw image when the raw image file does not exist
+	//
+	// Arrange:
+	// - raw.img does not exist
+	// - Incremental data file exists containing UPDATED DATA and ZERO DATA, but no FROM SNAP
+	//
+	// Act:
+	// Call the incremental data file application process with target snapshot name set to empty
+	//
+	// Assert:
+	// All of the following conditions are met:
+	// - Process completes successfully
+	// - raw.img is newly created with file expansion unit size
+	// - raw.img is overwritten for length bytes from offset according to UPDATED DATA
+	// - raw.img is overwritten for length bytes from offset with 0 according to ZERO DATA
+	// - Areas not included in either UPDATED DATA or ZERO DATA remain unchanged
+	//
+
+	// Arrange
+	reader, err := diffgenerator.Run(
+		diffgenerator.WithToSnapName("toSnap"),
+		diffgenerator.WithImageSize(30),
+		diffgenerator.WithRecords([]*diffgenerator.DataRecord{
+			diffgenerator.NewUpdatedDataRecord(0, 10, []byte("0123456789")),
+			diffgenerator.NewZeroDataRecord(10, 20),
+		}),
+	)
+	require.NoError(t, err)
+
+	rawImageFilePath := getRawImagePathForTest(t)
+
+	// Act
+	err = applyDiffToRawImage(rawImageFilePath, reader, "", "toSnap", 7)
+
+	// Assert
+	assert.NoError(t, err)
+
+	fileInfo, err := os.Stat(rawImageFilePath)
+	require.NoError(t, err)
+	assert.Equal(t, int64(35), fileInfo.Size())
+
+	got, err := os.ReadFile(rawImageFilePath)
+	require.NoError(t, err)
+	assert.Equal(
+		t,
+		// UPDATED DATA ("0123456789") + ZERO DATA (20 bytes) + Filler of expansion unit (5 bytes)
+		[]byte("0123456789\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"+
+			"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"),
+		got,
+	)
+}
+
+func TestApplyDiffToRawImage_success_ExistentRawImage(t *testing.T) {
+	// Description:
+	// Success case of diff application to raw image when the raw image file exists
+	//
+	// Arrange:
+	// - raw.img exists
+	// - Incremental data file exists containing UPDATED DATA, ZERO DATA, and FROM SNAP
+	//
+	// Act:
+	// Call the incremental data file application process
+	// with target snapshot name matching the FROM SNAP in the incremental data file
+	//
+	// Assert:
+	// All of the following conditions are met:
+	// - Process completes successfully
+	// - raw.img is overwritten for length bytes from offset according to UPDATED DATA
+	// - raw.img is overwritten for length bytes from offset with 0 according to ZERO DATA
+	// - Areas not included in either UPDATED DATA or ZERO DATA remain unchanged
+
+	// Arrange
+	reader, err := diffgenerator.Run(
+		diffgenerator.WithFromSnapName("fromSnap"),
+		diffgenerator.WithToSnapName("toSnap"),
+		diffgenerator.WithImageSize(30),
+		diffgenerator.WithRecords([]*diffgenerator.DataRecord{
+			diffgenerator.NewUpdatedDataRecord(0, 10, []byte("0123456789")),
+			diffgenerator.NewZeroDataRecord(10, 20),
+		}),
+	)
+	require.NoError(t, err)
+
+	rawImageFilePath := getRawImagePathForTest(t)
+	err = os.WriteFile(rawImageFilePath, bytes.Repeat([]byte{0xff}, 35), 0644)
+	require.NoError(t, err)
+
+	// Act
+	err = applyDiffToRawImage(rawImageFilePath, reader, "fromSnap", "toSnap", 7)
+
+	// Assert
+	assert.NoError(t, err)
+
+	got, err := os.ReadFile(rawImageFilePath)
+	require.NoError(t, err)
+	assert.Equal(
+		t,
+		// UPDATED DATA ("0123456789") + ZERO DATA (20 bytes) + old 0xff data (5 bytes)
+		[]byte("0123456789\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"+
+			"\x00\x00\x00\x00\x00\x00\x00\x00\x00\xff\xff\xff\xff\xff"),
+		got,
+	)
+}
+
 func TestApplyDiffToRawImage_error_InvalidHeader(t *testing.T) {
 	// Description:
 	// Check the header of the incremental data file
