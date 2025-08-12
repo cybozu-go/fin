@@ -20,5 +20,5 @@ type Backup struct {
 	TargetPVCName             string
 	TargetPVCNamespace        string
 	TargetPVCUID              string
-	MaxPartSize               int
+	MaxPartSize               uint64
 }

@@ -13,6 +13,6 @@ type Restore struct {
 	RetryInterval       time.Duration
 	ActionUID           string
 	TargetSnapshotID    int
-	RawImageChunkSize   int64
+	RawImageChunkSize   uint64
 	TargetPVCUID        string
 }

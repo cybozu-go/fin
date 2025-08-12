@@ -63,7 +63,7 @@ type FinBackupReconciler struct {
 	podImage                string
 	maxPartSize             *resource.Quantity
 	snapRepo                model.RBDSnapshotRepository
-	rawImgExpansionUnitSize int
+	rawImgExpansionUnitSize uint64
 }
 
 func NewFinBackupReconciler(
@@ -73,7 +73,7 @@ func NewFinBackupReconciler(
 	podImage string,
 	maxPartSize *resource.Quantity,
 	snapRepo model.RBDSnapshotRepository,
-	rawImgExpansionUnitSize int,
+	rawImgExpansionUnitSize uint64,
 ) *FinBackupReconciler {
 	return &FinBackupReconciler{
 		Client:                  client,
@@ -632,7 +632,7 @@ func (r *FinBackupReconciler) createOrUpdateBackupJob(
 		if r.rawImgExpansionUnitSize != 0 {
 			job.Spec.Template.Spec.Containers[0].Env = append(job.Spec.Template.Spec.Containers[0].Env, corev1.EnvVar{
 				Name:  "FIN_RAW_IMG_EXPANSION_UNIT_SIZE",
-				Value: strconv.Itoa(r.rawImgExpansionUnitSize),
+				Value: strconv.FormatUint(r.rawImgExpansionUnitSize, 10),
 			})
 		}
 

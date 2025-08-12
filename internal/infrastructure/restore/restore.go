@@ -49,7 +49,7 @@ func (r *RestoreVolume) ApplyDiff(diffPath string) error {
 	return errors.New("not implemented")
 }
 
-func (r *RestoreVolume) CopyChunk(rawPath string, index int, chunkSize int64) error {
+func (r *RestoreVolume) CopyChunk(rawPath string, index int, chunkSize uint64) error {
 	rawFile, err := os.Open(rawPath)
 	if err != nil {
 		return fmt.Errorf("failed to open `%s`: %w", rawPath, err)
@@ -62,13 +62,13 @@ func (r *RestoreVolume) CopyChunk(rawPath string, index int, chunkSize int64) er
 	}
 	defer func() { _ = resVol.Close() }()
 
-	if _, err := rawFile.Seek(int64(index)*chunkSize, io.SeekStart); err != nil {
+	if _, err := rawFile.Seek(int64(index)*int64(chunkSize), io.SeekStart); err != nil {
 		return fmt.Errorf("failed to seek `%s` to %d: %w",
-			rawPath, int64(index)*chunkSize, err)
+			rawPath, int64(index)*int64(chunkSize), err)
 	}
-	if _, err = resVol.Seek(int64(index)*chunkSize, io.SeekStart); err != nil {
+	if _, err = resVol.Seek(int64(index)*int64(chunkSize), io.SeekStart); err != nil {
 		return fmt.Errorf("failed to seek `%s` to %d: %w",
-			r.GetPath(), int64(index)*chunkSize, err)
+			r.GetPath(), int64(index)*int64(chunkSize), err)
 	}
 
 	buf := make([]byte, chunkSize)

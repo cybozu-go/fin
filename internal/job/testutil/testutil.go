@@ -21,7 +21,7 @@ const SnapshotTimeFormat = "Mon Jan  2 15:04:05 2006"
 
 // NewBackupInput creates a BackupInput for testing using a KubernetesRepository and a fake.VolumeInfo.
 func NewBackupInput(k8sRepo model.KubernetesRepository, volume *fake.VolumeInfo,
-	targetSnapID int, sourceSnapID *int, maxPartSize int) *input.Backup {
+	targetSnapID int, sourceSnapID *int, maxPartSize uint64) *input.Backup {
 	pvc, err := k8sRepo.GetPVC(volume.PVCName, volume.Namespace)
 	if err != nil {
 		panic(fmt.Sprintf("failed to get PVC: %v", err))
@@ -46,12 +46,12 @@ func NewBackupInput(k8sRepo model.KubernetesRepository, volume *fake.VolumeInfo,
 }
 
 func NewRestoreInputTemplate(bi *input.Backup,
-	rVol model.RestoreVolume, chunkSize, snapID int) *input.Restore {
+	rVol model.RestoreVolume, chunkSize uint64, snapID int) *input.Restore {
 	return &input.Restore{
 		Repo:                bi.Repo,
 		NodeLocalVolumeRepo: bi.NodeLocalVolumeRepo,
 		RestoreVol:          rVol,
-		RawImageChunkSize:   int64(chunkSize),
+		RawImageChunkSize:   chunkSize,
 		TargetSnapshotID:    snapID,
 		RetryInterval:       bi.RetryInterval,
 		ActionUID:           bi.ActionUID,
@@ -59,7 +59,7 @@ func NewRestoreInputTemplate(bi *input.Backup,
 	}
 }
 
-func FillRawImageWithRandomData(t *testing.T, rawImagePath string, size int) []byte {
+func FillRawImageWithRandomData(t *testing.T, rawImagePath string, size uint64) []byte {
 	t.Helper()
 	buf := make([]byte, size)
 	_, err := rand.Read(buf)
@@ -92,7 +92,7 @@ func CreateNLVAndFinRepoForTest(t *testing.T) (*nlv.NodeLocalVolumeRepository, m
 	return nlvRepo, repo, tempDir
 }
 
-func CreateRestoreFileForTest(t *testing.T, size int64) string {
+func CreateRestoreFileForTest(t *testing.T, size uint64) string {
 	t.Helper()
 
 	restoreFile, err := os.CreateTemp("", "fake-restore-*.img")
@@ -100,12 +100,12 @@ func CreateRestoreFileForTest(t *testing.T, size int64) string {
 	defer func() { _ = restoreFile.Close() }()
 	restorePath := restoreFile.Name()
 	t.Cleanup(func() { _ = os.Remove(restorePath) })
-	err = restoreFile.Truncate(size)
+	err = restoreFile.Truncate(int64(size))
 	require.NoError(t, err)
 	return restorePath
 }
 
-func CreateFakeRawImgFileForTest(t *testing.T, nlvRepo model.NodeLocalVolumeRepository, size int64) string {
+func CreateFakeRawImgFileForTest(t *testing.T, nlvRepo model.NodeLocalVolumeRepository, size uint64) string {
 	t.Helper()
 
 	buf := make([]byte, size)

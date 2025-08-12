@@ -12,5 +12,5 @@ type RestoreVolume interface {
 	ApplyDiff(diffFilePath string) error
 
 	// CopyChunk copy a chunk from raw.img to the restore volume
-	CopyChunk(rawPath string, index int, chunkSize int64) error
+	CopyChunk(rawPath string, index int, chunkSize uint64) error
 }

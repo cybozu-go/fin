@@ -75,9 +75,9 @@ func TestZeroFill_success(t *testing.T) {
 	// - 0 ~ firstBlockLength: 0xff
 	// - firstBlockLength ~ secondBlockLength: 0x00 (By Zerofill())
 	// - secondBlockLength ~ fileSize: 0xff
-	fileSize := 10 * 1024
-	firstBlockLength := 1*1024 + 1
-	secondBlockLength := 2*1024 + 1
+	fileSize := uint64(10 * 1024)
+	firstBlockLength := uint64(1*1024 + 1)
+	secondBlockLength := uint64(2*1024 + 1)
 
 	buf := make([]byte, fileSize)
 	for i := range buf {
@@ -86,7 +86,7 @@ func TestZeroFill_success(t *testing.T) {
 	_, err = f.Write(buf)
 	require.NoError(t, err)
 
-	err = zeroFill(f, int64(firstBlockLength), int64(secondBlockLength))
+	err = zeroFill(f, firstBlockLength, secondBlockLength)
 	assert.NoError(t, err)
 
 	_, err = f.Seek(0, io.SeekStart)
@@ -537,10 +537,10 @@ func openFile(t *testing.T, path string) *os.File {
 
 type resizedReader struct {
 	r io.Reader
-	n int64
+	n uint64
 }
 
-func newResizedReader(r io.Reader, size int64) *resizedReader {
+func newResizedReader(r io.Reader, size uint64) *resizedReader {
 	return &resizedReader{r: r, n: size}
 }
 
@@ -548,7 +548,7 @@ func (rr *resizedReader) Read(p []byte) (int, error) {
 	if rr.n <= 0 {
 		return 0, io.EOF
 	}
-	if int64(len(p)) > rr.n {
+	if uint64(len(p)) > rr.n {
 		p = p[0:rr.n]
 	}
 
@@ -560,7 +560,7 @@ func (rr *resizedReader) Read(p []byte) (int, error) {
 		err = nil
 		n = len(p)
 	}
-	rr.n -= int64(n)
+	rr.n -= uint64(n)
 	return n, err
 }
 
@@ -571,7 +571,7 @@ func TestResizedReader(t *testing.T) {
 	assert.Equal(t, []byte("aaaaa\x00\x00\x00\x00\x00"), got)
 }
 
-func openFileResized(t *testing.T, path string, size int64) io.Reader {
+func openFileResized(t *testing.T, path string, size uint64) io.Reader {
 	t.Helper()
 
 	file, err := os.Open(path)

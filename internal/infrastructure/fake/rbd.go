@@ -21,14 +21,14 @@ type RawImage struct {
 
 type ExportedDiff struct {
 	PoolName      string    `json:"poolName"`
-	ReadOffset    int       `json:"readOffset"`
-	ReadLength    int       `json:"readLength"`
+	ReadOffset    uint64    `json:"readOffset"`
+	ReadLength    uint64    `json:"readLength"`
 	FromSnap      *string   `json:"fromSnap"`
 	MidSnapPrefix string    `json:"midSnapPrefix"`
 	ImageName     string    `json:"imageName"`
 	SnapID        int       `json:"snapId"`
 	SnapName      string    `json:"snapName"`
-	SnapSize      int       `json:"snapSize"`
+	SnapSize      uint64    `json:"snapSize"`
 	SnapTimestamp time.Time `json:"snapTimestamp"`
 }
 
@@ -66,7 +66,7 @@ func NewRBDRepository(
 
 // CreateFakeSnapshot creates a fake snapshot for the specified pool and image.
 // It returns the snapshot ID of the created one.
-func (r *RBDRepository) CreateFakeSnapshot(name string, size int, timestamp time.Time) *model.RBDSnapshot {
+func (r *RBDRepository) CreateFakeSnapshot(name string, size uint64, timestamp time.Time) *model.RBDSnapshot {
 	r.lastSnapID++
 	snapshot := &model.RBDSnapshot{
 		ID:        r.lastSnapID,

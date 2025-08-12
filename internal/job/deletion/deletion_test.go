@@ -153,15 +153,15 @@ func TestDelete_RawAndDiffCase_Success(t *testing.T) {
 	actionUID := uuid.New().String()
 	targetRBDPoolName := "test-pool"
 	targetRBDImageName := "test-image"
-	partSize := 512
+	partSize := uint64(512)
 
 	previousSnapshotID := 1
 	previousSnapshotName := "test-snap1"
-	previousSnapshotSize := 1024
+	previousSnapshotSize := uint64(1024)
 
 	targetSnapshotID := 2
 	targetSnapshotName := "test-snap2"
-	targetSnapshotSize := 2048
+	targetSnapshotSize := uint64(2048)
 	targetPVCUID := uuid.New().String()
 
 	targetSnapshotTimestamp := time.Now().Round(0)
@@ -218,7 +218,7 @@ func TestDelete_RawAndDiffCase_Success(t *testing.T) {
 	for i := range partCount {
 		err := rbdRepo.ExportDiff(&model.ExportDiffInput{
 			PoolName:       targetRBDPoolName,
-			ReadOffset:     i * partSize,
+			ReadOffset:     uint64(i) * partSize,
 			ReadLength:     partSize,
 			FromSnap:       &previousSnapshotName,
 			MidSnapPrefix:  "test-prefix",
@@ -294,15 +294,15 @@ func TestDelete_Retry_RawAndDiffCase_Success(t *testing.T) {
 	actionUID := uuid.New().String()
 	targetRBDPoolName := "test-pool"
 	targetRBDImageName := "test-image"
-	partSize := 512
+	partSize := uint64(512)
 
 	previousSnapshotID := 1
 	previousSnapshotName := "test-snap1"
-	previousSnapshotSize := 1024
+	previousSnapshotSize := uint64(1024)
 
 	targetSnapshotID := 2
 	targetSnapshotName := "test-snap2"
-	targetSnapshotSize := 2048
+	targetSnapshotSize := uint64(2048)
 	targetPVCUID := uuid.New().String()
 
 	targetSnapshotTimestamp := time.Now().Round(0)
@@ -380,7 +380,7 @@ func TestDelete_Retry_RawAndDiffCase_Success(t *testing.T) {
 	for i := range partCount {
 		err := rbdRepo.ExportDiff(&model.ExportDiffInput{
 			PoolName:       targetRBDPoolName,
-			ReadOffset:     i * partSize,
+			ReadOffset:     uint64(i) * partSize,
 			ReadLength:     partSize,
 			FromSnap:       &previousSnapshotName,
 			MidSnapPrefix:  "test-prefix",
