@@ -237,15 +237,30 @@ func (fr *FinRepository) GetBackupMetadata() ([]byte, error) {
 	}
 	defer func() { _ = stmt.Close() }()
 
-	var data []byte
-	err = stmt.QueryRow().Scan(&data)
+	rows, err := stmt.Query()
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, model.ErrNotFound
+		return nil, fmt.Errorf("failed to query: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	if !rows.Next() {
+		err := rows.Err()
+		if err != nil {
+			return nil, fmt.Errorf("failed to find row: %w", err)
 		}
+		return nil, model.ErrNotFound
+	}
+
+	var data []byte
+	if err := rows.Scan(&data); err != nil {
 		return nil, fmt.Errorf("failed to scan: %w", err)
 	}
-	return data, nil
+
+	if rows.Next() {
+		return nil, fmt.Errorf("multiple backup metadata entries found")
+	}
+
+	return data, rows.Err()
 }
 
 func (fr *FinRepository) SetBackupMetadata(data []byte) error {
