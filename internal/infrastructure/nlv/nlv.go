@@ -183,6 +183,9 @@ func (r *NodeLocalVolumeRepository) RemoveDiffDirRecursively(snapshotID int) err
 
 	for _, entry := range entries {
 		if err := r.root.Remove(entry); err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				continue
+			}
 			return fmt.Errorf("failed to remove entry %s: %w", entry, err)
 		}
 	}
