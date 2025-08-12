@@ -25,5 +25,6 @@ func TestE2E(t *testing.T) {
 
 var _ = Describe("Fin", func() {
 	Context("wait environment", waitEnvironment)
-	Context("backup", backupTestSuite)
+	Context("backup", Ordered, backupTestSuite)
+	Context("restore", Ordered, restoreTestSuite)
 })

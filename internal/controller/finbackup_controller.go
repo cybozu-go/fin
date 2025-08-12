@@ -180,6 +180,7 @@ func (r *FinBackupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		}
 		backup.Status.CreatedAt = metav1.NewTime(snap.Timestamp.Time)
 		backup.Status.SnapID = &snap.ID
+		backup.Status.SnapSize = ptr.To(int64(snap.Size))
 
 		pvcManifest, err := json.Marshal(pvc)
 		if err != nil {

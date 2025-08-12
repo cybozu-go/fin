@@ -71,6 +71,14 @@ func restoreJobName(restore *finv1.FinRestore) string {
 	return "fin-restore-" + string(restore.GetUID())
 }
 
+func restoreJobPVCName(restore *finv1.FinRestore) string {
+	return restoreJobName(restore)
+}
+
+func restoreJobPVName(restore *finv1.FinRestore) string {
+	return restoreJobName(restore)
+}
+
 func restorePVCName(restore *finv1.FinRestore) string {
 	if restore.Spec.PVC != "" {
 		return restore.Spec.PVC
@@ -88,8 +96,8 @@ func restorePVCNamespace(restore *finv1.FinRestore) string {
 //+kubebuilder:rbac:groups=fin.cybozu.io,resources=finrestores,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=fin.cybozu.io,resources=finrestores/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=fin.cybozu.io,resources=finrestores/finalizers,verbs=update
-//+kubebuilder:rbac:groups=core,resources=persistentvolumeclaims,verbs=get
-//+kubebuilder:rbac:groups=core,resources=persistentvolumes,verbs=get
+//+kubebuilder:rbac:groups=core,resources=persistentvolumeclaims,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=core,resources=persistentvolumes,verbs=get;list;watch;create;update;patch;delete
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -164,7 +172,8 @@ func (r *FinRestoreReconciler) reconcileCreateOrUpdate(
 		return ctrl.Result{}, err
 	}
 	if err := r.createOrUpdateRestorePVC(ctx, restore, &backup, src); err != nil {
-		logger.Error(err, "failed to create restore PV")
+		logger.Error(err, "failed to create restore PVC")
+		return ctrl.Result{}, err
 	}
 
 	var restorePVC corev1.PersistentVolumeClaim
@@ -287,6 +296,10 @@ func (r *FinRestoreReconciler) createOrUpdateRestoreJob(
 						Value: backup.Spec.PVCNamespace,
 					},
 					{
+						Name:  "BACKUP_TARGET_PVC_UID",
+						Value: backup.GetLabels()[labelBackupTargetPVCUID],
+					},
+					{
 						Name:  "RAW_IMAGE_CHUNK_SIZE",
 						Value: strconv.FormatInt(rawImageChunkSize.Value(), 10),
 					},
@@ -321,7 +334,7 @@ func (r *FinRestoreReconciler) createOrUpdateRestoreJob(
 				Name: "restore-job-volume",
 				VolumeSource: corev1.VolumeSource{
 					PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-						ClaimName: restorePVCName(restore),
+						ClaimName: restoreJobPVCName(restore),
 					},
 				},
 			},
@@ -353,15 +366,11 @@ func (r *FinRestoreReconciler) createOrUpdateRestorePVC(
 	pvc.SetName(name)
 	pvc.SetNamespace(namespace)
 	_, err := ctrl.CreateOrUpdate(ctx, r.Client, &pvc, func() error {
-		pvc = *src.DeepCopy()
-		// We need to reset name and namespace to create
-		// the same resource as src besides these fields.
-		// In addition, we should clear Spec.{DataSource,DataSourceRef}
-		// since the restore volume's source is the backup data.
-		pvc.SetName(name)
-		pvc.SetNamespace(namespace)
-		pvc.Spec.DataSource = nil
-		pvc.Spec.DataSourceRef = nil
+		// Copy essential fields from the source PVC.
+		pvc.Spec.AccessModes = src.Spec.AccessModes
+		pvc.Spec.StorageClassName = src.Spec.StorageClassName
+		pvc.Spec.VolumeAttributesClassName = src.Spec.VolumeAttributesClassName
+		pvc.Spec.VolumeMode = src.Spec.VolumeMode
 		if pvc.Annotations == nil {
 			pvc.Annotations = map[string]string{}
 		}
@@ -373,7 +382,11 @@ func (r *FinRestoreReconciler) createOrUpdateRestorePVC(
 				namespace, name)
 		}
 
-		pvc.Spec.Resources.Requests.Storage().Set(*backup.Status.SnapSize)
+		if pvc.Spec.Resources.Requests == nil {
+			pvc.Spec.Resources.Requests = map[corev1.ResourceName]resource.Quantity{}
+		}
+		pvc.Spec.Resources.Requests[corev1.ResourceStorage] =
+			*resource.NewQuantity(*backup.Status.SnapSize, resource.BinarySI)
 
 		return nil
 	})
@@ -386,7 +399,7 @@ func (r *FinRestoreReconciler) createOrUpdateRestoreJobPV(
 	restorePV *corev1.PersistentVolume,
 ) error {
 	var pv corev1.PersistentVolume
-	pv.SetName(restoreJobName(restore))
+	pv.SetName(restoreJobPVName(restore))
 	_, err := ctrl.CreateOrUpdate(ctx, r.Client, &pv, func() error {
 		labels := pv.GetLabels()
 		if labels == nil {
@@ -432,7 +445,7 @@ func (r *FinRestoreReconciler) createOrUpdateRestoreJobPVC(
 	restorePVC *corev1.PersistentVolumeClaim,
 ) error {
 	var pvc corev1.PersistentVolumeClaim
-	pvc.SetName(restoreJobName(restore))
+	pvc.SetName(restoreJobPVCName(restore))
 	pvc.SetNamespace(r.cephClusterNamespace)
 	_, err := ctrl.CreateOrUpdate(ctx, r.Client, &pvc, func() error {
 		labels := pvc.GetLabels()
@@ -447,7 +460,7 @@ func (r *FinRestoreReconciler) createOrUpdateRestoreJobPVC(
 		pvc.Spec.StorageClassName = &storageClassName
 		pvc.Spec.AccessModes = []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce}
 		pvc.Spec.Resources = restorePVC.Spec.Resources
-		pvc.Spec.VolumeName = restoreJobName(restore)
+		pvc.Spec.VolumeName = restoreJobPVName(restore)
 
 		volumeMode := corev1.PersistentVolumeBlock
 		pvc.Spec.VolumeMode = &volumeMode

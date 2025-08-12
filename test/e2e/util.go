@@ -27,6 +27,7 @@ func init() {
 	}
 }
 
+//nolint:unparam
 func execWrapper(cmd string, input []byte, args ...string) ([]byte, []byte, error) {
 	var stdout, stderr bytes.Buffer
 	command := exec.Command(cmd, args...)
