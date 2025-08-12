@@ -83,6 +83,7 @@ test: manifests generate fmt vet envtest ## Run tests.
 	$(MAKE) prepare-test
 	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" \
 	 	TEST_BLOCK_DEV=$(TEST_BLOCK_DEV) \
+		FIN_RAW_IMG_EXPANSION_UNIT_SIZE=4096 \
 		go test $$(go list ./... | grep -v /e2e) -coverprofile cover.out
 	$(MAKE) clean-test
 
