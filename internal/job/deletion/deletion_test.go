@@ -251,7 +251,7 @@ func TestDelete_RawAndDiffCase_Success(t *testing.T) {
 	assert.Empty(t, updatedMetadata.Diff)
 
 	for i := range partCount {
-		assert.NoFileExistsf(t, nlvRepo.GetDiffPartPath(targetSnapshotID, i), "diff part-%d file should have been deleted", i)
+		assert.NoDirExistsf(t, nlvRepo.GetDiffPartPath(targetSnapshotID, i), "diff part-%d file should have been deleted", i)
 	}
 
 	// Assert
@@ -420,7 +420,7 @@ func TestDelete_Retry_RawAndDiffCase_Success(t *testing.T) {
 	assert.Empty(t, updatedMetadata.Diff)
 
 	for i := range partCount {
-		assert.NoFileExistsf(t, nlvRepo.GetDiffPartPath(targetSnapshotID, i), "diff part-%d file should have been deleted", i)
+		assert.NoDirExistsf(t, nlvRepo.GetDiffPartPath(targetSnapshotID, i), "diff part-%d file should have been deleted", i)
 	}
 
 	// Assert
