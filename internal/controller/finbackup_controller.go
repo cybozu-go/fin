@@ -501,7 +501,7 @@ func (r *FinBackupReconciler) createOrUpdateBackupJob(
 	var job batchv1.Job
 	job.SetName("fin-backup-" + string(backup.GetUID()))
 	job.SetNamespace(r.cephClusterNamespace)
-	if _, err := ctrl.CreateOrUpdate(ctx, r.Client, &job, func() error {
+	_, err := ctrl.CreateOrUpdate(ctx, r.Client, &job, func() error {
 		labels := job.GetLabels()
 		if labels == nil {
 			labels = map[string]string{}
@@ -683,11 +683,8 @@ func (r *FinBackupReconciler) createOrUpdateBackupJob(
 		}
 
 		return nil
-	}); err != nil {
-		return err
-	}
-
-	return nil
+	})
+	return err
 }
 
 //nolint:dupl
@@ -695,7 +692,7 @@ func (r *FinBackupReconciler) createOrUpdateDeletionJob(ctx context.Context, bac
 	var job batchv1.Job
 	job.SetName(deletionJobName(backup))
 	job.SetNamespace(r.cephClusterNamespace)
-	if _, err := ctrl.CreateOrUpdate(ctx, r.Client, &job, func() error {
+	_, err := ctrl.CreateOrUpdate(ctx, r.Client, &job, func() error {
 		labels := job.GetLabels()
 		if labels == nil {
 			labels = map[string]string{}
@@ -767,10 +764,8 @@ func (r *FinBackupReconciler) createOrUpdateDeletionJob(ctx context.Context, bac
 		}
 
 		return nil
-	}); err != nil {
-		return err
-	}
-	return nil
+	})
+	return err
 }
 
 //nolint:dupl
@@ -778,7 +773,7 @@ func (r *FinBackupReconciler) createOrUpdateCleanupJob(ctx context.Context, back
 	var job batchv1.Job
 	job.SetName(cleanupJobName(backup))
 	job.SetNamespace(r.cephClusterNamespace)
-	if _, err := ctrl.CreateOrUpdate(ctx, r.Client, &job, func() error {
+	_, err := ctrl.CreateOrUpdate(ctx, r.Client, &job, func() error {
 		labels := job.GetLabels()
 		if labels == nil {
 			labels = map[string]string{}
@@ -850,11 +845,8 @@ func (r *FinBackupReconciler) createOrUpdateCleanupJob(ctx context.Context, back
 		}
 
 		return nil
-	}); err != nil {
-		return err
-	}
-
-	return nil
+	})
+	return err
 }
 
 // SetupWithManager sets up the controller with the Manager.
