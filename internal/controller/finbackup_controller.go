@@ -741,7 +741,7 @@ func (r *FinBackupReconciler) createOrUpdateDeletionJob(ctx context.Context, bac
 					},
 					{
 						Name:  "BACKUP_TARGET_PVC_UID",
-						Value: labels[labelBackupTargetPVCUID],
+						Value: backup.GetLabels()[labelBackupTargetPVCUID],
 					},
 				},
 				Image:           r.podImage,
@@ -824,7 +824,7 @@ func (r *FinBackupReconciler) createOrUpdateCleanupJob(ctx context.Context, back
 					},
 					{
 						Name:  "BACKUP_TARGET_PVC_UID",
-						Value: labels[labelBackupTargetPVCUID],
+						Value: backup.GetLabels()[labelBackupTargetPVCUID],
 					},
 				},
 				Image:           r.podImage,
