@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"fmt"
+	"path/filepath"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -64,5 +65,51 @@ func backupTestSuite() {
 			"dd", fmt.Sprintf("if=/fin/%s/%s/raw.img", pvcNamespace, pvcName), "bs=1K", "count=1", "status=none")
 		Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
 		Expect(actualWrittenData).To(Equal(expectedWrittenData), "Data in raw.img does not match the expected data")
+	})
+
+	// CSATEST-1604
+	// Description:
+	//   Delete a full backup with no error.
+	//
+	// Arrange:
+	//   - An RBD PVC exists.
+	//   - The FinBackup is ready to use.
+	// Act:
+	//   Delete FinBackup, referring the PVC.
+	// Assert:
+	//   - Deleted the FinBackup resource.
+	//   - Deleted the raw.img file.
+	//   - Deleted the cleanup and deletion jobs.
+	//   - Deleted the snapshot reference in FinBackup.
+	It("should delete full backup", func() {
+		By("retrieving the necessary metadata of finbackup")
+		finbackupUID, stderr, err := kubectl("get", "finbackup", "-n", rookNamespace, "finbackup-test",
+			"-ojsonpath={.metadata.uid}")
+		Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
+		finbackupRBDImage, stderr, err := kubectl("get", "finbackup", "-n", rookNamespace, "finbackup-test",
+			`-ojsonpath={.metadata.annotations.fin\.cybozu\.io/backup-target-rbd-image}`)
+		Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
+
+		By("deleting the backup")
+		_, stderr, err = kubectl("delete", "finbackup", "-n", rookNamespace, "finbackup-test")
+		Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
+		_, stderr, err = kubectl("wait", "finbackup", "-n", rookNamespace, "finbackup-test", "--for=delete", "--timeout=3m")
+		Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
+
+		By("verifying the deletion of raw.img")
+		rawImgPath := filepath.Join("/fin", pvcNamespace, pvcName, "raw.img")
+		stdout, stderr, err := execWrapper(minikube, nil, "ssh", "--native-ssh=false", "--", "test", "!", "-e", rawImgPath)
+		Expect(err).NotTo(HaveOccurred(), "raw.img file should be deleted. stdout: %s, stderr: %s", stdout, stderr)
+
+		By("verifying the deletion of jobs")
+		stdout, stderr, err = kubectl("get", "job", "-n", rookNamespace, fmt.Sprintf("fin-cleanup-%s", finbackupUID))
+		Expect(err).To(HaveOccurred(), "Cleanup job should be deleted. stdout: %s, stderr: %s", stdout, stderr)
+		stdout, stderr, err = kubectl("get", "job", "-n", rookNamespace, fmt.Sprintf("fin-deletion-%s", finbackupUID))
+		Expect(err).To(HaveOccurred(), "Deletion job should be deleted. stdout: %s, stderr: %s", stdout, stderr)
+
+		By("verifying the deletion of snapshot reference in FinBackup")
+		stdout, stderr, err = kubectl("exec", "-n", rookNamespace, "deploy/rook-ceph-tools", "--",
+			"rbd", "info", fmt.Sprintf("%s/%s@fin-backup-%s", poolName, finbackupRBDImage, finbackupUID))
+		Expect(err).To(HaveOccurred(), "Snapshot should be deleted. stdout: %s, stderr: %s", stdout, stderr)
 	})
 }
