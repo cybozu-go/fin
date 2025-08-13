@@ -20,6 +20,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/utils/ptr"
 )
 
 type setupInput struct {
@@ -28,13 +29,13 @@ type setupInput struct {
 }
 
 type setupOutput struct {
-	fullBackupInput, incrementalBackupInput *input.Backup
-	k8sRepo                                 *fake.KubernetesRepository
-	finRepo                                 model.FinRepository
-	nlvRepo                                 model.NodeLocalVolumeRepository
-	rbdRepo                                 *fake.RBDRepository
-	fullSnapshot, incrementalSnapshot       *model.RBDSnapshot
-	targetPVName                            string
+	fullBackupInput, incrementalBackupInput, incrementalBackupInput2 *input.Backup
+	k8sRepo                                                          *fake.KubernetesRepository
+	finRepo                                                          model.FinRepository
+	nlvRepo                                                          model.NodeLocalVolumeRepository
+	rbdRepo                                                          *fake.RBDRepository
+	fullSnapshot, incrementalSnapshot                                *model.RBDSnapshot
+	targetPVName                                                     string
 }
 
 func setup(t *testing.T, input *setupInput) *setupOutput {
@@ -73,16 +74,28 @@ func setup(t *testing.T, input *setupInput) *setupOutput {
 	incrementalBackupInput.RBDRepo = rbdRepo
 	incrementalBackupInput.NodeLocalVolumeRepo = nlvRepo
 
+	// Take a second fake snapshot for second incremental backup
+	incrementalSnapshot2 := rbdRepo.CreateFakeSnapshot(utils.GetUniqueName("snap-"), incrementalSnapshotSize, time.Now())
+
+	// Create a second incremental backup input
+	incrementalBackupInput2 := testutil.NewBackupInput(
+		k8sRepo, volumeInfo, incrementalSnapshot2.ID, &incrementalSnapshot.ID, maxPartSize)
+	incrementalBackupInput2.Repo = finRepo
+	incrementalBackupInput2.KubernetesRepo = k8sRepo
+	incrementalBackupInput2.RBDRepo = rbdRepo
+	incrementalBackupInput2.NodeLocalVolumeRepo = nlvRepo
+
 	return &setupOutput{
-		fullBackupInput:        fullBackupInput,
-		incrementalBackupInput: incrementalBackupInput,
-		k8sRepo:                k8sRepo,
-		finRepo:                finRepo,
-		nlvRepo:                nlvRepo,
-		rbdRepo:                rbdRepo,
-		fullSnapshot:           fullSnapshot,
-		incrementalSnapshot:    incrementalSnapshot,
-		targetPVName:           volumeInfo.PVName,
+		fullBackupInput:         fullBackupInput,
+		incrementalBackupInput:  incrementalBackupInput,
+		incrementalBackupInput2: incrementalBackupInput2,
+		k8sRepo:                 k8sRepo,
+		finRepo:                 finRepo,
+		nlvRepo:                 nlvRepo,
+		rbdRepo:                 rbdRepo,
+		fullSnapshot:            fullSnapshot,
+		incrementalSnapshot:     incrementalSnapshot,
+		targetPVName:            volumeInfo.PVName,
 	}
 }
 
@@ -634,6 +647,82 @@ func Test_FullBackup_Error_DifferentPVCUID(t *testing.T) {
 
 	// Act
 	backup := NewBackup(cfg.fullBackupInput)
+	err = backup.Perform()
+
+	// Assert
+	assert.Error(t, err)
+}
+
+func Test_IncrementalBackup_Error_WrongSourceCandidateSnapshotID(t *testing.T) {
+	// CSATEST-1504
+	// Description:
+	//   Creation of an incremental backup fails when the source candidate
+	//   snapshot ID does not match with the environment variable.
+	//
+	// Arrange:
+	//   - Set up an incremental backup input.
+	//   - Create a record in backup_metadata table.
+	//   - Set a different snapshot ID to the source candidate snapshot ID.
+	//
+	// Act:
+	//   Run the backup process to create an incremental backup.
+	//
+	// Assert:
+	//   Check if the incremental backup creation fails with an error.
+
+	// Arrange
+	cfg := setup(t, &setupInput{})
+
+	// Create a full backup to create a record in backup_metadata table
+	fullBackup := NewBackup(cfg.fullBackupInput)
+	err := fullBackup.Perform()
+	require.NoError(t, err)
+
+	// Set a different snapshot ID to the source candidate snapshot ID.
+	// Use a clearly invalid/fake snapshot ID to ensure mismatch.
+	cfg.incrementalBackupInput.SourceCandidateSnapshotID = ptr.To(math.MaxInt)
+	metadata, err := job.GetBackupMetadata(cfg.finRepo)
+	require.NoError(t, err)
+	require.NotEqual(t, metadata.Raw.SnapID, *cfg.incrementalBackupInput.SourceCandidateSnapshotID)
+
+	// Act
+	backup := NewBackup(cfg.incrementalBackupInput)
+	err = backup.Perform()
+
+	// Assert
+	assert.Error(t, err)
+}
+
+func Test_IncrementalBackup_Error_NonEmptyDiff(t *testing.T) {
+	// CSATEST-1503
+	// Description:
+	//   Creation of an incremental backup fails when diff field is not empty
+	//   i.e., there is already an incremental backup.
+	//
+	// Arrange:
+	//   - Set up an incremental backup input.
+	//   - Create a record in backup_metadata table.
+	//   - Set a non-empty diff field in the backup metadata.
+	//
+	// Act:
+	//   Run the backup process to create an incremental backup.
+	//
+	// Assert:
+	//   Check if the incremental backup creation fails with an error.
+
+	// Arrange
+	cfg := setup(t, &setupInput{})
+
+	// Create a full backup to create a record in backup_metadata table
+	err := NewBackup(cfg.fullBackupInput).Perform()
+	require.NoError(t, err)
+
+	// Create an incremental backup to set a non-empty diff field in the backup metadata
+	err = NewBackup(cfg.incrementalBackupInput).Perform()
+	require.NoError(t, err)
+
+	// Act
+	backup := NewBackup(cfg.incrementalBackupInput2)
 	err = backup.Perform()
 
 	// Assert
