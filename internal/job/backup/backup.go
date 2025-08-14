@@ -32,7 +32,7 @@ type Backup struct {
 	targetPVCName             string
 	targetPVCNamespace        string
 	targetPVCUID              string
-	maxPartSize               int
+	maxPartSize               uint64
 }
 
 func NewBackup(in *input.Backup) *Backup {
@@ -244,7 +244,7 @@ func (b *Backup) loopExportDiff(
 	for i := privateData.NextStorePart; i < partCount; i++ {
 		if err := b.rbdRepo.ExportDiff(&model.ExportDiffInput{
 			PoolName:       b.targetRBDPool,
-			ReadOffset:     b.maxPartSize * i,
+			ReadOffset:     b.maxPartSize * uint64(i),
 			ReadLength:     b.maxPartSize,
 			FromSnap:       sourceSnapshotName,
 			MidSnapPrefix:  targetSnapshot.Name,
@@ -292,11 +292,11 @@ func (b *Backup) loopApplyDiff(privateData *backupPrivateData, targetSnapshot *m
 	for i := privateData.NextPatchPart; i < partCount; i++ {
 		sourceSnapshotName := ""
 		if i != 0 {
-			sourceSnapshotName = fmt.Sprintf("%s-offset-%d", targetSnapshot.Name, i*b.maxPartSize)
+			sourceSnapshotName = fmt.Sprintf("%s-offset-%d", targetSnapshot.Name, uint64(i)*b.maxPartSize)
 		}
 		targetSnapshotName := targetSnapshot.Name
 		if i != partCount-1 {
-			targetSnapshotName = fmt.Sprintf("%s-offset-%d", targetSnapshot.Name, (i+1)*b.maxPartSize)
+			targetSnapshotName = fmt.Sprintf("%s-offset-%d", targetSnapshot.Name, uint64(i+1)*b.maxPartSize)
 		}
 		if err := b.rbdRepo.ApplyDiffToRawImage(
 			b.nodeLocalVolumeRepo.GetRawImagePath(),

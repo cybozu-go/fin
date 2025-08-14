@@ -82,14 +82,14 @@ func (t *RBDTimeStamp) UnmarshalJSON(data []byte) error {
 type RBDSnapshot struct {
 	ID        int          `json:"id"`
 	Name      string       `json:"name"`
-	Size      int          `json:"size"`
+	Size      uint64       `json:"size"`
 	Timestamp RBDTimeStamp `json:"timestamp"`
 }
 
 type ExportDiffInput struct {
 	PoolName       string
-	ReadOffset     int
-	ReadLength     int
+	ReadOffset     uint64
+	ReadLength     uint64
 	FromSnap       *string
 	MidSnapPrefix  string
 	ImageName      string

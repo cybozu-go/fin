@@ -103,7 +103,7 @@ func backupJobMain() error {
 	if maxPartSizeStr == "" {
 		return fmt.Errorf("MAX_PART_SIZE environment variable is not set")
 	}
-	maxPartSize, err := strconv.Atoi(maxPartSizeStr)
+	maxPartSize, err := strconv.ParseUint(maxPartSizeStr, 10, 64)
 	if err != nil {
 		return fmt.Errorf("invalid MAX_PART_SIZE: %w", err)
 	}

@@ -40,7 +40,7 @@ func setup(t *testing.T, config *setupInput) *setupOutput {
 	k8sRepo, rbdRepo, volumeInfo := fake.NewStorage()
 	nlvRepo, finRepo, _ := testutil.CreateNLVAndFinRepoForTest(t)
 
-	rawImageChunkSize := 4096
+	rawImageChunkSize := uint64(4096)
 	targetSnapshotSize := rawImageChunkSize * 2
 
 	snapIDs := make([]int, 0)
@@ -69,7 +69,7 @@ func setup(t *testing.T, config *setupInput) *setupOutput {
 		require.NoError(t, err)
 
 		// Create the restore file
-		restorePath := testutil.CreateRestoreFileForTest(t, int64(targetSnapshotSize))
+		restorePath := testutil.CreateRestoreFileForTest(t, targetSnapshotSize)
 		rVol := fake.NewRestoreVolume(restorePath)
 
 		restoreInputs = append(restoreInputs, testutil.NewRestoreInputTemplate(
@@ -119,7 +119,7 @@ func TestRestore_FullBackup_Success(t *testing.T) {
 	k8sRepo, rbdRepo, volumeInfo := fake.NewStorage()
 	nlvRepo, finRepo, _ := testutil.CreateNLVAndFinRepoForTest(t)
 
-	rawImageChunkSize := 4096
+	rawImageChunkSize := uint64(4096)
 	targetSnapshotSize := rawImageChunkSize * 2
 	snap := rbdRepo.CreateFakeSnapshot(utils.GetUniqueName("snap-"), targetSnapshotSize, time.Now())
 	backupInput := testutil.NewBackupInput(k8sRepo, volumeInfo, snap.ID, nil, rawImageChunkSize)
@@ -138,7 +138,7 @@ func TestRestore_FullBackup_Success(t *testing.T) {
 	buf := testutil.FillRawImageWithRandomData(t, nlvRepo.GetRawImagePath(), targetSnapshotSize)
 
 	// Create the restore file
-	restorePath := testutil.CreateRestoreFileForTest(t, int64(targetSnapshotSize))
+	restorePath := testutil.CreateRestoreFileForTest(t, targetSnapshotSize)
 	rVol := fake.NewRestoreVolume(restorePath)
 
 	// Act
@@ -156,7 +156,7 @@ func TestRestore_FullBackup_Success(t *testing.T) {
 	require.NoError(t, err)
 	rn, err := restoreFile.Read(buf2)
 	require.NoError(t, err)
-	require.Equal(t, targetSnapshotSize, rn)
+	require.Equal(t, int(targetSnapshotSize), rn)
 	require.True(t, bytes.Equal(buf, buf2))
 
 	// Verify the contents of the metadata
@@ -190,7 +190,7 @@ func TestRestore_IncrementalBackup_Success(t *testing.T) {
 	k8sRepo, rbdRepo, volumeInfo := fake.NewStorage()
 	nlvRepo, finRepo, _ := testutil.CreateNLVAndFinRepoForTest(t)
 
-	rawImageChunkSize := 4096
+	rawImageChunkSize := uint64(4096)
 
 	fullSnapshotSize := rawImageChunkSize * 2
 	fullSnapshot := rbdRepo.CreateFakeSnapshot(utils.GetUniqueName("snap-"),
@@ -228,7 +228,7 @@ func TestRestore_IncrementalBackup_Success(t *testing.T) {
 	buf := testutil.FillRawImageWithRandomData(t, nlvRepo.GetRawImagePath(), fullSnapshotSize)
 
 	// Create the restore file
-	restorePath := testutil.CreateRestoreFileForTest(t, int64(incrementalSnapshotSize))
+	restorePath := testutil.CreateRestoreFileForTest(t, incrementalSnapshotSize)
 	rVol := fake.NewRestoreVolume(restorePath)
 
 	// Act
@@ -245,13 +245,13 @@ func TestRestore_IncrementalBackup_Success(t *testing.T) {
 	require.NoError(t, err)
 	rn, err := restoreFile.Read(buf2)
 	require.NoError(t, err)
-	require.Equal(t, incrementalSnapshotSize, rn)
+	require.Equal(t, int(incrementalSnapshotSize), rn)
 	require.True(t, bytes.Equal(buf, buf2[:fullSnapshotSize]))
 	zeroBuf := make([]byte, incrementalSnapshotSize-fullSnapshotSize)
 	require.True(t, bytes.Equal(buf2[fullSnapshotSize:], zeroBuf))
 
 	assert.Equal(t, 3, len(rVol.AppliedDiffs()))
-	assert.Equal(t, 0, rVol.AppliedDiffs()[0].ReadOffset)
+	assert.Equal(t, uint64(0), rVol.AppliedDiffs()[0].ReadOffset)
 	assert.Equal(t, fullBackupInput.MaxPartSize, rVol.AppliedDiffs()[0].ReadLength)
 	assert.Equal(t, fullBackupInput.MaxPartSize, rVol.AppliedDiffs()[1].ReadOffset)
 	assert.Equal(t, fullBackupInput.MaxPartSize, rVol.AppliedDiffs()[1].ReadLength)

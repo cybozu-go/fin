@@ -66,7 +66,7 @@ func restoreJobMain() error {
 	if rawImageChunkSizeStr == "" {
 		return fmt.Errorf("RAW_IMAGE_CHUNK_SIZE environment variable is not set")
 	}
-	rawImageChunkSize, err := strconv.ParseInt(rawImageChunkSizeStr, 10, 64)
+	rawImageChunkSize, err := strconv.ParseUint(rawImageChunkSizeStr, 10, 64)
 	if err != nil {
 		return fmt.Errorf("invalid RAW_IMAGE_CHUNK_SIZE: %w", err)
 	}

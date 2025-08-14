@@ -123,11 +123,11 @@ func (d *Deletion) applyAllDiffParts(raw, diff *job.BackupMetadataEntry) error {
 	for i := privateData.NextPatchPart; i < partCount; i++ {
 		sourceSnapshotName := raw.SnapName
 		if i != 0 {
-			sourceSnapshotName = fmt.Sprintf("%s-offset-%d", diff.SnapName, i*diff.PartSize)
+			sourceSnapshotName = fmt.Sprintf("%s-offset-%d", diff.SnapName, uint64(i)*diff.PartSize)
 		}
 		targetSnapshotName := diff.SnapName
 		if i != partCount-1 {
-			targetSnapshotName = fmt.Sprintf("%s-offset-%d", diff.SnapName, (i+1)*diff.PartSize)
+			targetSnapshotName = fmt.Sprintf("%s-offset-%d", diff.SnapName, uint64(i+1)*diff.PartSize)
 		}
 		diffPartPath := d.nodeLocalVolumeRepo.GetDiffPartPath(diff.SnapID, i)
 		if err := d.rbdRepo.ApplyDiffToRawImage(

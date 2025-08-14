@@ -160,7 +160,7 @@ func makeUpdatedDataChunkReader(offset, length uint64, data []byte) (io.Reader, 
 		)
 		return io.MultiReader(&buf, chacha8), nil
 	}
-	if len(data) != int(length) {
+	if uint64(len(data)) != length {
 		return nil, errors.New("data length does not match specified length")
 	}
 	buf.Write(data)

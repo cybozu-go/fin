@@ -24,8 +24,8 @@ import (
 )
 
 type setupInput struct {
-	fullSnapshotSize, incrementalSnapshotSize int
-	maxPartSize                               int
+	fullSnapshotSize, incrementalSnapshotSize uint64
+	maxPartSize                               uint64
 }
 
 type setupOutput struct {
@@ -39,12 +39,12 @@ type setupOutput struct {
 }
 
 func setup(t *testing.T, input *setupInput) *setupOutput {
-	maxPartSize := 512
+	maxPartSize := uint64(512)
 	if input.maxPartSize != 0 {
 		maxPartSize = input.maxPartSize
 	}
 
-	fullSnapshotSize := 900
+	fullSnapshotSize := uint64(900)
 	if input.fullSnapshotSize != 0 {
 		fullSnapshotSize = input.fullSnapshotSize
 	}
@@ -63,7 +63,7 @@ func setup(t *testing.T, input *setupInput) *setupOutput {
 	fullBackupInput.NodeLocalVolumeRepo = nlvRepo
 
 	// Take a fake snapshot for incremental backup
-	incrementalSnapshotSize := 1000
+	incrementalSnapshotSize := uint64(1000)
 	incrementalSnapshot := rbdRepo.CreateFakeSnapshot(utils.GetUniqueName("snap-"), incrementalSnapshotSize, time.Now())
 
 	// Create an incremental backup input
@@ -126,7 +126,7 @@ func TestFullBackup_Success(t *testing.T) {
 	rawImage, err := fake.ReadRawImage(cfg.nlvRepo.GetRawImagePath())
 	assert.NoError(t, err)
 	assert.Equal(t, 2, len(rawImage.AppliedDiffs))
-	assert.Equal(t, 0, rawImage.AppliedDiffs[0].ReadOffset)
+	assert.Equal(t, uint64(0), rawImage.AppliedDiffs[0].ReadOffset)
 	assert.Equal(t, cfg.fullBackupInput.MaxPartSize, rawImage.AppliedDiffs[0].ReadLength)
 	assert.Equal(t, cfg.fullBackupInput.MaxPartSize, rawImage.AppliedDiffs[1].ReadOffset)
 	assert.Equal(t, cfg.fullBackupInput.MaxPartSize, rawImage.AppliedDiffs[1].ReadLength)
@@ -309,7 +309,7 @@ func Test_FullBackup_Success_Resume(t *testing.T) {
 			fmt.Sprintf("nextStorePart=%d nextPatchPart=%d", tc.nextStorePart, tc.nextPatchPart),
 			func(t *testing.T) {
 				// Arrange
-				snapshotSize, maxPartSize := 1000, 400 // max part size will be 3 (= ceil(1000/400))
+				snapshotSize, maxPartSize := uint64(1000), uint64(400) // max part size will be 3 (= ceil(1000/400))
 				cfg := setup(t, &setupInput{
 					fullSnapshotSize:        snapshotSize,
 					incrementalSnapshotSize: snapshotSize,
@@ -322,7 +322,7 @@ func Test_FullBackup_Success_Resume(t *testing.T) {
 				for i := 0; i < tc.nextStorePart; i++ {
 					err := cfg.rbdRepo.ExportDiff(&model.ExportDiffInput{
 						PoolName:       cfg.fullBackupInput.TargetRBDPoolName,
-						ReadOffset:     cfg.fullBackupInput.MaxPartSize * i,
+						ReadOffset:     cfg.fullBackupInput.MaxPartSize * uint64(i),
 						ReadLength:     cfg.fullBackupInput.MaxPartSize,
 						FromSnap:       nil,
 						MidSnapPrefix:  cfg.fullSnapshot.Name,
@@ -367,7 +367,7 @@ func Test_FullBackup_Success_Resume(t *testing.T) {
 				assert.NoError(t, err)
 
 				assert.Equal(t, 3-tc.nextPatchPart, len(rawImage.AppliedDiffs))
-				off := tc.nextPatchPart * maxPartSize
+				off := uint64(tc.nextPatchPart) * maxPartSize
 				for _, diff := range rawImage.AppliedDiffs {
 					assert.Equal(t, cfg.fullBackupInput.TargetRBDPoolName, diff.PoolName)
 					assert.Nil(t, diff.FromSnap)
@@ -418,7 +418,7 @@ func Test_IncrementalBackup_Success_Resume(t *testing.T) {
 
 	// Arrange
 	nextStorePart := 1
-	snapshotSize, maxPartSize := 1000, 400 // max part size will be 3 (= ceil(1000/400))
+	snapshotSize, maxPartSize := uint64(1000), uint64(400) // max part size will be 3 (= ceil(1000/400))
 
 	cfg := setup(t, &setupInput{
 		fullSnapshotSize:        snapshotSize,
@@ -545,7 +545,7 @@ func Test_FullBackup_Success_DifferentNode(t *testing.T) {
 		assert.Equal(t, cfg.incrementalSnapshot.Size, diff.SnapSize)
 		assert.True(t, cfg.incrementalSnapshot.Timestamp.Equal(diff.SnapTimestamp))
 
-		assert.Equal(t, i*cfg.incrementalBackupInput.MaxPartSize, diff.ReadOffset)
+		assert.Equal(t, uint64(i)*cfg.incrementalBackupInput.MaxPartSize, diff.ReadOffset)
 		assert.Equal(t, cfg.incrementalBackupInput.MaxPartSize, diff.ReadLength)
 	}
 

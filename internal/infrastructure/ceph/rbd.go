@@ -61,8 +61,12 @@ func (r *RBDRepository) ListSnapshots(poolName, imageName string) ([]*model.RBDS
 }
 
 func (r *RBDRepository) ExportDiff(input *model.ExportDiffInput) error {
-	args := []string{"export-diff", "-p", input.PoolName, "--read-offset", strconv.Itoa(input.ReadOffset),
-		"--read-length", strconv.Itoa(input.ReadLength)}
+	args := []string{
+		"export-diff",
+		"-p", input.PoolName,
+		"--read-offset", strconv.FormatUint(input.ReadOffset, 10),
+		"--read-length", strconv.FormatUint(input.ReadLength, 10),
+	}
 	if input.FromSnap != nil {
 		args = append(args, "--from-snap", *input.FromSnap)
 	}
@@ -292,27 +296,27 @@ func zerooutBlockDevice(dstFile *os.File, offset, length uint64) error {
 			return fmt.Errorf("failed to discard block device: %w", err)
 		}
 		if offset != alignedHead {
-			if err := zeroFill(dstFile, int64(offset), int64(alignedHead-offset)); err != nil {
+			if err := zeroFill(dstFile, offset, alignedHead-offset); err != nil {
 				return fmt.Errorf("failed to zero fill block device: %w", err)
 			}
 		}
 		if alignedTail != offset+length {
-			if err := zeroFill(dstFile, int64(alignedTail), int64((offset+length)-alignedTail)); err != nil {
+			if err := zeroFill(dstFile, alignedTail, (offset+length)-alignedTail); err != nil {
 				return fmt.Errorf("failed to zero fill block device: %w", err)
 			}
 		}
-	} else if err := zeroFill(dstFile, int64(offset), int64(length)); err != nil {
+	} else if err := zeroFill(dstFile, offset, length); err != nil {
 		return fmt.Errorf("failed to zero fill block device: %w", err)
 	}
 	return nil
 }
 
-func zeroFill(dstFile *os.File, offset, length int64) error {
-	if _, err := dstFile.Seek(offset, io.SeekStart); err != nil {
+func zeroFill(dstFile *os.File, offset, length uint64) error {
+	if _, err := dstFile.Seek(int64(offset), io.SeekStart); err != nil {
 		return fmt.Errorf("failed to seek: %w", err)
 	}
 
-	if _, err := io.CopyN(dstFile, &zeroReader{}, length); err != nil {
+	if _, err := io.CopyN(dstFile, &zeroReader{}, int64(length)); err != nil {
 		return fmt.Errorf("failed to write zeroes: %w", err)
 	}
 

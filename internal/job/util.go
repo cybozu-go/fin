@@ -25,8 +25,8 @@ type BackupMetadata struct {
 type BackupMetadataEntry struct {
 	SnapID    int       `json:"snapID"`
 	SnapName  string    `json:"snapName"`
-	SnapSize  int       `json:"snapSize"`
-	PartSize  int       `json:"partSize"`
+	SnapSize  uint64    `json:"snapSize"`
+	PartSize  uint64    `json:"partSize"`
 	CreatedAt time.Time `json:"createdAt"`
 }
 

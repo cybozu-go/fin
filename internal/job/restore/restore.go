@@ -19,7 +19,7 @@ type Restore struct {
 	retryInterval       time.Duration
 	actionUID           string
 	targetSnapshotID    int
-	rawImageChunkSize   int64
+	rawImageChunkSize   uint64
 	targetPVCUID        string
 }
 
@@ -142,7 +142,7 @@ func (r *Restore) doRestoreRawImagePhase(privateData *restorePrivateData, raw *j
 	return setRestorePrivateData(r.repo, r.actionUID, privateData)
 }
 
-func (r *Restore) loopCopyChunk(privateData *restorePrivateData, rawImageSize int) error {
+func (r *Restore) loopCopyChunk(privateData *restorePrivateData, rawImageSize uint64) error {
 	chunkCount := int(math.Ceil(float64(rawImageSize) / float64(r.rawImageChunkSize)))
 	for i := privateData.NextRawImageChunk; i < chunkCount; i++ {
 		if err := r.restoreVol.CopyChunk(r.nodeLocalVolumeRepo.GetRawImagePath(), i, r.rawImageChunkSize); err != nil {

@@ -47,6 +47,6 @@ func (r *restoreVolume) AppliedDiffs() []*ExportedDiff {
 	return r.appliedDiffs
 }
 
-func (r *restoreVolume) CopyChunk(rawPath string, index int, chunkSize int64) error {
+func (r *restoreVolume) CopyChunk(rawPath string, index int, chunkSize uint64) error {
 	return r.real.CopyChunk(rawPath, index, chunkSize)
 }
