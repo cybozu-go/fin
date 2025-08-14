@@ -15,4 +15,4 @@ GINKGO_VERSION := $(shell awk '/github.com\/onsi\/ginkgo\/v2/ {print $$2}' $(SEL
 KUSTOMIZE_VERSION ?= v5.7.0
 CONTROLLER_TOOLS_VERSION ?= v0.18.0
 ENVTEST_VERSION ?= release-0.20
-GOLANGCI_LINT_VERSION ?= v2.1.5
+GOLANGCI_LINT_VERSION ?= v2.3.1

@@ -45,6 +45,10 @@ func restoreJobMain() error {
 		return fmt.Errorf("failed to create NodeLocalVolumeRepository: %w", err)
 	}
 	defer func() { _ = nlvRepo.Close() }()
+	pvcUID := os.Getenv("BACKUP_TARGET_PVC_UID")
+	if pvcUID == "" {
+		return fmt.Errorf("BACKUP_TARGET_PVC_UID environment variable is not set")
+	}
 
 	finRepo, err := db.New(nlvRepo.GetDBPath())
 	if err != nil {
@@ -82,6 +86,7 @@ func restoreJobMain() error {
 		RetryInterval:       job.RetryInterval,
 		ActionUID:           actionUID,
 		TargetSnapshotID:    targetSnapshotID,
+		TargetPVCUID:        pvcUID,
 		RawImageChunkSize:   rawImageChunkSize,
 		RestoreVol:          restoreVol,
 	})

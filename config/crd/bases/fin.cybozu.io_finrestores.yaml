@@ -56,13 +56,13 @@ spec:
                 - message: backup is immutable
                   rule: self == oldSelf
               pvc:
-                description: '''pvc'' specifies restore target PVC'
+                description: '''pvc'' specifies restore target PVC''s name'
                 type: string
                 x-kubernetes-validations:
                 - message: pvc is immutable
                   rule: self == oldSelf
               pvcNamespace:
-                description: '''pvcNamespace'' specifies restore target Namespace'
+                description: '''pvcNamespace'' specifies restore target PVC''s namespace'
                 type: string
                 x-kubernetes-validations:
                 - message: pvcNamespace is immutable

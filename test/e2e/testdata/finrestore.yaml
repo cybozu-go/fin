@@ -1,0 +1,9 @@
+apiVersion: fin.cybozu.io/v1
+kind: FinRestore
+metadata:
+  name: finrestore-test
+  namespace: rook-ceph
+spec:
+  backup: finbackup-test
+  pvc: finrestore-test
+  pvcNamespace: rook-ceph

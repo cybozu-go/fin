@@ -18,13 +18,11 @@ type FinRestoreSpec struct {
 	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="backup is immutable"
 	Backup string `json:"backup"`
 
-	// 'pvc' specifies restore target PVC
-	// +kubebuilder:validation:Required
+	// 'pvc' specifies restore target PVC's name
 	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="pvc is immutable"
 	PVC string `json:"pvc"`
 
-	// 'pvcNamespace' specifies restore target Namespace
-	// +kubebuilder:validation:Required
+	// 'pvcNamespace' specifies restore target PVC's namespace
 	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="pvcNamespace is immutable"
 	PVCNamespace string `json:"pvcNamespace"`
 }

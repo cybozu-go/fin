@@ -112,4 +112,16 @@ func backupTestSuite() {
 			"rbd", "info", fmt.Sprintf("%s/%s@fin-backup-%s", poolName, finbackupRBDImage, finbackupUID))
 		Expect(err).To(HaveOccurred(), "Snapshot should be deleted. stdout: %s, stderr: %s", stdout, stderr)
 	})
+
+	AfterAll(func() {
+		By("deleting the pod")
+		_, stderr, err := kubectl("delete", "-f", "testdata/test-pod.yaml")
+		Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
+		By("deleting the PVC")
+		_, stderr, err = kubectl("delete", "-f", "testdata/backup-target-pvc.yaml")
+		Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
+		By("deleting the namespace")
+		_, stderr, err = kubectl("delete", "-f", "testdata/namespace.yaml")
+		Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
+	})
 }
