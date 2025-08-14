@@ -114,12 +114,6 @@ func (r *FinRestoreReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{}, err
 	}
 
-	if restore.GetNamespace() != r.cephClusterNamespace {
-		logger.Info("restore is not managed by the target Ceph cluster",
-			"restore", restore.Name, "namespace", restore.Namespace, "clusterNamespace", r.cephClusterNamespace)
-		return ctrl.Result{}, nil
-	}
-
 	if restore.DeletionTimestamp.IsZero() {
 		return r.reconcileCreateOrUpdate(ctx, &restore)
 	} else {
