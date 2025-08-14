@@ -255,6 +255,46 @@ func TestApplyDiffToRawImage_success_EmptyDataRecords(t *testing.T) {
 	assert.Equal(t, int64(expansionUnitSize), fileInfo.Size())
 }
 
+func TestApplyDiffToRawImage_success_RawImageExpansion(t *testing.T) {
+	// Description:
+	// Check if raw.img is expanded in expansion unit size according to the size of incremental data.
+	//
+	// Arrange:
+	// - A raw.img file of size 1KiB exists.
+	// - An incremental data file exists where offset + length is 1.5 KiB.
+	//
+	// Act:
+	// Call the apply process using the incremental data file.
+	//
+	// Assert:
+	// - Completes successfully.
+	// - The size of raw.img is expanded to 2 KiB.
+
+	// Arrange
+	reader, err := diffgenerator.Run(
+		diffgenerator.WithFromSnapName("fromSnap"),
+		diffgenerator.WithToSnapName("toSnap"),
+		diffgenerator.WithImageSize(2*1024),
+		diffgenerator.WithRecords([]*diffgenerator.DataRecord{
+			diffgenerator.NewRandomUpdatedDataRecord(512, 1*1024),
+		}),
+	)
+	require.NoError(t, err)
+	rawImageFilePath := getRawImagePathForTest(t)
+	err = os.WriteFile(rawImageFilePath, bytes.Repeat([]byte{0xff}, 1*1024), 0644)
+	require.NoError(t, err)
+
+	// Act
+	err = applyDiffToRawImage(rawImageFilePath, reader, "fromSnap", "toSnap", 1*1024)
+
+	// Assert
+	require.NoError(t, err)
+
+	fileInfo, err := os.Stat(rawImageFilePath)
+	require.NoError(t, err)
+	assert.Equal(t, int64(2*1024), fileInfo.Size())
+}
+
 func TestApplyDiffToRawImage_error_InvalidHeader(t *testing.T) {
 	// Description:
 	// Check the header of the incremental data file
