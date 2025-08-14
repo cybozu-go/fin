@@ -394,16 +394,17 @@ func TestApplyDiffToRawImage_error_ExpansionUnitSizeNonPositive(t *testing.T) {
 
 func TestApplyDiffToRawImage_error_FromSnapNameMismatch(t *testing.T) {
 	// Description:
-	// Check when from-snap name does not match during raw image application
+	// Check when the FROM SNAP name in the incremental data file is different
+	// from the target snapshot name as an argument.
 	//
 	// Arrange:
-	// An incremental data file containing a FROM SNAP name exists
+	// An incremental data file containing a FROM SNAP name exists.
 	//
 	// Act:
-	// Call the apply process with a target snapshot name different from the FROM SNAP value in the incremental data file
+	// Call the apply process with a target snapshot name different from the FROM SNAP value in the incremental data file.
 	//
 	// Assert:
-	// Should terminate abnormally
+	// Should terminate abnormally.
 
 	// Arrange
 	reader, err := diffgenerator.Run(
@@ -422,7 +423,8 @@ func TestApplyDiffToRawImage_error_FromSnapNameMismatch(t *testing.T) {
 
 func TestApplyDiffToRawImage_error_ToSnapNameMismatch(t *testing.T) {
 	// Description:
-	// Check when to-snap name does not match during raw image application
+	// Check when the TO SNAP name in the incremental data file is different
+	// from the incremental data snapshot name as an argument.
 	//
 	// Arrange:
 	// An incremental data file containing a TO SNAP name exists
@@ -789,6 +791,253 @@ func TestApplyDiffToBlockDevice_success_VariousZeroDataRecords(t *testing.T) {
 			)
 		})
 	}
+}
+
+func TestApplyDiffToBlockDevice_error_FromSnapNameMismatch(t *testing.T) {
+	// Description:
+	// Check when the FROM SNAP name in the incremental data file is different
+	// from the target snapshot name as an argument.
+	//
+	// Arrange:
+	// An incremental data file containing a FROM SNAP name exists.
+	//
+	// Act:
+	// Call the apply process with a target snapshot name different from the FROM SNAP value in the incremental data file.
+	//
+	// Assert:
+	// Should terminate abnormally.
+
+	// Arrange
+	blockDevicePath := getBlockDevicePathForTest(t)
+	reader, err := diffgenerator.Run(
+		diffgenerator.WithFromSnapName("fromSnap1"),
+		diffgenerator.WithToSnapName("toSnap"),
+		diffgenerator.WithImageSize(uint64(getBlockDeviceSize(t, blockDevicePath))),
+	)
+	require.NoError(t, err)
+
+	// Act
+	err = applyDiffToBlockDevice(blockDevicePath, reader, "fromSnap2", "toSnap")
+
+	// Assert
+	assert.Error(t, err)
+}
+
+func TestApplyDiffToBlockDevice_error_ToSnapNameMismatch(t *testing.T) {
+	// Description:
+	// Check when the TO SNAP name in the incremental data file is different
+	// from the incremental data snapshot name as an argument.
+	//
+	// Arrange:
+	// An incremental data file containing a TO SNAP name exists
+	//
+	// Act:
+	// Call the apply process with an incremental data snapshot name different
+	// from the TO SNAP value in the incremental data file
+	//
+	// Assert:
+	// Should terminate abnormally
+
+	// Arrange
+	blockDevicePath := getBlockDevicePathForTest(t)
+	reader, err := diffgenerator.Run(
+		diffgenerator.WithFromSnapName("fromSnap"),
+		diffgenerator.WithToSnapName("toSnap1"),
+		diffgenerator.WithImageSize(uint64(getBlockDeviceSize(t, blockDevicePath))),
+	)
+	require.NoError(t, err)
+
+	// Act
+	err = applyDiffToBlockDevice(blockDevicePath, reader, "fromSnap", "toSnap2")
+
+	// Assert
+	assert.Error(t, err)
+}
+
+func TestApplyDiffToBlockDevice_error_MetadataSizeTooLarge(t *testing.T) {
+	// Description:
+	// Check that an error occurs when the metadata size in the incremental data file exceeds the block device size
+	//
+	// Arrange:
+	// A block device and incremental data file exist, and the METADATA SIZE
+	// in the incremental data file is larger than the block device size.
+	//
+	// Act:
+	// Call the apply process using the incremental data file
+	//
+	// Assert:
+	// Should terminate abnormally
+
+	// Arrange
+	blockDevicePath := getBlockDevicePathForTest(t)
+	reader, err := diffgenerator.Run(
+		diffgenerator.WithToSnapName("toSnap"),
+		diffgenerator.WithImageSize(uint64(getBlockDeviceSize(t, blockDevicePath)+1)),
+	)
+	require.NoError(t, err)
+
+	// Act
+	err = applyDiffToBlockDevice(blockDevicePath, reader, "", "toSnap")
+
+	// Assert
+	assert.Error(t, err)
+}
+
+func TestApplyDiffToBlockDevice_error_MissingBlockDevice(t *testing.T) {
+	// Description:
+	// Check that the incremental data application process terminates abnormally when the block device does not exist
+	//
+	// Arrange:
+	// A block device does not exist
+	//
+	// Act:
+	// Call the apply process using the incremental data file
+	//
+	// Assert:
+	// Should terminate abnormally
+
+	// Arrange
+	reader, err := diffgenerator.Run(
+		diffgenerator.WithToSnapName("toSnap"),
+		diffgenerator.WithImageSize(10),
+	)
+	require.NoError(t, err)
+
+	// Act
+	err = applyDiffToBlockDevice("missing block device", reader, "", "toSnap")
+
+	// Assert
+	assert.Error(t, err)
+}
+
+func TestApplyDiffToBlockDevice_error_MissingDiffFileName(t *testing.T) {
+	// Description:
+	// Check when incremental data file is missing during block device application
+	//
+	// Arrange:
+	// Incremental data file name is missing
+	//
+	// Act:
+	// Call the incremental data application process
+	//
+	// Assert:
+	// Should terminate abnormally
+
+	// Arrange
+	rbdRepository := NewRBDRepository()
+
+	// Act
+	err := rbdRepository.ApplyDiffToBlockDevice(
+		getBlockDevicePathForTest(t),
+		"non existing file",
+		"fromSnap",
+		"toSnap",
+	)
+
+	// Assert
+	assert.Error(t, err)
+}
+
+func TestApplyDiffToBlockDevice_error_MissingToSnapNameArg(t *testing.T) {
+	// Description:
+	// Check when incremental data snapshot name is missing during block device application.
+	//
+	// Arrange:
+	// An incremental data file with a TO SNAP name exists.
+	//
+	// Act:
+	// Call the incremental data application process with an empty incremental data snapshot name.
+	//
+	// Assert:
+	// Should terminate abnormally.
+
+	// Arrange
+	blockDevicePath := getBlockDevicePathForTest(t)
+	reader, err := diffgenerator.Run(
+		diffgenerator.WithToSnapName("toSnap"),
+		diffgenerator.WithImageSize(uint64(getBlockDeviceSize(t, blockDevicePath))),
+	)
+	require.NoError(t, err)
+
+	// Act
+	err = applyDiffToBlockDevice(blockDevicePath, reader, "", "")
+
+	// Assert
+	assert.Error(t, err)
+}
+
+func TestApplyDiffToBlockDevice_error_UnsortedDataRecords(t *testing.T) {
+	// Description:
+	// Check that an error occurs when DATA RECORDS
+	// in the incremental data file are not sorted in ascending order by offset address
+	//
+	// Arrange:
+	// An incremental data file exists with DATA RECORDS as follows:
+	// 	- UPDATED DATA: offset = 1KiB, length = 1KiB, data = random
+	// 	- UPDATED DATA: offset = 0, length = 1KiB, data = random
+	//
+	// Act:
+	// Call the apply process using the incremental data file
+	//
+	// Assert:
+	// Should terminate abnormally
+
+	// Arrange
+	blockDevicePath := getBlockDevicePathForTest(t)
+	require.GreaterOrEqual(t, getBlockDeviceSize(t, blockDevicePath), 2*1024)
+
+	reader, err := diffgenerator.Run(
+		diffgenerator.WithToSnapName("toSnap"),
+		diffgenerator.WithImageSize(2*1024),
+		diffgenerator.WithRecords([]*diffgenerator.DataRecord{
+			diffgenerator.NewRandomUpdatedDataRecord(1*1024, 1*1024),
+			diffgenerator.NewRandomUpdatedDataRecord(0, 1*1024),
+		}),
+	)
+	require.NoError(t, err)
+
+	// Act
+	err = applyDiffToBlockDevice(blockDevicePath, reader, "", "toSnap")
+
+	// Assert
+	assert.Error(t, err)
+}
+
+func TestApplyDiffToBlockDevice_error_OverlappedDataRecords(t *testing.T) {
+	// Description:
+	// Check that an error occurs when DATA RECORDS
+	// in the incremental data file contain overlaps in offset ~ offset + length
+	//
+	// Arrange:
+	// An incremental data file exists with DATA RECORDS as follows:
+	// 	- UPDATED DATA: offset = 1KiB, length = 2KiB, data = random
+	// 	- UPDATED DATA: offset = 2KiB, length = 1KiB, data = random
+	//
+	// Act:
+	// Call the apply process using the incremental data file
+	//
+	// Assert:
+	// Should terminate abnormally
+
+	// Arrange
+	blockDevicePath := getBlockDevicePathForTest(t)
+	require.GreaterOrEqual(t, getBlockDeviceSize(t, blockDevicePath), 3*1024)
+
+	reader, err := diffgenerator.Run(
+		diffgenerator.WithToSnapName("toSnap"),
+		diffgenerator.WithImageSize(3*1024),
+		diffgenerator.WithRecords([]*diffgenerator.DataRecord{
+			diffgenerator.NewRandomUpdatedDataRecord(1*1024, 2*1024),
+			diffgenerator.NewRandomUpdatedDataRecord(2*1024, 1*1024),
+		}),
+	)
+	require.NoError(t, err)
+
+	// Act
+	err = applyDiffToBlockDevice(blockDevicePath, reader, "", "toSnap")
+
+	// Assert
+	assert.Error(t, err)
 }
 
 func getRawImagePathForTest(t *testing.T) string {
