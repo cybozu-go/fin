@@ -280,7 +280,11 @@ func (r *FinBackupReconciler) reconcileDelete(ctx context.Context, backup *finv1
 			Namespace: r.cephClusterNamespace,
 		},
 	}
-	err := r.Delete(ctx, backupJob)
+	propagationPolicy := metav1.DeletePropagationBackground
+	err := r.Delete(ctx, backupJob,
+		&client.DeleteOptions{
+			PropagationPolicy: &propagationPolicy,
+		})
 	if err != nil {
 		if !k8serrors.IsNotFound(err) {
 			logger.Error(err, "failed to delete backup job")
@@ -330,12 +334,19 @@ func (r *FinBackupReconciler) reconcileDelete(ctx context.Context, backup *finv1
 			return ctrl.Result{RequeueAfter: 1 * time.Minute}, nil
 		}
 
-		err = r.Delete(ctx, &deletionJob)
+		propagationPolicy := metav1.DeletePropagationBackground
+		err = r.Delete(ctx, &deletionJob,
+			&client.DeleteOptions{
+				PropagationPolicy: &propagationPolicy,
+			})
 		if err != nil && !k8serrors.IsNotFound(err) {
 			logger.Error(err, "failed to delete deletion job")
 			return ctrl.Result{}, err
 		}
-		err = r.Delete(ctx, &cleanupJob)
+		err = r.Delete(ctx, &cleanupJob,
+			&client.DeleteOptions{
+				PropagationPolicy: &propagationPolicy,
+			})
 		if err != nil && !k8serrors.IsNotFound(err) {
 			logger.Error(err, "failed to delete cleanup job")
 			return ctrl.Result{}, err
