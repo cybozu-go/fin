@@ -118,10 +118,6 @@ func (r *FinBackupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return r.reconcileDelete(ctx, &backup)
 	}
 
-	if backup.GetNamespace() != r.cephClusterNamespace {
-		return ctrl.Result{}, nil
-	}
-
 	if backup.IsReady() {
 		return ctrl.Result{}, nil
 	}
@@ -241,7 +237,7 @@ func (r *FinBackupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 
 	var job batchv1.Job
-	err = r.Get(ctx, client.ObjectKey{Namespace: backup.GetNamespace(), Name: backupJobName(&backup)}, &job)
+	err = r.Get(ctx, client.ObjectKey{Namespace: r.cephClusterNamespace, Name: backupJobName(&backup)}, &job)
 	if err != nil {
 		if k8serrors.IsNotFound(err) {
 			return ctrl.Result{}, nil
@@ -280,7 +276,7 @@ func (r *FinBackupReconciler) reconcileDelete(ctx context.Context, backup *finv1
 	backupJob := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      backupJobName(backup),
-			Namespace: backup.GetNamespace(),
+			Namespace: r.cephClusterNamespace,
 		},
 	}
 	err := r.Delete(ctx, backupJob)
@@ -302,7 +298,7 @@ func (r *FinBackupReconciler) reconcileDelete(ctx context.Context, backup *finv1
 		}
 
 		var cleanupJob batchv1.Job
-		err = r.Get(ctx, client.ObjectKey{Namespace: backup.GetNamespace(), Name: cleanupJobName(backup)}, &cleanupJob)
+		err = r.Get(ctx, client.ObjectKey{Namespace: r.cephClusterNamespace, Name: cleanupJobName(backup)}, &cleanupJob)
 		if err != nil {
 			return ctrl.Result{}, fmt.Errorf("failed to get cleanup job: %w", err)
 		}
@@ -321,7 +317,7 @@ func (r *FinBackupReconciler) reconcileDelete(ctx context.Context, backup *finv1
 		}
 
 		var deletionJob batchv1.Job
-		err = r.Get(ctx, client.ObjectKey{Namespace: backup.GetNamespace(), Name: deletionJobName(backup)}, &deletionJob)
+		err = r.Get(ctx, client.ObjectKey{Namespace: r.cephClusterNamespace, Name: deletionJobName(backup)}, &deletionJob)
 		if err != nil {
 			return ctrl.Result{}, fmt.Errorf("failed to get deletion job: %w", err)
 		}
