@@ -218,7 +218,7 @@ func applyDiffDataRecords(
 
 			// Detect overlapping ranges
 			if prevOffset+prevLength > offset {
-				return fmt.Errorf("overlapping ranges detected: previous (%d, %d), current (%d, %d)",
+				return fmt.Errorf("overlapping or unsorted ranges detected: previous (%d, %d), current (%d, %d)",
 					prevOffset, prevLength, offset, length)
 			}
 			prevOffset = offset
