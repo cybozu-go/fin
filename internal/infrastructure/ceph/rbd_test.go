@@ -295,6 +295,66 @@ func TestApplyDiffToRawImage_success_RawImageExpansion(t *testing.T) {
 	assert.Equal(t, int64(2*1024), fileInfo.Size())
 }
 
+func TestApplyDiffToRawImage_success_LengthZero(t *testing.T) {
+	// Description:
+	// Check that application of incremental data to a raw image completes successfully even if the DATA RECORD length is 0
+	//
+	// Arrange:
+	// Either of the following conditions satisfies:
+	// - An incremental data file exists with a ZERO DATA record of length zero
+	// - An incremental data file exists with an UPDATED DATA record of length zero
+	//
+	// Act:
+	// Call the apply process using the incremental data file
+	//
+	// Assert:
+	// - Process completes successfully
+	// - The raw.img remains unchanged after application
+
+	testCases := []struct {
+		name       string
+		dataRecord *diffgenerator.DataRecord
+	}{
+		{
+			name:       "Zero Data with length zero",
+			dataRecord: diffgenerator.NewZeroDataRecord(0, 0),
+		},
+		{
+			name:       "Updated Data with length zero",
+			dataRecord: diffgenerator.NewRandomUpdatedDataRecord(0, 0),
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Arrange
+			rawImageFilePath := getRawImagePathForTest(t)
+			err := os.WriteFile(rawImageFilePath, bytes.Repeat([]byte{0xff}, 10), 0644)
+			require.NoError(t, err)
+
+			reader, err := diffgenerator.Run(
+				diffgenerator.WithFromSnapName("fromSnap"),
+				diffgenerator.WithToSnapName("toSnap"),
+				diffgenerator.WithImageSize(10),
+				diffgenerator.WithRecords([]*diffgenerator.DataRecord{
+					tc.dataRecord,
+				}),
+			)
+			require.NoError(t, err)
+
+			// Act
+			err = applyDiffToRawImage(rawImageFilePath, reader, "fromSnap", "toSnap", 10)
+
+			// Assert
+			assert.NoError(t, err)
+
+			got, err := os.ReadFile(rawImageFilePath)
+			require.NoError(t, err)
+			assert.Equal(t, bytes.Repeat([]byte{0xff}, 10), got)
+		})
+	}
+}
+
 func TestApplyDiffToRawImage_error_InvalidHeader(t *testing.T) {
 	// Description:
 	// Check the header of the incremental data file
@@ -829,6 +889,70 @@ func TestApplyDiffToBlockDevice_success_VariousZeroDataRecords(t *testing.T) {
 				file,
 				io.LimitReader(&zeroReader{}, int64(getBlockDeviceSize(t, blockDevicePath)-len(tc.expected))),
 			)
+		})
+	}
+}
+
+func TestApplyDiffToBlockDevice_success_LengthZero(t *testing.T) {
+	// Description:
+	// Check that application of incremental data to a block device completes successfully
+	// even if the DATA RECORD length is 0
+	//
+	// Arrange:
+	// Either of the following conditions satisfies:
+	// - An incremental data file exists with a ZERO DATA record of length zero
+	// - An incremental data file exists with an UPDATED DATA record of length zero
+	//
+	// Act:
+	// Call the apply process using the incremental data file
+	//
+	// Assert:
+	// - Process completes successfully
+	// - The block device remains unchanged after application
+
+	testCases := []struct {
+		name       string
+		dataRecord *diffgenerator.DataRecord
+	}{
+		{
+			name:       "Zero Data with length zero",
+			dataRecord: diffgenerator.NewZeroDataRecord(0, 0),
+		},
+		{
+			name:       "Updated Data with length zero",
+			dataRecord: diffgenerator.NewRandomUpdatedDataRecord(0, 0),
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Arrange
+			blockDevicePath := getBlockDevicePathForTest(t)
+			file := openFileWriteOnly(t, blockDevicePath)
+			_, err := io.Copy(file, bytes.NewBuffer(bytes.Repeat([]byte{0xff}, 10)))
+			require.NoError(t, err)
+
+			reader, err := diffgenerator.Run(
+				diffgenerator.WithFromSnapName("fromSnap"),
+				diffgenerator.WithToSnapName("toSnap"),
+				diffgenerator.WithImageSize(10),
+				diffgenerator.WithRecords([]*diffgenerator.DataRecord{
+					tc.dataRecord,
+				}),
+			)
+			require.NoError(t, err)
+
+			// Act
+			err = applyDiffToBlockDevice(blockDevicePath, reader, "fromSnap", "toSnap")
+
+			// Assert
+			assert.NoError(t, err)
+
+			file = openFile(t, blockDevicePath)
+			head := make([]byte, 10)
+			_, err = io.ReadFull(file, head)
+			require.NoError(t, err)
+			assert.Equal(t, bytes.Repeat([]byte{0xff}, 10), head)
 		})
 	}
 }
