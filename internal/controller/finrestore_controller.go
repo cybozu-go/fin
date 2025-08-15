@@ -7,8 +7,6 @@ import (
 	"strconv"
 	"time"
 
-	"errors"
-
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
@@ -465,8 +463,66 @@ func (r *FinRestoreReconciler) createOrUpdateRestoreJobPVC(
 }
 
 func (r *FinRestoreReconciler) reconcileDelete(ctx context.Context, restore *finv1.FinRestore) (ctrl.Result, error) {
-	// TODO: We must implement this function later.
-	return ctrl.Result{}, errors.New("not implemented")
+	logger := log.FromContext(ctx)
+
+	restoreJob := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      restoreJobName(restore),
+			Namespace: r.cephClusterNamespace,
+		},
+	}
+	propagationPolicy := metav1.DeletePropagationBackground
+	err := r.Delete(ctx, restoreJob,
+		&client.DeleteOptions{
+			PropagationPolicy: &propagationPolicy,
+		})
+	if err != nil {
+		if !k8serrors.IsNotFound(err) {
+			logger.Error(err, "failed to delete restore job")
+			return ctrl.Result{}, err
+		}
+	} else {
+		return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+	}
+
+	restoreJobPVC := &corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      restoreJobPVCName(restore),
+			Namespace: r.cephClusterNamespace,
+		},
+	}
+	err = r.Delete(ctx, restoreJobPVC)
+	if err != nil {
+		if !k8serrors.IsNotFound(err) {
+			logger.Error(err, "failed to delete restore job PVC")
+			return ctrl.Result{}, err
+		}
+	} else {
+		return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+	}
+
+	restoreJobPV := &corev1.PersistentVolume{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: restoreJobPVName(restore),
+		},
+	}
+	err = r.Delete(ctx, restoreJobPV)
+	if err != nil {
+		if !k8serrors.IsNotFound(err) {
+			logger.Error(err, "failed to delete restore job PV")
+			return ctrl.Result{}, err
+		}
+	} else {
+		return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+	}
+
+	controllerutil.RemoveFinalizer(restore, FinRestoreFinalizerName)
+	if err = r.Update(ctx, restore); err != nil {
+		logger.Error(err, "failed to remove finalizer")
+		return ctrl.Result{}, err
+	}
+
+	return ctrl.Result{}, nil
 }
 
 // SetupWithManager sets up the controller with the Manager.
