@@ -249,13 +249,15 @@ func applyDiffDataRecords(
 				if err != nil {
 					return fmt.Errorf("failed to discard block device: %s: %w", dstFilePath, err)
 				}
-			} else if err := unix.Fallocate(
-				int(dstFile.Fd()),
-				unix.FALLOC_FL_KEEP_SIZE|unix.FALLOC_FL_PUNCH_HOLE,
-				int64(offset),
-				int64(length),
-			); err != nil {
-				return fmt.Errorf("failed to write zero data to destination file: %s: %w", dstFilePath, err)
+			} else if length > 0 {
+				if err := unix.Fallocate(
+					int(dstFile.Fd()),
+					unix.FALLOC_FL_KEEP_SIZE|unix.FALLOC_FL_PUNCH_HOLE,
+					int64(offset),
+					int64(length),
+				); err != nil {
+					return fmt.Errorf("failed to write zero data to destination file: %s: %w", dstFilePath, err)
+				}
 			}
 
 		case 'e': // END
