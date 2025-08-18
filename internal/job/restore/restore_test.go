@@ -1,12 +1,11 @@
 package restore
 
 import (
-	"bytes"
 	"os"
 	"testing"
-	"time"
 
 	"github.com/cybozu-go/fin/internal/infrastructure/fake"
+	"github.com/cybozu-go/fin/internal/infrastructure/restore"
 	"github.com/cybozu-go/fin/internal/job"
 	"github.com/cybozu-go/fin/internal/job/backup"
 	"github.com/cybozu-go/fin/internal/job/deletion"
@@ -20,60 +19,91 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+const (
+	defaultMaxPartSize = uint64(4096)
+	defaultVolumeSize  = defaultMaxPartSize * 2
+	defaultChunkSize   = uint64(4096)
+)
+
 type setupInput struct {
+	// Split size when executing export-diff
+	maxPartSize uint64
 	// if true, run incremental backup after full backup, otherwise, only run full backup.
 	enableIncrementalBackup bool
+	// Virtual volume size when creating backups.
+	volumeSize []uint64
+	// Restore target block device size.
+	blockDeviceSize []uint64
+	// chunk size for restore
+	chunkSize uint64
 	// if > 0, delete backups after creating them.
 	// Backups are deleted starting with the oldest ones, up to the specified number of backups.
 	deleteBackups int
 }
 
 type setupOutput struct {
+	nlvRepo model.NodeLocalVolumeRepository
 	// RestoreInput instance used when calling the restore module.
 	// 0 index is for the full backup, and 1 index is for the incremental backup.
 	restoreInputs []*input.Restore
+	volumeRaws    [][]byte
 }
 
 func setup(t *testing.T, config *setupInput) *setupOutput {
 	t.Helper()
 
-	k8sRepo, rbdRepo, volumeInfo := fake.NewStorage()
+	k8sRepo, _, volumeInfo := fake.NewStorage()
+	rbdRepo := fake.NewRBDRepository2(volumeInfo.PoolName, volumeInfo.ImageName)
 	nlvRepo, finRepo, _ := testutil.CreateNLVAndFinRepoForTest(t)
-
-	rawImageChunkSize := uint64(4096)
-	targetSnapshotSize := rawImageChunkSize * 2
 
 	snapIDs := make([]int, 0)
 	restoreInputs := make([]*input.Restore, 0)
+	volumeRaws := make([][]byte, 0)
 
+	if config.maxPartSize == 0 {
+		config.maxPartSize = defaultMaxPartSize
+	}
+	if config.chunkSize == 0 {
+		config.chunkSize = defaultChunkSize
+	}
 	// Create backups.
 	backupCount := 1
 	if config.enableIncrementalBackup {
 		backupCount = 2
 	}
 	for i := 0; i < backupCount; i++ {
-		snapshot := rbdRepo.CreateFakeSnapshot(utils.GetUniqueName("snap-"), targetSnapshotSize, time.Now())
+		volumeSize := defaultVolumeSize
+		if len(config.volumeSize) > i {
+			volumeSize = config.volumeSize[i]
+		}
+		snapshot, volumeRaw, err := rbdRepo.CreateSnapshotWithRandomData(utils.GetUniqueName("snap-"), volumeSize)
+		require.NoError(t, err)
 		snapIDs = append(snapIDs, snapshot.ID)
+		volumeRaws = append(volumeRaws, volumeRaw)
 		var srcSnapID *int
 		if i != 0 {
 			srcSnapID = &snapIDs[i-1]
 		}
-		backupInput := testutil.NewBackupInput(k8sRepo, volumeInfo, snapshot.ID, srcSnapID, rawImageChunkSize)
+		backupInput := testutil.NewBackupInput(k8sRepo, volumeInfo, snapshot.ID, srcSnapID, config.maxPartSize)
 		backupInput.Repo = finRepo
 		backupInput.KubernetesRepo = k8sRepo
 		backupInput.RBDRepo = rbdRepo
 		backupInput.NodeLocalVolumeRepo = nlvRepo
 
 		bk := backup.NewBackup(backupInput)
-		err := bk.Perform()
+		err = bk.Perform()
 		require.NoError(t, err)
 
 		// Create the restore file
-		restorePath := testutil.CreateRestoreFileForTest(t, targetSnapshotSize)
-		rVol := fake.NewRestoreVolume(restorePath)
+		blockDeviceSize := volumeSize
+		if len(config.blockDeviceSize) > i {
+			blockDeviceSize = config.blockDeviceSize[i]
+		}
+		restorePath := testutil.CreateLoopDevice(t, blockDeviceSize)
+		rVol := restore.NewRestoreVolume(restorePath)
 
 		restoreInputs = append(restoreInputs, testutil.NewRestoreInputTemplate(
-			backupInput, rVol, rawImageChunkSize, backupInput.TargetSnapshotID))
+			backupInput, rVol, config.chunkSize, backupInput.TargetSnapshotID))
 	}
 
 	// Delete backups if specified.
@@ -92,7 +122,9 @@ func setup(t *testing.T, config *setupInput) *setupOutput {
 	}
 
 	return &setupOutput{
+		nlvRepo:       nlvRepo,
 		restoreInputs: restoreInputs,
+		volumeRaws:    volumeRaws,
 	}
 }
 
@@ -104,8 +136,8 @@ func TestRestore_FullBackup_Success(t *testing.T) {
 	//
 	// Arrange:
 	//   - A full backup, `backup`, consists of two chunks.
-	//   - raw.img filled with the random data.
-	//   - The restore file.
+	//   - Restore destination volume filled with random data.
+	//
 	// Act:
 	//   Run the restore process.
 	//
@@ -116,52 +148,32 @@ func TestRestore_FullBackup_Success(t *testing.T) {
 	// Arrange
 
 	// Create a full backup data.
-	k8sRepo, rbdRepo, volumeInfo := fake.NewStorage()
-	nlvRepo, finRepo, _ := testutil.CreateNLVAndFinRepoForTest(t)
+	backupVolumeSize := defaultVolumeSize
+	cfg := setup(t, &setupInput{
+		volumeSize: []uint64{backupVolumeSize},
+	})
 
-	rawImageChunkSize := uint64(4096)
-	targetSnapshotSize := rawImageChunkSize * 2
-	snap := rbdRepo.CreateFakeSnapshot(utils.GetUniqueName("snap-"), targetSnapshotSize, time.Now())
-	backupInput := testutil.NewBackupInput(k8sRepo, volumeInfo, snap.ID, nil, rawImageChunkSize)
-	backupInput.Repo = finRepo
-	backupInput.KubernetesRepo = k8sRepo
-	backupInput.RBDRepo = rbdRepo
-	backupInput.NodeLocalVolumeRepo = nlvRepo
-
-	backup := backup.NewBackup(backupInput)
-	err := backup.Perform()
-	require.NoError(t, err)
-
-	// Fill raw.img with random data. Although this file has some data
-	// stored by fake backup process, we can replace them here because we won't
-	// use the original data in the restore process.
-	buf := testutil.FillRawImageWithRandomData(t, nlvRepo.GetRawImagePath(), targetSnapshotSize)
-
-	// Create the restore file
-	restorePath := testutil.CreateRestoreFileForTest(t, targetSnapshotSize)
-	rVol := fake.NewRestoreVolume(restorePath)
+	testutil.FillFileRandomData(
+		t,
+		cfg.restoreInputs[0].RestoreVol.GetPath(),
+		backupVolumeSize)
 
 	// Act
-	r := NewRestore(testutil.NewRestoreInputTemplate(
-		backupInput, rVol, rawImageChunkSize, backupInput.TargetSnapshotID))
-
-	err = r.Perform()
-	require.NoError(t, err)
+	r := NewRestore(cfg.restoreInputs[0])
+	require.NoError(t, r.Perform())
 
 	// Assert
 
 	// Verify the contents of the restore file.
-	buf2 := make([]byte, targetSnapshotSize)
-	restoreFile, err := os.Open(restorePath)
+	rawFile, err := os.Open(cfg.nlvRepo.GetRawImagePath())
 	require.NoError(t, err)
-	rn, err := restoreFile.Read(buf2)
-	require.NoError(t, err)
-	require.Equal(t, int(targetSnapshotSize), rn)
-	require.True(t, bytes.Equal(buf, buf2))
+	defer func() { require.NoError(t, rawFile.Close()) }()
 
-	// Verify the contents of the metadata
-	testutil.AssertActionPrivateDataIsEmpty(t, finRepo, backupInput.ActionUID)
-	require.Zero(t, len(rVol.AppliedDiffs()))
+	restoreVolume, err := os.Open(cfg.restoreInputs[0].RestoreVol.GetPath())
+	require.NoError(t, err)
+	defer func() { require.NoError(t, restoreVolume.Close()) }()
+
+	utils.CompareReaders(t, rawFile, restoreVolume)
 }
 
 func TestRestore_IncrementalBackup_Success(t *testing.T) {
@@ -171,92 +183,58 @@ func TestRestore_IncrementalBackup_Success(t *testing.T) {
 	//   with no error.
 	//
 	// Arrange:
-	//   - A full backup, `fullBackup`, consists of 2 chunks.
-	//   - An incremental backup, `incrementalBackup`, consists of 3 chunks.
-	//   - raw.img filled with the random data.
-	//     It's size is the same as the full backup.
-	//   - The restore file. It's size is the same
-	//     as the incremental backup's one.
+	//   - A full backup consists of 2 chunks.
+	//   - An incremental backup consists of 3 chunks.
+	//   - Restore destination volume filled with random data.
+	//     It's size is the same as the 4 chunks.
 	//
 	// Act:
 	//   Run the restore process about the incremental backup.
 	//
 	// Assert:
 	//   Check if the contents of the restore target file is as follows.
-	//     chunk0, 1: the same as the fake raw.img.
-	//     chunk2: zero filled.
+	//     chunk 0, 1, 2: the same as the incremental backup.
+	//     chunk 3: zero filled.
 
 	// Arrange
-	k8sRepo, rbdRepo, volumeInfo := fake.NewStorage()
-	nlvRepo, finRepo, _ := testutil.CreateNLVAndFinRepoForTest(t)
+	fullBackupVolumeSize := defaultChunkSize * 2
+	incrementalVolumeSize := defaultChunkSize * 3
+	blockDeviceSize := defaultChunkSize * 4
 
-	rawImageChunkSize := uint64(4096)
+	cfg := setup(t, &setupInput{
+		// Create an incremental backup
+		enableIncrementalBackup: true,
+		volumeSize: []uint64{
+			fullBackupVolumeSize,
+			incrementalVolumeSize,
+		},
+		blockDeviceSize: []uint64{
+			blockDeviceSize,
+			blockDeviceSize,
+		},
+	})
 
-	fullSnapshotSize := rawImageChunkSize * 2
-	fullSnapshot := rbdRepo.CreateFakeSnapshot(utils.GetUniqueName("snap-"),
-		fullSnapshotSize, time.Now())
-	fullBackupInput := testutil.NewBackupInput(k8sRepo, volumeInfo,
-		fullSnapshot.ID, nil, rawImageChunkSize)
-	fullBackupInput.Repo = finRepo
-	fullBackupInput.KubernetesRepo = k8sRepo
-	fullBackupInput.RBDRepo = rbdRepo
-	fullBackupInput.NodeLocalVolumeRepo = nlvRepo
-
-	incrementalSnapshotSize := rawImageChunkSize * 3
-	incrementalSnapshot := rbdRepo.CreateFakeSnapshot(utils.GetUniqueName("snap-"),
-		incrementalSnapshotSize, time.Now())
-	incrementalBackupInput := testutil.NewBackupInput(k8sRepo, volumeInfo,
-		incrementalSnapshot.ID, &fullSnapshot.ID, rawImageChunkSize)
-	incrementalBackupInput.Repo = finRepo
-	incrementalBackupInput.KubernetesRepo = k8sRepo
-	incrementalBackupInput.RBDRepo = rbdRepo
-	incrementalBackupInput.NodeLocalVolumeRepo = nlvRepo
-
-	// Create a full backup
-	fullBackup := backup.NewBackup(fullBackupInput)
-	err := fullBackup.Perform()
-	require.NoError(t, err)
-
-	// Create an incremental backup
-	incrementalBackup := backup.NewBackup(incrementalBackupInput)
-	err = incrementalBackup.Perform()
-	require.NoError(t, err)
-
-	// Fill raw.img with random data. Although this file has some data
-	// stored by fake backup process, we can replace them here because we won't
-	// use the original data in the restore process.
-	buf := testutil.FillRawImageWithRandomData(t, nlvRepo.GetRawImagePath(), fullSnapshotSize)
-
-	// Create the restore file
-	restorePath := testutil.CreateRestoreFileForTest(t, incrementalSnapshotSize)
-	rVol := fake.NewRestoreVolume(restorePath)
+	testutil.FillFileRandomData(
+		t,
+		cfg.restoreInputs[1].RestoreVol.GetPath(),
+		defaultChunkSize*4)
 
 	// Act
-	r := NewRestore(testutil.NewRestoreInputTemplate(
-		incrementalBackupInput, rVol, rawImageChunkSize, incrementalBackupInput.TargetSnapshotID))
-	err = r.Perform()
-	require.NoError(t, err)
+	r := NewRestore(cfg.restoreInputs[1])
+	require.NoError(t, r.Perform())
 
 	// Assert
-	testutil.AssertActionPrivateDataIsEmpty(t, finRepo, fullBackupInput.ActionUID)
-
-	buf2 := make([]byte, incrementalSnapshotSize)
-	restoreFile, err := os.Open(rVol.GetPath())
+	restoreVolume, err := os.Open(cfg.restoreInputs[1].RestoreVol.GetPath())
 	require.NoError(t, err)
-	rn, err := restoreFile.Read(buf2)
+	defer func() { require.NoError(t, restoreVolume.Close()) }()
+	restoreData := make([]byte, blockDeviceSize)
+	_, err = restoreVolume.Read(restoreData)
 	require.NoError(t, err)
-	require.Equal(t, int(incrementalSnapshotSize), rn)
-	require.True(t, bytes.Equal(buf, buf2[:fullSnapshotSize]))
-	zeroBuf := make([]byte, incrementalSnapshotSize-fullSnapshotSize)
-	require.True(t, bytes.Equal(buf2[fullSnapshotSize:], zeroBuf))
 
-	assert.Equal(t, 3, len(rVol.AppliedDiffs()))
-	assert.Equal(t, uint64(0), rVol.AppliedDiffs()[0].ReadOffset)
-	assert.Equal(t, fullBackupInput.MaxPartSize, rVol.AppliedDiffs()[0].ReadLength)
-	assert.Equal(t, fullBackupInput.MaxPartSize, rVol.AppliedDiffs()[1].ReadOffset)
-	assert.Equal(t, fullBackupInput.MaxPartSize, rVol.AppliedDiffs()[1].ReadLength)
-	assert.Equal(t, fullBackupInput.MaxPartSize*2, rVol.AppliedDiffs()[2].ReadOffset)
-	assert.Equal(t, fullBackupInput.MaxPartSize, rVol.AppliedDiffs()[2].ReadLength)
+	// Verify the contents of the restore file.
+	assert.Equal(t, cfg.volumeRaws[1], restoreData[:incrementalVolumeSize])
+	zeroData := make([]byte, defaultChunkSize)
+	assert.Equal(t, zeroData, restoreData[incrementalVolumeSize:])
 }
 
 func TestRestore_ErrorBusy(t *testing.T) {

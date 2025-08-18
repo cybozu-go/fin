@@ -8,12 +8,12 @@ import (
 
 	"bufio"
 	"compress/gzip"
-	"crypto/sha256"
 	"io"
 	"path/filepath"
 	"unsafe"
 
 	"github.com/cybozu-go/fin/internal/diffgenerator"
+	"github.com/cybozu-go/fin/test/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sys/unix"
@@ -45,11 +45,11 @@ func TestApplyDiffToRawImage_success(t *testing.T) {
 	fileInfo, err := os.Stat(gotFilePath)
 	assert.NoError(t, err)
 	assert.Equal(t, int64(16*1024*1024), fileInfo.Size())
-	compareReaders(t, openFileResized(t, gotFilePath, 100*1024*1024), openGZFile(t, "testdata/full-raw-img.gz"))
+	utils.CompareReaders(t, openFileResized(t, gotFilePath, 100*1024*1024), openGZFile(t, "testdata/full-raw-img.gz"))
 
 	err = applyDiffToRawImage(gotFilePath, openGZFile(t, "testdata/diff.gz"), "snap20", "snap21", 8*1024*1024)
 	assert.NoError(t, err)
-	compareReaders(t, openFileResized(t, gotFilePath, 100*1024*1024), openGZFile(t, "testdata/diff-raw-img.gz"))
+	utils.CompareReaders(t, openFileResized(t, gotFilePath, 100*1024*1024), openGZFile(t, "testdata/diff-raw-img.gz"))
 }
 
 func TestApplyDiffToBlockDevice_success(t *testing.T) {
@@ -58,11 +58,11 @@ func TestApplyDiffToBlockDevice_success(t *testing.T) {
 
 	err := applyDiffToBlockDevice(blockDevicePath, openGZFile(t, "testdata/full.gz"), "", "snap20")
 	assert.NoError(t, err)
-	compareReaders(t, openFile(t, blockDevicePath), openGZFile(t, "testdata/full-raw-img.gz"))
+	utils.CompareReaders(t, openFile(t, blockDevicePath), openGZFile(t, "testdata/full-raw-img.gz"))
 
 	err = applyDiffToBlockDevice(blockDevicePath, openGZFile(t, "testdata/diff.gz"), "snap20", "snap21")
 	assert.NoError(t, err)
-	compareReaders(t, openFile(t, blockDevicePath), openGZFile(t, "testdata/diff-raw-img.gz"))
+	utils.CompareReaders(t, openFile(t, blockDevicePath), openGZFile(t, "testdata/diff-raw-img.gz"))
 }
 
 func TestZeroFill_success(t *testing.T) {
@@ -676,7 +676,7 @@ func TestApplyDiffToBlockDevice_success_ExistentFromSnap(t *testing.T) {
 	)
 
 	// Ensure the rest of the block device is zeroed out
-	compareReaders(t, file, io.LimitReader(&zeroReader{}, int64(getBlockDeviceSize(t, blockDevicePath)-35)))
+	utils.CompareReaders(t, file, io.LimitReader(&zeroReader{}, int64(getBlockDeviceSize(t, blockDevicePath)-35)))
 }
 
 func TestApplyDiffToBlockDevice_success_MissingFromSnap(t *testing.T) {
@@ -731,7 +731,7 @@ func TestApplyDiffToBlockDevice_success_MissingFromSnap(t *testing.T) {
 	)
 
 	// Ensure the rest of the block device is zeroed out
-	compareReaders(t, file, io.LimitReader(&zeroReader{}, int64(getBlockDeviceSize(t, blockDevicePath)-30)))
+	utils.CompareReaders(t, file, io.LimitReader(&zeroReader{}, int64(getBlockDeviceSize(t, blockDevicePath)-30)))
 }
 
 func TestApplyDiffToBlockDevice_success_VariousZeroDataRecords(t *testing.T) {
@@ -884,7 +884,7 @@ func TestApplyDiffToBlockDevice_success_VariousZeroDataRecords(t *testing.T) {
 			assert.Equal(t, tc.expected, head)
 
 			// Verify that the remaining part of the block device is filled with zeros
-			compareReaders(
+			utils.CompareReaders(
 				t,
 				file,
 				io.LimitReader(&zeroReader{}, int64(getBlockDeviceSize(t, blockDevicePath)-len(tc.expected))),
@@ -1328,28 +1328,6 @@ func openGZFile(t *testing.T, path string) io.Reader {
 	})
 
 	return uncompressed
-}
-
-func compareReaders(t *testing.T, gotReader, expectedReader io.Reader) {
-	t.Helper()
-
-	gotHash, err := calcFileHash(gotReader)
-	require.NoError(t, err)
-
-	expectedHash, err := calcFileHash(expectedReader)
-	require.NoError(t, err)
-
-	assert.Equal(t, expectedHash, gotHash)
-}
-
-func calcFileHash(file io.Reader) ([]byte, error) {
-	h := sha256.New()
-	if _, err := io.Copy(h, file); err != nil {
-		return nil, err
-	}
-	hash := h.Sum(nil)
-
-	return hash, nil
 }
 
 func zerooutWholeBlockDevice(t *testing.T, path string) {

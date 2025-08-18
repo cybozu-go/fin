@@ -121,14 +121,8 @@ func (d *Deletion) applyAllDiffParts(raw, diff *job.BackupMetadataEntry) error {
 
 	partCount := int(math.Ceil(float64(diff.SnapSize) / float64(diff.PartSize)))
 	for i := privateData.NextPatchPart; i < partCount; i++ {
-		sourceSnapshotName := raw.SnapName
-		if i != 0 {
-			sourceSnapshotName = fmt.Sprintf("%s-offset-%d", diff.SnapName, uint64(i)*diff.PartSize)
-		}
-		targetSnapshotName := diff.SnapName
-		if i != partCount-1 {
-			targetSnapshotName = fmt.Sprintf("%s-offset-%d", diff.SnapName, uint64(i+1)*diff.PartSize)
-		}
+		sourceSnapshotName, targetSnapshotName :=
+			job.CalcSnapshotNamesWithOffset(raw.SnapName, diff.SnapName, i, partCount, diff.PartSize)
 		diffPartPath := d.nodeLocalVolumeRepo.GetDiffPartPath(diff.SnapID, i)
 		if err := d.rbdRepo.ApplyDiffToRawImage(
 			d.nodeLocalVolumeRepo.GetRawImagePath(),

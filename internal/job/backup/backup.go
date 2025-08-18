@@ -290,14 +290,8 @@ func (b *Backup) declareStoringCompleted(targetSnapshot *model.RBDSnapshot) erro
 func (b *Backup) loopApplyDiff(privateData *backupPrivateData, targetSnapshot *model.RBDSnapshot) error {
 	partCount := int(math.Ceil(float64(targetSnapshot.Size) / float64(b.maxPartSize)))
 	for i := privateData.NextPatchPart; i < partCount; i++ {
-		sourceSnapshotName := ""
-		if i != 0 {
-			sourceSnapshotName = fmt.Sprintf("%s-offset-%d", targetSnapshot.Name, uint64(i)*b.maxPartSize)
-		}
-		targetSnapshotName := targetSnapshot.Name
-		if i != partCount-1 {
-			targetSnapshotName = fmt.Sprintf("%s-offset-%d", targetSnapshot.Name, uint64(i+1)*b.maxPartSize)
-		}
+		sourceSnapshotName, targetSnapshotName :=
+			job.CalcSnapshotNamesWithOffset("", targetSnapshot.Name, i, partCount, b.maxPartSize)
 		if err := b.rbdRepo.ApplyDiffToRawImage(
 			b.nodeLocalVolumeRepo.GetRawImagePath(),
 			b.nodeLocalVolumeRepo.GetDiffPartPath(b.targetSnapshotID, i),
