@@ -1,9 +1,0 @@
-apiVersion: fin.cybozu.io/v1
-kind: FinBackup
-metadata:
-  name: finbackup-test
-  namespace: rook-ceph
-spec:
-  pvc: test-pvc
-  pvcNamespace: test-ns
-  node: minikube-worker

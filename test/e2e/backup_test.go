@@ -3,12 +3,48 @@ package e2e
 import (
 	"fmt"
 	"path/filepath"
+	"time"
 
+	finv1 "github.com/cybozu-go/fin/api/v1"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	corev1 "k8s.io/api/core/v1"
 )
 
 func backupTestSuite() {
+	var pvc *corev1.PersistentVolumeClaim
+	var pod *corev1.Pod
+	var finbackup *finv1.FinBackup
+	var err error
+
+	BeforeAll(func(ctx SpecContext) {
+		By("creating a namespace")
+		ns := GetNamespace(pvcNamespace)
+		err = CreateNamespace(ctx, k8sClient, ns)
+		Expect(err).NotTo(HaveOccurred())
+
+		By("creating a PVC")
+		pvc, err = GetPVC(pvcNamespace, "test-pvc", "Block", "rook-ceph-block", "ReadWriteOnce", "100Mi")
+		Expect(err).NotTo(HaveOccurred())
+		err = CreatePVC(ctx, k8sClient, pvc)
+		Expect(err).NotTo(HaveOccurred())
+
+		By("creating a pod")
+		pod, err = GetPod(pvcNamespace, "test-pod", "test-pvc", "ghcr.io/cybozu/ubuntu:24.04", "/data")
+		Expect(err).NotTo(HaveOccurred())
+		err = CreatePod(ctx, k8sClient, pod)
+		Expect(err).NotTo(HaveOccurred())
+		err = WaitForPodReady(ctx, k8sClient, pvcNamespace, "test-pod", 2*time.Minute)
+		Expect(err).NotTo(HaveOccurred())
+
+		By("writing data to the pvc")
+		_, stderr, err := kubectl("exec", "-n", pvcNamespace, "test-pod", "--",
+			"dd", "if=/dev/urandom", "of=/data", "bs=1K", "count=1")
+		Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
+		_, stderr, err = kubectl("exec", "-n", pvcNamespace, "test-pod", "--", "sync")
+		Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
+	})
+
 	// CSATEST-1551
 	// Description:
 	//   Create a full backup with no error.
@@ -23,41 +59,19 @@ func backupTestSuite() {
 	//   - FinBackup.conditions["ReadyToUse"] is true.
 	//   - the head of the raw.img in the PVC's directory is filled
 	//     with the same data as the head of the PVC.
-	It("should create full backup", func() {
-		By("creating a namespace")
-		_, stderr, err := kubectl("apply", "-f", "testdata/namespace.yaml")
-		Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
-
-		By("creating a PVC")
-		_, stderr, err = kubectl("apply", "-f", "testdata/backup-target-pvc.yaml")
-		Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
-		_, stderr, err = kubectl("wait", "pvc", "-n", pvcNamespace, "test-pvc",
-			"--for=jsonpath={.status.phase}=Bound", "--timeout=2m")
-		Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
-
-		By("creating a pod")
-		_, stderr, err = kubectl("apply", "-f", "testdata/test-pod.yaml")
-		Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
-		_, stderr, err = kubectl("wait", "pod", "-n", pvcNamespace, "test-pod",
-			"--for=condition=Ready", "--timeout=2m")
-		Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
-
-		By("writing data to the pvc")
-		_, stderr, err = kubectl("exec", "-n", pvcNamespace, "test-pod", "--",
-			"dd", "if=/dev/urandom", "of=/data", "bs=1K", "count=1")
-		Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
-		_, stderr, err = kubectl("exec", "-n", pvcNamespace, "test-pod", "--", "sync")
-		Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
-		expectedWrittenData, stderr, err := kubectl("exec", "-n", pvcNamespace, "test-pod", "--",
+	It("should create full backup", func(ctx SpecContext) {
+		By("reading the data from the pvc")
+		expectedWrittenData, stderr, err := kubectl("exec", "-n", pvcNamespace, pod.Name, "--",
 			"dd", "if=/data", "bs=1K", "count=1")
 		Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
 
 		By("creating a backup")
-		_, stderr, err = kubectl("apply", "-f", "testdata/finbackup.yaml")
-		Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
-		_, stderr, err = kubectl("wait", "finbackup", "-n", rookNamespace, "finbackup-test",
-			"--for=condition=ReadyToUse", "--timeout=2m")
-		Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
+		finbackup, err = GetFinBackup(rookNamespace, "finbackup-test", pvcNamespace, pvc.Name, "minikube-worker")
+		Expect(err).NotTo(HaveOccurred())
+		err = CreateFinBackup(ctx, ctrlClient, finbackup)
+		Expect(err).NotTo(HaveOccurred())
+		err = WaitForFinBackupReady(ctx, ctrlClient, rookNamespace, finbackup.GetName(), 2*time.Minute)
+		Expect(err).NotTo(HaveOccurred())
 
 		By("verifying the data in raw.img")
 		// `--native-ssh=false` is used to avoid issues of conversion from LF to CRLF.
@@ -81,20 +95,12 @@ func backupTestSuite() {
 	//   - Deleted the raw.img file.
 	//   - Deleted the cleanup and deletion jobs.
 	//   - Deleted the snapshot reference in FinBackup.
-	It("should delete full backup", func() {
-		By("retrieving the necessary metadata of finbackup")
-		finbackupUID, stderr, err := kubectl("get", "finbackup", "-n", rookNamespace, "finbackup-test",
-			"-ojsonpath={.metadata.uid}")
-		Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
-		finbackupRBDImage, stderr, err := kubectl("get", "finbackup", "-n", rookNamespace, "finbackup-test",
-			`-ojsonpath={.metadata.annotations.fin\.cybozu\.io/backup-target-rbd-image}`)
-		Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
-
+	It("should delete full backup", func(ctx SpecContext) {
 		By("deleting the backup")
-		_, stderr, err = kubectl("delete", "finbackup", "-n", rookNamespace, "finbackup-test")
-		Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
-		_, stderr, err = kubectl("wait", "finbackup", "-n", rookNamespace, "finbackup-test", "--for=delete", "--timeout=3m")
-		Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
+		err = DeleteFinBackup(ctx, ctrlClient, rookNamespace, finbackup.Name)
+		Expect(err).NotTo(HaveOccurred())
+		err = WaitForFinBackupDeletion(ctx, ctrlClient, rookNamespace, finbackup.Name, 2*time.Minute)
+		Expect(err).NotTo(HaveOccurred())
 
 		By("verifying the deletion of raw.img")
 		rawImgPath := filepath.Join("/fin", pvcNamespace, pvcName, "raw.img")
@@ -102,26 +108,29 @@ func backupTestSuite() {
 		Expect(err).NotTo(HaveOccurred(), "raw.img file should be deleted. stdout: %s, stderr: %s", stdout, stderr)
 
 		By("verifying the deletion of jobs")
-		stdout, stderr, err = kubectl("get", "job", "-n", rookNamespace, fmt.Sprintf("fin-cleanup-%s", finbackupUID))
-		Expect(err).To(HaveOccurred(), "Cleanup job should be deleted. stdout: %s, stderr: %s", stdout, stderr)
-		stdout, stderr, err = kubectl("get", "job", "-n", rookNamespace, fmt.Sprintf("fin-deletion-%s", finbackupUID))
-		Expect(err).To(HaveOccurred(), "Deletion job should be deleted. stdout: %s, stderr: %s", stdout, stderr)
+		err = WaitForJobDeletion(ctx, k8sClient, rookNamespace, fmt.Sprintf("fin-cleanup-%s", finbackup.UID), 10*time.Second)
+		Expect(err).NotTo(HaveOccurred(), "Cleanup job should be deleted.")
+		err = WaitForJobDeletion(ctx, k8sClient, rookNamespace, fmt.Sprintf("fin-deletion-%s", finbackup.UID), 10*time.Second)
+		Expect(err).NotTo(HaveOccurred(), "Deletion job should be deleted.")
 
 		By("verifying the deletion of snapshot reference in FinBackup")
+		rbdImage := finbackup.Annotations["fin.cybozu.io/backup-target-rbd-image"]
 		stdout, stderr, err = kubectl("exec", "-n", rookNamespace, "deploy/rook-ceph-tools", "--",
-			"rbd", "info", fmt.Sprintf("%s/%s@fin-backup-%s", poolName, finbackupRBDImage, finbackupUID))
+			"rbd", "info", fmt.Sprintf("%s/%s@fin-backup-%s", poolName, rbdImage, finbackup.UID))
 		Expect(err).To(HaveOccurred(), "Snapshot should be deleted. stdout: %s, stderr: %s", stdout, stderr)
 	})
 
-	AfterAll(func() {
+	AfterAll(func(ctx SpecContext) {
 		By("deleting the pod")
-		_, stderr, err := kubectl("delete", "-f", "testdata/test-pod.yaml")
-		Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
+		err := DeletePod(ctx, k8sClient, pod.Namespace, pod.Name)
+		Expect(err).NotTo(HaveOccurred())
+
 		By("deleting the PVC")
-		_, stderr, err = kubectl("delete", "-f", "testdata/backup-target-pvc.yaml")
-		Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
+		err = DeletePVC(ctx, k8sClient, pvc.Namespace, pvc.Name)
+		Expect(err).NotTo(HaveOccurred())
+
 		By("deleting the namespace")
-		_, stderr, err = kubectl("delete", "-f", "testdata/namespace.yaml")
-		Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
+		err = DeleteNamespace(ctx, k8sClient, pvcNamespace)
+		Expect(err).NotTo(HaveOccurred())
 	})
 }

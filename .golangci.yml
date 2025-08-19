@@ -24,6 +24,11 @@ linters:
     - unconvert
     - unparam
     - unused
+  exclusions:
+    rules:
+      - linters:
+          - lll
+        path: "test/e2e/util.go"
 formatters:
   enable:
     - gofmt
