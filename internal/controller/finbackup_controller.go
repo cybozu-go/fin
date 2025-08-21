@@ -539,7 +539,7 @@ func (r *FinBackupReconciler) createOrUpdateBackupJob(
 	backupTargetPVCUID string, maxPartSize *resource.Quantity,
 ) error {
 	var job batchv1.Job
-	job.SetName("fin-backup-" + string(backup.GetUID()))
+	job.SetName(backupJobName(backup))
 	job.SetNamespace(r.cephClusterNamespace)
 	_, err := ctrl.CreateOrUpdate(ctx, r.Client, &job, func() error {
 		labels := job.GetLabels()
