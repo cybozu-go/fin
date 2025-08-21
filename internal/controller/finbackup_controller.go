@@ -52,7 +52,9 @@ const (
 )
 
 var (
-	errSnapshotNotFound = errors.New("snapshot not found")
+	errSnapshotNotFound     = errors.New("snapshot not found")
+	cleanupJobRequeueAfter  = 5 * time.Second
+	deletionJobRequeueAfter = 1 * time.Minute
 )
 
 // FinBackupReconciler reconciles a FinBackup object
@@ -312,7 +314,7 @@ func (r *FinBackupReconciler) reconcileDelete(ctx context.Context, backup *finv1
 			return ctrl.Result{}, err
 		}
 		if !done {
-			return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+			return ctrl.Result{RequeueAfter: cleanupJobRequeueAfter}, nil
 		}
 
 		err = r.createOrUpdateDeletionJob(ctx, backup)
@@ -331,7 +333,7 @@ func (r *FinBackupReconciler) reconcileDelete(ctx context.Context, backup *finv1
 			return ctrl.Result{}, err
 		}
 		if !done {
-			return ctrl.Result{RequeueAfter: 1 * time.Minute}, nil
+			return ctrl.Result{RequeueAfter: deletionJobRequeueAfter}, nil
 		}
 
 		propagationPolicy := metav1.DeletePropagationBackground
@@ -405,6 +407,9 @@ func (r *FinBackupReconciler) removeSnapshot(rbdPool, rbdImage, snapName string)
 func (r *FinBackupReconciler) getSnapshot(rbdPool, rbdImage, snapName string) (*model.RBDSnapshot, error) {
 	snapshots, err := r.snapRepo.ListSnapshots(rbdPool, rbdImage)
 	if err != nil {
+		if errors.Is(err, model.ErrNotFound) {
+			return nil, errSnapshotNotFound
+		}
 		return nil, fmt.Errorf("failed to list snapshots: %w", err)
 	}
 	if len(snapshots) == 0 {
