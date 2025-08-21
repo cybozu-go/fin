@@ -7,10 +7,16 @@ import (
 	"fmt"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
+	finv1 "github.com/cybozu-go/fin/api/v1"
+	"github.com/cybozu-go/fin/internal/infrastructure/nlv"
+	"github.com/cybozu-go/fin/internal/model"
+	"github.com/go-logr/logr"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	storagev1 "k8s.io/api/storage/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -18,6 +24,7 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	storagehelpers "k8s.io/component-helpers/storage/volume"
 	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
@@ -26,11 +33,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
-
-	finv1 "github.com/cybozu-go/fin/api/v1"
-	"github.com/cybozu-go/fin/internal/infrastructure/nlv"
-	"github.com/cybozu-go/fin/internal/model"
-	"github.com/go-logr/logr"
 )
 
 const (
@@ -88,6 +90,20 @@ func NewFinBackupReconciler(
 	}
 }
 
+func (r *FinBackupReconciler) checkCephCluster(storageClass *storagev1.StorageClass) error {
+	if !strings.HasSuffix(storageClass.Provisioner, ".rbd.csi.ceph.com") {
+		return fmt.Errorf("only RBD storage is supported, got: %q", storageClass.Provisioner)
+	}
+	clusterID, ok := storageClass.Parameters["clusterID"]
+	if !ok {
+		return errors.New("clusterID not found in StorageClass")
+	}
+	if clusterID != r.cephClusterNamespace {
+		return fmt.Errorf("ceph cluster %q is not managed by this fin instance", clusterID)
+	}
+	return nil
+}
+
 //+kubebuilder:rbac:groups=fin.cybozu.io,resources=finbackups,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=fin.cybozu.io,resources=finbackups/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=fin.cybozu.io,resources=finbackups/finalizers,verbs=update
@@ -116,6 +132,25 @@ func (r *FinBackupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, err
 	}
 
+	var pvc corev1.PersistentVolumeClaim
+	err = r.Get(ctx, client.ObjectKey{Namespace: backup.Spec.PVCNamespace, Name: backup.Spec.PVC}, &pvc)
+	if err != nil {
+		logger.Error(err, "failed to get backup target PVC")
+		return ctrl.Result{}, err
+	}
+
+	scName := storagehelpers.GetPersistentVolumeClaimClass(&pvc)
+	var storageClass storagev1.StorageClass
+	if err := r.Get(ctx, types.NamespacedName{Name: scName}, &storageClass); err != nil {
+		return ctrl.Result{}, fmt.Errorf("failed to get StorageClass: %q: %w", scName, err)
+	}
+	if err := r.checkCephCluster(&storageClass); err != nil {
+		logger.Error(err, "failed to validate Ceph cluster compatibility",
+			"pvc", fmt.Sprintf("%s/%s", pvc.Namespace, pvc.Name), "storageClass", scName,
+			"cephClusterNamespace", r.cephClusterNamespace)
+		return ctrl.Result{}, nil
+	}
+
 	if !backup.DeletionTimestamp.IsZero() {
 		return r.reconcileDelete(ctx, &backup)
 	}
@@ -134,13 +169,6 @@ func (r *FinBackupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 
 	if backup.Status.SnapID == nil {
-		var pvc corev1.PersistentVolumeClaim
-		err = r.Get(ctx, client.ObjectKey{Namespace: backup.Spec.PVCNamespace, Name: backup.Spec.PVC}, &pvc)
-		if err != nil {
-			logger.Error(err, "failed to get backup target PVC")
-			return ctrl.Result{}, err
-		}
-
 		backup.SetLabels(map[string]string{
 			labelBackupTargetPVCUID: string(pvc.GetUID()),
 		})
@@ -193,13 +221,6 @@ func (r *FinBackupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		}
 		// FIXME: The following "requeue after" is temporary code.
 		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
-	}
-
-	var pvc corev1.PersistentVolumeClaim
-	err = r.Get(ctx, client.ObjectKey{Namespace: backup.Spec.PVCNamespace, Name: backup.Spec.PVC}, &pvc)
-	if err != nil {
-		logger.Error(err, "failed to get backup target PVC")
-		return ctrl.Result{}, err
 	}
 
 	err = checkPVCUIDConsistency(&backup, &pvc)
