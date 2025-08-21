@@ -14,6 +14,7 @@ import (
 
 type Restore struct {
 	repo                model.FinRepository
+	rbdRepo             model.RBDRepository
 	nodeLocalVolumeRepo model.NodeLocalVolumeRepository
 	restoreVol          model.RestoreVolume
 	retryInterval       time.Duration
@@ -26,6 +27,7 @@ type Restore struct {
 func NewRestore(in *input.Restore) *Restore {
 	return &Restore{
 		repo:                in.Repo,
+		rbdRepo:             in.RBDRepo,
 		nodeLocalVolumeRepo: in.NodeLocalVolumeRepo,
 		restoreVol:          in.RestoreVol,
 		retryInterval:       in.RetryInterval,
@@ -98,7 +100,7 @@ func (r *Restore) doRestore() error {
 		return fmt.Errorf("restore raw image phase failed: %w", err)
 	}
 
-	if err := r.doRestoreDiffPhase(d, metadata.Diff); err != nil {
+	if err := r.doRestoreDiffPhase(d, metadata); err != nil {
 		return fmt.Errorf("restore diff phase failed: %w", err)
 	}
 
@@ -158,31 +160,38 @@ func (r *Restore) loopCopyChunk(privateData *restorePrivateData, rawImageSize ui
 	return nil
 }
 
-func (r *Restore) doRestoreDiffPhase(privateData *restorePrivateData, diffs []*job.BackupMetadataEntry) error {
+func (r *Restore) doRestoreDiffPhase(privateData *restorePrivateData, metadata *job.BackupMetadata) error {
 	if privateData.Phase != RestoreDiff {
 		return nil
 	}
 
-	for _, diff := range diffs {
-		err := r.loopApplyDiff(privateData, diff)
+	switch len(metadata.Diff) {
+	case 0:
+		// No diffs to apply, just return.
+	case 1:
+		err := r.loopApplyDiff(privateData, metadata.Raw, metadata.Diff[0])
 		if err != nil {
 			return fmt.Errorf("failed to apply diffs: %w", err)
 		}
-		if diff.SnapID == r.targetSnapshotID {
-			break
-		}
+	default:
+		return errors.New("multiple diffs are not currently supported")
 	}
 
 	privateData.Phase = Completed
 	return setRestorePrivateData(r.repo, r.actionUID, privateData)
 }
 
-func (r *Restore) loopApplyDiff(privateData *restorePrivateData, diff *job.BackupMetadataEntry) error {
-	partCount := int(math.Ceil(float64(diff.SnapSize) / float64(diff.PartSize)))
+func (r *Restore) loopApplyDiff(
+	privateData *restorePrivateData,
+	source *job.BackupMetadataEntry,
+	target *job.BackupMetadataEntry) error {
+	partCount := int(math.Ceil(float64(target.SnapSize) / float64(target.PartSize)))
 	for i := privateData.NextDiffPart; i < partCount; i++ {
-		if err := r.restoreVol.ApplyDiff(
-			r.nodeLocalVolumeRepo.GetDiffPartPath(diff.SnapID, i),
-		); err != nil {
+		sourceSnapshotName, targetSnapshotName :=
+			job.CalcSnapshotNamesWithOffset(source.SnapName, target.SnapName, i, partCount, target.PartSize)
+		if err := r.rbdRepo.ApplyDiffToBlockDevice(r.restoreVol.GetPath(),
+			r.nodeLocalVolumeRepo.GetDiffPartPath(target.SnapID, i),
+			sourceSnapshotName, targetSnapshotName); err != nil {
 			return fmt.Errorf("failed to apply diff: %w", err)
 		}
 

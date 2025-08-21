@@ -8,6 +8,7 @@ import (
 
 type Restore struct {
 	Repo                model.FinRepository
+	RBDRepo             model.RBDRepository
 	NodeLocalVolumeRepo model.NodeLocalVolumeRepository
 	RestoreVol          model.RestoreVolume
 	RetryInterval       time.Duration

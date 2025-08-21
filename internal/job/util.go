@@ -53,3 +53,15 @@ func SetBackupMetadata(repo model.FinRepository, metadata *BackupMetadata) error
 	}
 	return nil
 }
+
+func CalcSnapshotNamesWithOffset(
+	sourceSnapshotName, targetSnapshotName string,
+	idx, partCount int, partSize uint64) (string, string) {
+	if idx != 0 {
+		sourceSnapshotName = fmt.Sprintf("%s-offset-%d", targetSnapshotName, uint64(idx)*partSize)
+	}
+	if idx != partCount-1 {
+		targetSnapshotName = fmt.Sprintf("%s-offset-%d", targetSnapshotName, uint64(idx+1)*partSize)
+	}
+	return sourceSnapshotName, targetSnapshotName
+}

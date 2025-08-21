@@ -1,12 +1,16 @@
 package testutil
 
 import (
+	"bytes"
 	"crypto/rand"
 	"fmt"
 	"os"
+	"os/exec"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/cybozu-go/fin/internal/infrastructure/ceph"
 	"github.com/cybozu-go/fin/internal/infrastructure/db"
 	"github.com/cybozu-go/fin/internal/infrastructure/fake"
 	"github.com/cybozu-go/fin/internal/infrastructure/nlv"
@@ -48,7 +52,9 @@ func NewBackupInput(k8sRepo model.KubernetesRepository, volume *fake.VolumeInfo,
 func NewRestoreInputTemplate(bi *input.Backup,
 	rVol model.RestoreVolume, chunkSize uint64, snapID int) *input.Restore {
 	return &input.Restore{
-		Repo:                bi.Repo,
+		Repo: bi.Repo,
+		// Restore module uses only ApplyDiffToBlockDevice, so fake is not needed here.
+		RBDRepo:             ceph.NewRBDRepository(),
 		NodeLocalVolumeRepo: bi.NodeLocalVolumeRepo,
 		RestoreVol:          rVol,
 		RawImageChunkSize:   chunkSize,
@@ -59,12 +65,12 @@ func NewRestoreInputTemplate(bi *input.Backup,
 	}
 }
 
-func FillRawImageWithRandomData(t *testing.T, rawImagePath string, size uint64) []byte {
+func FillFileRandomData(t *testing.T, path string, size uint64) []byte {
 	t.Helper()
 	buf := make([]byte, size)
 	_, err := rand.Read(buf)
 	require.NoError(t, err)
-	raw, err := os.Create(rawImagePath)
+	raw, err := os.Create(path)
 	require.NoError(t, err)
 	defer func() { _ = raw.Close() }()
 	_, err = raw.Write(buf)
@@ -92,17 +98,40 @@ func CreateNLVAndFinRepoForTest(t *testing.T) (*nlv.NodeLocalVolumeRepository, m
 	return nlvRepo, repo, tempDir
 }
 
-func CreateRestoreFileForTest(t *testing.T, size uint64) string {
+func CreateLoopDevice(t *testing.T, size uint64) string {
 	t.Helper()
 
-	restoreFile, err := os.CreateTemp("", "fake-restore-*.img")
+	loopbackFile, err := os.CreateTemp("", "fake-restore-*.img")
 	require.NoError(t, err)
-	defer func() { _ = restoreFile.Close() }()
-	restorePath := restoreFile.Name()
-	t.Cleanup(func() { _ = os.Remove(restorePath) })
-	err = restoreFile.Truncate(int64(size))
+	t.Cleanup(func() {
+		_ = os.Remove(loopbackFile.Name())
+	})
+	defer func() { _ = loopbackFile.Close() }()
+
+	err = loopbackFile.Truncate(int64(size))
 	require.NoError(t, err)
-	return restorePath
+
+	loopbackFilePath := loopbackFile.Name()
+	_, err = executeSudo("losetup", "-f", loopbackFilePath)
+	require.NoError(t, err, "failed to create loop device")
+	// get loop device path
+	stdout, err := executeSudo("losetup", "-j", loopbackFilePath)
+	require.NoError(t, err, "failed to get loop device path")
+	devicePath := strings.Split(string(stdout), ":")[0]
+	require.NotEmpty(t, devicePath, "loop device path should not be empty")
+	t.Cleanup(func() {
+		_, err = executeSudo("losetup", "-d", devicePath)
+		require.NoError(t, err, "failed to delete loop device")
+	})
+
+	_, err = executeSudo("chmod", "666", devicePath)
+	require.NoError(t, err, "failed to change permissions of loop device")
+	t.Cleanup(func() {
+		_, err := executeSudo("chmod", "660", devicePath)
+		require.NoError(t, err, "failed to change permissions of loop device back")
+	})
+
+	return devicePath
 }
 
 func CreateFakeRawImgFileForTest(t *testing.T, nlvRepo model.NodeLocalVolumeRepository, size uint64) string {
@@ -119,4 +148,14 @@ func CreateFakeRawImgFileForTest(t *testing.T, nlvRepo model.NodeLocalVolumeRepo
 	_, err = f.Write(buf)
 	require.NoError(t, err)
 	return filePath
+}
+
+func executeSudo(args ...string) ([]byte, error) {
+	cmd := exec.Command("sudo", args...)
+
+	var stdoutBuf bytes.Buffer
+	cmd.Stdout = &stdoutBuf
+
+	err := cmd.Run()
+	return stdoutBuf.Bytes(), err
 }
