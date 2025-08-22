@@ -44,6 +44,7 @@ type setupInput struct {
 
 type setupOutput struct {
 	nlvRepo model.NodeLocalVolumeRepository
+	finRepo model.FinRepository
 	// RestoreInput instance used when calling the restore module.
 	// 0 index is for the full backup, and 1 index is for the incremental backup.
 	restoreInputs []*input.Restore
@@ -124,9 +125,22 @@ func setup(t *testing.T, config *setupInput) *setupOutput {
 
 	return &setupOutput{
 		nlvRepo:       nlvRepo,
+		finRepo:       finRepo,
 		restoreInputs: restoreInputs,
 		volumeRaws:    volumeRaws,
 	}
+}
+
+func createPrivateData(t *testing.T, cfg *setupOutput, restoreInput *input.Restore, data *restorePrivateData) {
+	t.Helper()
+
+	finRepo := cfg.finRepo
+
+	err := finRepo.StartOrRestartAction(restoreInput.ActionUID, model.Restore)
+	require.NoError(t, err)
+
+	err = setRestorePrivateData(finRepo, restoreInput.ActionUID, data)
+	require.NoError(t, err)
 }
 
 func TestRestore_FullBackup_Success(t *testing.T) {
@@ -418,4 +432,113 @@ func TestRestore_FullBackup_Success_withIncrementalBackup(t *testing.T) {
 	defer func() { require.NoError(t, restoreVolume.Close()) }()
 
 	utils.CompareReaders(t, bytes.NewReader(cfg.volumeRaws[0]), restoreVolume)
+}
+
+func TestRestore_phase_skip(t *testing.T) {
+	// CSATEST-1577
+	// Description:
+	//   When restoring from a halfway point, skip processing according to the phase.
+	//
+	// Arrange:
+	//   There is a full backup.
+	//   The phase of private_data in the action_status table is set to `completed`.
+	//
+	// Act:
+	//   Fill destination volume with random data.
+	//   Run the restore process about the full backup.
+	//
+	// Assert:
+	//   The process will return nil.
+	//   The contents of the restore volume have not been restored (random data remains).
+
+	// Arrange
+	backupVolumeSize := defaultVolumeSize
+	cfg := setup(t, &setupInput{
+		volumeSize: []uint64{backupVolumeSize},
+	})
+	createPrivateData(t, cfg, cfg.restoreInputs[0], &restorePrivateData{
+		Phase: Completed,
+	})
+
+	// Act
+	randomData := testutil.FillFileRandomData(
+		t,
+		cfg.restoreInputs[0].RestoreVol.GetPath(),
+		backupVolumeSize)
+
+	r := NewRestore(cfg.restoreInputs[0])
+	require.NoError(t, r.Perform())
+
+	// Assert
+
+	// Verify the contents of the restore file.
+	restoreVolume, err := os.Open(cfg.restoreInputs[0].RestoreVol.GetPath())
+	require.NoError(t, err)
+	defer func() { require.NoError(t, restoreVolume.Close()) }()
+
+	utils.CompareReaders(t, bytes.NewReader(randomData), restoreVolume)
+}
+
+func TestRestore_doInitialPhase_success(t *testing.T) {
+	// CSATEST-1578
+	// Description:
+	//   Confirm normal processing for doInitialPhase.
+	//
+	// Arrange:
+	//   There is a full backup.
+	//   The phase of private_data in the action_status table is empty.
+	//
+	// Act:
+	//   Run doInitialPhase process about the full backup.
+	//
+	// Assert:
+	//   The process will return nil.
+	//   The phase of private_data in the action_status table is set to `discard`.
+
+	// Arrange
+	cfg := setup(t, &setupInput{})
+	restorePD := &restorePrivateData{}
+	createPrivateData(t, cfg, cfg.restoreInputs[0], restorePD)
+
+	// Act
+	r := NewRestore(cfg.restoreInputs[0])
+	require.NoError(t, r.doInitialPhase(restorePD))
+
+	// Assert
+	restorePD, err := getRestorePrivateData(cfg.finRepo, cfg.restoreInputs[0].ActionUID)
+	require.NoError(t, err)
+	assert.Equal(t, Discard, restorePD.Phase)
+}
+
+func TestRestore_doInitialPhase_skip(t *testing.T) {
+	// CSATEST-1579
+	// Description:
+	//   Confirm skip processing for doInitialPhase.
+	//
+	// Arrange:
+	//   There is a full backup.
+	//   The phase of private_data in the action_status table is `discard`.
+	//
+	// Act:
+	//   Run doInitialPhase process about the full backup.
+	//
+	// Assert:
+	//   The process will return nil.
+	//   The phase of private_data in the action_status table remains `discard`.
+
+	// Arrange
+	cfg := setup(t, &setupInput{})
+	restorePD := &restorePrivateData{
+		Phase: Discard,
+	}
+	createPrivateData(t, cfg, cfg.restoreInputs[0], restorePD)
+
+	// Act
+	r := NewRestore(cfg.restoreInputs[0])
+	require.NoError(t, r.doInitialPhase(restorePD))
+
+	// Assert
+	restorePD, err := getRestorePrivateData(cfg.finRepo, cfg.restoreInputs[0].ActionUID)
+	require.NoError(t, err)
+	assert.Equal(t, Discard, restorePD.Phase)
 }
