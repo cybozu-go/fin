@@ -1,6 +1,7 @@
 package restore
 
 import (
+	"bytes"
 	"os"
 	"testing"
 
@@ -377,4 +378,44 @@ func TestRestoreCheckError_IncrementalBackupDeleted(t *testing.T) {
 	// Assert:
 	//   The process will return an error.
 	assert.Error(t, err)
+}
+
+func TestRestore_FullBackup_Success_withIncrementalBackup(t *testing.T) {
+	// CSATEST-1576
+	// Description:
+	//   Restore from the full backup to the restore destination volume
+	//   with no error.
+	//
+	// Arrange:
+	//   - There are full backup and incremental backup.
+	//   - Restore destination volume filled with random data.
+	//
+	// Act:
+	//   Run the restore process about the full backup.
+	//
+	// Assert:
+	//   Check if the contents of the restore destination volume is
+	//   the same as the backup target volume.
+
+	// Arrange
+
+	cfg := setup(t, &setupInput{
+		enableIncrementalBackup: true,
+	})
+
+	testutil.FillFileRandomData(
+		t,
+		cfg.restoreInputs[0].RestoreVol.GetPath(),
+		defaultVolumeSize)
+
+	// Act
+	r := NewRestore(cfg.restoreInputs[0])
+	require.NoError(t, r.Perform())
+
+	// Assert
+	restoreVolume, err := os.Open(cfg.restoreInputs[0].RestoreVol.GetPath())
+	require.NoError(t, err)
+	defer func() { require.NoError(t, restoreVolume.Close()) }()
+
+	utils.CompareReaders(t, bytes.NewReader(cfg.volumeRaws[0]), restoreVolume)
 }
