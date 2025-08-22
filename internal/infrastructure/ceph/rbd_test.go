@@ -13,6 +13,7 @@ import (
 	"unsafe"
 
 	"github.com/cybozu-go/fin/internal/diffgenerator"
+	"github.com/cybozu-go/fin/internal/pkg/zeroreader"
 	"github.com/cybozu-go/fin/test/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -676,7 +677,7 @@ func TestApplyDiffToBlockDevice_success_ExistentFromSnap(t *testing.T) {
 	)
 
 	// Ensure the rest of the block device is zeroed out
-	utils.CompareReaders(t, file, io.LimitReader(&zeroReader{}, int64(getBlockDeviceSize(t, blockDevicePath)-35)))
+	utils.CompareReaders(t, file, io.LimitReader(zeroreader.New(), int64(getBlockDeviceSize(t, blockDevicePath)-35)))
 }
 
 func TestApplyDiffToBlockDevice_success_MissingFromSnap(t *testing.T) {
@@ -731,7 +732,7 @@ func TestApplyDiffToBlockDevice_success_MissingFromSnap(t *testing.T) {
 	)
 
 	// Ensure the rest of the block device is zeroed out
-	utils.CompareReaders(t, file, io.LimitReader(&zeroReader{}, int64(getBlockDeviceSize(t, blockDevicePath)-30)))
+	utils.CompareReaders(t, file, io.LimitReader(zeroreader.New(), int64(getBlockDeviceSize(t, blockDevicePath)-30)))
 }
 
 func TestApplyDiffToBlockDevice_success_VariousZeroDataRecords(t *testing.T) {
@@ -887,7 +888,7 @@ func TestApplyDiffToBlockDevice_success_VariousZeroDataRecords(t *testing.T) {
 			utils.CompareReaders(
 				t,
 				file,
-				io.LimitReader(&zeroReader{}, int64(getBlockDeviceSize(t, blockDevicePath)-len(tc.expected))),
+				io.LimitReader(zeroreader.New(), int64(getBlockDeviceSize(t, blockDevicePath)-len(tc.expected))),
 			)
 		})
 	}

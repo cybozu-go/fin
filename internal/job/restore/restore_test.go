@@ -2,6 +2,7 @@ package restore
 
 import (
 	"bytes"
+	"io"
 	"os"
 	"testing"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/cybozu-go/fin/internal/job/deletion"
 	"github.com/cybozu-go/fin/internal/job/input"
 	"github.com/cybozu-go/fin/internal/job/testutil"
+	"github.com/cybozu-go/fin/internal/pkg/zeroreader"
 	"github.com/cybozu-go/fin/test/utils"
 
 	"github.com/cybozu-go/fin/internal/model"
@@ -541,4 +543,96 @@ func TestRestore_doInitialPhase_skip(t *testing.T) {
 	restorePD, err := getRestorePrivateData(cfg.finRepo, cfg.restoreInputs[0].ActionUID)
 	require.NoError(t, err)
 	assert.Equal(t, Discard, restorePD.Phase)
+}
+
+func TestRestore_doDiscardPhase_success(t *testing.T) {
+	// CSATEST-1580
+	// Description:
+	//   Confirm normal processing for doDiscardPhase.
+	//
+	// Arrange:
+	//   There is a full backup.
+	//   The phase of private_data in the action_status table is set to `discard`.
+	//
+	// Act:
+	//   Fill destination volume with random data.
+	//   Run doDiscardPhase process about the full backup.
+	//
+	// Assert:
+	//   The process will return nil.
+	//   The phase of private_data in the action_status table is set to `restore_raw_image`.
+	//   The contents of the restore volume have been zero filled.
+
+	// Arrange
+	cfg := setup(t, &setupInput{})
+	restorePD := &restorePrivateData{
+		Phase: Discard,
+	}
+	createPrivateData(t, cfg, cfg.restoreInputs[0], restorePD)
+
+	// Act
+	testutil.FillFileRandomData(
+		t,
+		cfg.restoreInputs[0].RestoreVol.GetPath(),
+		defaultVolumeSize)
+	r := NewRestore(cfg.restoreInputs[0])
+	require.NoError(t, r.doDiscardPhase(restorePD))
+
+	// Assert
+	restorePD, err := getRestorePrivateData(cfg.finRepo, cfg.restoreInputs[0].ActionUID)
+	require.NoError(t, err)
+	assert.Equal(t, RestoreRawImage, restorePD.Phase)
+
+	// Verify the contents of the restore file.
+	restoreVolume, err := os.Open(cfg.restoreInputs[0].RestoreVol.GetPath())
+	require.NoError(t, err)
+	defer func() { require.NoError(t, restoreVolume.Close()) }()
+
+	utils.CompareReaders(t, io.LimitReader(zeroreader.New(), int64(defaultVolumeSize)), restoreVolume)
+}
+
+func TestRestore_doDiscardPhase_skip(t *testing.T) {
+	// CSATEST-1581
+	// Description:
+	//   Confirm skip processing for doDiscardPhase.
+	//
+	// Arrange:
+	//   There is a full backup.
+	//   The phase of private_data in the action_status table is set to `restore_raw_image`.
+	//
+	// Act:
+	//   Fill destination volume with random data.
+	//   Run doDiscardPhase process about the full backup.
+	//
+	// Assert:
+	//   The process will return nil.
+	//   The phase of private_data in the action_status table is keeping `restore_raw_image`.
+	//   The contents of the restore volume have not been restored (random data remains).
+
+	// Arrange
+	cfg := setup(t, &setupInput{})
+	restorePD := &restorePrivateData{
+		Phase: RestoreRawImage,
+	}
+	createPrivateData(t, cfg, cfg.restoreInputs[0], restorePD)
+
+	// Act
+	randomData := testutil.FillFileRandomData(
+		t,
+		cfg.restoreInputs[0].RestoreVol.GetPath(),
+		defaultVolumeSize)
+
+	r := NewRestore(cfg.restoreInputs[0])
+	require.NoError(t, r.doDiscardPhase(restorePD))
+
+	// Assert
+	restorePD, err := getRestorePrivateData(cfg.finRepo, cfg.restoreInputs[0].ActionUID)
+	require.NoError(t, err)
+	assert.Equal(t, RestoreRawImage, restorePD.Phase)
+
+	// Verify the contents of the restore file.
+	restoreVolume, err := os.Open(cfg.restoreInputs[0].RestoreVol.GetPath())
+	require.NoError(t, err)
+	defer func() { require.NoError(t, restoreVolume.Close()) }()
+	utils.CompareReaders(t, bytes.NewReader(randomData), restoreVolume)
 }
