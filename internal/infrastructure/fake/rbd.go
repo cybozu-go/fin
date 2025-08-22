@@ -64,6 +64,31 @@ func NewRBDRepository(
 	return repo
 }
 
+// CreateSnapshot creates a snapshot whose size is calculated as (number of snapshots + 1) * 10MiB.
+func (r *RBDRepository) CreateSnapshot(poolName, imageName, snapName string) error {
+	if poolName != r.poolName || imageName != r.imageName {
+		return errors.New("invalid pool or image")
+	}
+
+	size := (len(r.snapshots) + 1) * 10 * 1 << 10
+	r.CreateFakeSnapshot(snapName, uint64(size), time.Now())
+	return nil
+}
+
+func (r *RBDRepository) RemoveSnapshot(poolName, imageName, snapName string) error {
+	if poolName != r.poolName || imageName != r.imageName {
+		return errors.New("invalid pool or image")
+	}
+	i := slices.IndexFunc(r.snapshots, func(snapshot *model.RBDSnapshot) bool {
+		return snapshot.Name == snapName
+	})
+	if i == -1 {
+		return model.ErrNotFound
+	}
+	r.snapshots = slices.Delete(r.snapshots, i, i+1)
+	return nil
+}
+
 // CreateFakeSnapshot creates a fake snapshot for the specified pool and image.
 // It returns the snapshot ID of the created one.
 func (r *RBDRepository) CreateFakeSnapshot(name string, size uint64, timestamp time.Time) *model.RBDSnapshot {
