@@ -141,9 +141,12 @@ func (r *FinBackupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			return ctrl.Result{}, err
 		}
 
-		backup.SetLabels(map[string]string{
-			labelBackupTargetPVCUID: string(pvc.GetUID()),
-		})
+		labels := backup.GetLabels()
+		if labels == nil {
+			labels = map[string]string{}
+		}
+		labels[labelBackupTargetPVCUID] = string(pvc.GetUID())
+		backup.SetLabels(labels)
 
 		var pv corev1.PersistentVolume
 		err = r.Get(ctx, client.ObjectKey{Name: pvc.Spec.VolumeName}, &pv)
@@ -161,10 +164,14 @@ func (r *FinBackupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			return ctrl.Result{}, errors.New("pool is not specified in PV")
 		}
 
-		backup.SetAnnotations(map[string]string{
-			annotationBackupTargetRBDImage: rbdImage,
-			annotationRBDPool:              rbdPool,
-		})
+		annotations := backup.GetAnnotations()
+		if annotations == nil {
+			annotations = map[string]string{}
+		}
+		annotations[annotationBackupTargetRBDImage] = rbdImage
+		annotations[annotationRBDPool] = rbdPool
+		backup.SetAnnotations(annotations)
+
 		err = r.Update(ctx, &backup)
 		if err != nil {
 			logger.Error(err, "failed to add labels and annotations")
@@ -225,7 +232,12 @@ func (r *FinBackupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 	diffFromStr, updated := findDiffSourceSnapID(&backup, &finBackupList)
 	if updated {
-		backup.SetAnnotations(map[string]string{annotationDiffFrom: diffFromStr})
+		annotations := backup.GetAnnotations()
+		if annotations == nil {
+			return ctrl.Result{}, errors.New("annotations must not be empty here")
+		}
+		annotations[annotationDiffFrom] = diffFromStr
+		backup.SetAnnotations(annotations)
 		err = r.Update(ctx, &backup)
 		if err != nil {
 			logger.Error(err, "failed to update FinBackup with diffFrom annotation")
