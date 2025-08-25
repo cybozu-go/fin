@@ -133,66 +133,13 @@ func (r *FinBackupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		}
 	}
 
-	if backup.Status.SnapID == nil {
-		var pvc corev1.PersistentVolumeClaim
-		err = r.Get(ctx, client.ObjectKey{Namespace: backup.Spec.PVCNamespace, Name: backup.Spec.PVC}, &pvc)
-		if err != nil {
-			logger.Error(err, "failed to get backup target PVC")
-			return ctrl.Result{}, err
-		}
-
-		backup.SetLabels(map[string]string{
-			labelBackupTargetPVCUID: string(pvc.GetUID()),
-		})
-
-		var pv corev1.PersistentVolume
-		err = r.Get(ctx, client.ObjectKey{Name: pvc.Spec.VolumeName}, &pv)
-		if err != nil {
-			logger.Error(err, "failed to get backup target PV")
-			return ctrl.Result{}, err
-		}
-
-		rbdImage := pv.Spec.CSI.VolumeAttributes["imageName"]
-		if rbdImage == "" {
-			return ctrl.Result{}, errors.New("imageName is not specified in PV")
-		}
-		rbdPool := pv.Spec.CSI.VolumeAttributes["pool"]
-		if rbdPool == "" {
-			return ctrl.Result{}, errors.New("pool is not specified in PV")
-		}
-
-		backup.SetAnnotations(map[string]string{
-			annotationBackupTargetRBDImage: rbdImage,
-			annotationRBDPool:              rbdPool,
-		})
-		err = r.Update(ctx, &backup)
-		if err != nil {
-			logger.Error(err, "failed to add labels and annotations")
-			return ctrl.Result{}, err
-		}
-
-		snap, err := r.createSnapshotIfNeeded(rbdPool, rbdImage, snapshotName(&backup))
-		if err != nil {
-			logger.Error(err, "failed to create or get snapshot")
-			return ctrl.Result{}, err
-		}
-		backup.Status.CreatedAt = metav1.NewTime(snap.Timestamp.Time)
-		backup.Status.SnapID = &snap.ID
-		backup.Status.SnapSize = ptr.To(int64(snap.Size))
-
-		pvcManifest, err := json.Marshal(pvc)
-		if err != nil {
-			logger.Error(err, "failed to marshal PVC manifest")
-			return ctrl.Result{}, err
-		}
-		backup.Status.PVCManifest = string(pvcManifest)
-		err = r.Status().Update(ctx, &backup)
-		if err != nil {
-			logger.Error(err, "failed to update FinBackup status")
-			return ctrl.Result{}, err
-		}
-		// FIXME: The following "requeue after" is temporary code.
-		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+	ret, err := r.createSnapshot(ctx, &backup)
+	if err != nil {
+		logger.Error(err, "failed to create snapshot")
+		return ctrl.Result{}, err
+	}
+	if !ret.IsZero() {
+		return ret, nil
 	}
 
 	var pvc corev1.PersistentVolumeClaim
@@ -225,7 +172,12 @@ func (r *FinBackupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 	diffFromStr, updated := findDiffSourceSnapID(&backup, &finBackupList)
 	if updated {
-		backup.SetAnnotations(map[string]string{annotationDiffFrom: diffFromStr})
+		annotations := backup.GetAnnotations()
+		if annotations == nil {
+			return ctrl.Result{}, errors.New("annotations must not be empty here")
+		}
+		annotations[annotationDiffFrom] = diffFromStr
+		backup.SetAnnotations(annotations)
 		err = r.Update(ctx, &backup)
 		if err != nil {
 			logger.Error(err, "failed to update FinBackup with diffFrom annotation")
@@ -272,6 +224,81 @@ func (r *FinBackupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	logger.Info("FinBackup has become ready to use")
 
 	return ctrl.Result{}, nil
+}
+
+func (r *FinBackupReconciler) createSnapshot(ctx context.Context, backup *finv1.FinBackup) (ctrl.Result, error) {
+	logger := log.FromContext(ctx)
+
+	if backup.Status.SnapID != nil {
+		return ctrl.Result{}, nil
+	}
+
+	var pvc corev1.PersistentVolumeClaim
+	err := r.Get(ctx, client.ObjectKey{Namespace: backup.Spec.PVCNamespace, Name: backup.Spec.PVC}, &pvc)
+	if err != nil {
+		logger.Error(err, "failed to get backup target PVC")
+		return ctrl.Result{}, err
+	}
+
+	labels := backup.GetLabels()
+	if labels == nil {
+		labels = map[string]string{}
+	}
+	labels[labelBackupTargetPVCUID] = string(pvc.GetUID())
+	backup.SetLabels(labels)
+
+	var pv corev1.PersistentVolume
+	err = r.Get(ctx, client.ObjectKey{Name: pvc.Spec.VolumeName}, &pv)
+	if err != nil {
+		logger.Error(err, "failed to get backup target PV")
+		return ctrl.Result{}, err
+	}
+
+	rbdImage := pv.Spec.CSI.VolumeAttributes["imageName"]
+	if rbdImage == "" {
+		return ctrl.Result{}, errors.New("imageName is not specified in PV")
+	}
+	rbdPool := pv.Spec.CSI.VolumeAttributes["pool"]
+	if rbdPool == "" {
+		return ctrl.Result{}, errors.New("pool is not specified in PV")
+	}
+
+	annotations := backup.GetAnnotations()
+	if annotations == nil {
+		annotations = map[string]string{}
+	}
+	annotations[annotationBackupTargetRBDImage] = rbdImage
+	annotations[annotationRBDPool] = rbdPool
+	backup.SetAnnotations(annotations)
+
+	err = r.Update(ctx, backup)
+	if err != nil {
+		logger.Error(err, "failed to add labels and annotations")
+		return ctrl.Result{}, err
+	}
+
+	snap, err := r.createSnapshotIfNeeded(rbdPool, rbdImage, snapshotName(backup))
+	if err != nil {
+		logger.Error(err, "failed to create or get snapshot")
+		return ctrl.Result{}, err
+	}
+	backup.Status.CreatedAt = metav1.NewTime(snap.Timestamp.Time)
+	backup.Status.SnapID = &snap.ID
+	backup.Status.SnapSize = ptr.To(int64(snap.Size))
+
+	pvcManifest, err := json.Marshal(pvc)
+	if err != nil {
+		logger.Error(err, "failed to marshal PVC manifest")
+		return ctrl.Result{}, err
+	}
+	backup.Status.PVCManifest = string(pvcManifest)
+	err = r.Status().Update(ctx, backup)
+	if err != nil {
+		logger.Error(err, "failed to update FinBackup status")
+		return ctrl.Result{}, err
+	}
+	// FIXME: The following "requeue after" is temporary code.
+	return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 }
 
 func (r *FinBackupReconciler) reconcileDelete(ctx context.Context, backup *finv1.FinBackup) (ctrl.Result, error) {
