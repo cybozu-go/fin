@@ -12,6 +12,7 @@ import (
 	"unsafe"
 
 	"github.com/cybozu-go/fin/internal/model"
+	"github.com/cybozu-go/fin/internal/pkg/zeroreader"
 	"golang.org/x/sys/unix"
 )
 
@@ -318,21 +319,11 @@ func zeroFill(dstFile *os.File, offset, length uint64) error {
 		return fmt.Errorf("failed to seek: %w", err)
 	}
 
-	if _, err := io.CopyN(dstFile, &zeroReader{}, int64(length)); err != nil {
+	if _, err := io.CopyN(dstFile, zeroreader.New(), int64(length)); err != nil {
 		return fmt.Errorf("failed to write zeroes: %w", err)
 	}
 
 	return nil
-}
-
-// zeroReader is an implementation of the io.Reader interface that always returns zero bytes.
-type zeroReader struct{}
-
-func (r *zeroReader) Read(p []byte) (n int, err error) {
-	for i := range p {
-		p[i] = 0
-	}
-	return len(p), nil
 }
 
 func readLE64(diffFile *bufio.Reader) (uint64, error) {
