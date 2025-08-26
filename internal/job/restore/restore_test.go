@@ -636,3 +636,206 @@ func TestRestore_doDiscardPhase_skip(t *testing.T) {
 	defer func() { require.NoError(t, restoreVolume.Close()) }()
 	utils.CompareReaders(t, bytes.NewReader(randomData), restoreVolume)
 }
+
+func TestRestore_doRestoreRawImagePhase_success(t *testing.T) {
+	// CSATEST-1582
+	// Description:
+	//   Confirm normal processing for doRestoreRawImagePhase.
+	//
+	// Arrange:
+	//   There is a full backup.
+	//   The phase of private_data in the action_status table is set to `restore_raw_image` and
+	//   nextRawImageChunk is 0.
+	//   The size of the restore destination volume is larger than that of the backup target volume.
+	//
+	// Act:
+	//   Restore destination volume is zero filled.
+	//   Run doRestoreRawImagePhase process about the full backup.
+	//
+	// Assert:
+	//   The process will return nil.
+	//   The phase of private_data in the action_status table is set to `completed`.
+	//   The contents of the restore volume have been restored.
+	//   The area of the restore volume that exceeds the size of the backup target volume is zero filled.
+
+	// Arrange
+	cfg := setup(t, &setupInput{
+		blockDeviceSize: []uint64{defaultVolumeSize + defaultMaxPartSize},
+	})
+	restorePD := &restorePrivateData{
+		Phase:             RestoreRawImage,
+		NextRawImageChunk: 0,
+	}
+	createPrivateData(t, cfg, cfg.restoreInputs[0], restorePD)
+
+	// Act
+	require.NoError(t, cfg.restoreInputs[0].RestoreVol.ZeroOut())
+	metadata, err := job.GetBackupMetadata(cfg.finRepo)
+	require.NoError(t, err)
+	r := NewRestore(cfg.restoreInputs[0])
+	require.NoError(t, r.doRestoreRawImagePhase(restorePD, metadata.Raw))
+
+	// Assert
+	restorePD, err = getRestorePrivateData(cfg.finRepo, cfg.restoreInputs[0].ActionUID)
+	require.NoError(t, err)
+	assert.Equal(t, Completed, restorePD.Phase)
+
+	// Verify the contents of the restore file.
+	restoreVolume, err := os.Open(cfg.restoreInputs[0].RestoreVol.GetPath())
+	require.NoError(t, err)
+	defer func() { require.NoError(t, restoreVolume.Close()) }()
+
+	expectedData := make([]byte, defaultVolumeSize+defaultMaxPartSize)
+	copy(expectedData, cfg.volumeRaws[0])
+	utils.CompareReaders(t, bytes.NewReader(expectedData), restoreVolume)
+}
+
+func TestRestore_doRestoreRawImagePhase_resume(t *testing.T) {
+	// CSATEST-1583
+	// Description:
+	//   Confirm resume processing for doRestoreRawImagePhase.
+	//
+	// Arrange:
+	//   There is a full backup.
+	//   The phase of private_data in the action_status table is set to `restore_raw_image` and
+	//   nextRawImageChunk is 1.
+	//
+	// Act:
+	//   Restore destination volume is zero filled.
+	//   Restore destination volume's head 1 chunk is filled with random data.
+	//   Run doRestoreRawImagePhase process about the full backup.
+	//
+	// Assert:
+	//   The process will return nil.
+	//   The phase of private_data in the action_status table is set to `completed`.
+	//   The contents of the restore volume have been restored, excluding for head 1 chunk.
+
+	// Arrange
+	cfg := setup(t, &setupInput{})
+	restorePD := &restorePrivateData{
+		Phase:             RestoreRawImage,
+		NextRawImageChunk: 1,
+	}
+	createPrivateData(t, cfg, cfg.restoreInputs[0], restorePD)
+
+	// Act
+	require.NoError(t, cfg.restoreInputs[0].RestoreVol.ZeroOut())
+	randomData := testutil.FillFileRandomData(
+		t,
+		cfg.restoreInputs[0].RestoreVol.GetPath(),
+		defaultChunkSize)
+	metadata, err := job.GetBackupMetadata(cfg.finRepo)
+	require.NoError(t, err)
+	r := NewRestore(cfg.restoreInputs[0])
+	require.NoError(t, r.doRestoreRawImagePhase(restorePD, metadata.Raw))
+
+	// Assert
+	restorePD, err = getRestorePrivateData(cfg.finRepo, cfg.restoreInputs[0].ActionUID)
+	require.NoError(t, err)
+	assert.Equal(t, Completed, restorePD.Phase)
+
+	// Verify the contents of the restore file.
+	restoreVolume, err := os.Open(cfg.restoreInputs[0].RestoreVol.GetPath())
+	require.NoError(t, err)
+	defer func() { require.NoError(t, restoreVolume.Close()) }()
+
+	expectedData := make([]byte, defaultVolumeSize)
+	copy(expectedData, randomData[:defaultChunkSize])
+	copy(expectedData[defaultChunkSize:], cfg.volumeRaws[0][defaultChunkSize:])
+	utils.CompareReaders(t, bytes.NewReader(expectedData), restoreVolume)
+}
+
+func TestRestore_doRestoreRawImagePhase_error(t *testing.T) {
+	// CSATEST-1585
+	// Description:
+	//   Confirm error processing for doRestoreRawImagePhase.
+	//
+	// Arrange:
+	//   There is a full backup but raw.img file is not found.
+	//   The phase of private_data in the action_status table is set to `restore_raw_image`.
+	//
+	// Act:
+	//   Overwrite destination volume filled with random data.
+	//   Run doRestoreRawImagePhase process about the full backup.
+	//
+	// Assert:
+	//   The process will return an error.
+	//   The phase of private_data in the action_status table remains `restore_raw_image`.
+	//   The contents of the restore volume have not been restored (random data remains).
+
+	// Arrange
+	cfg := setup(t, &setupInput{})
+	require.NoError(t, cfg.nlvRepo.RemoveRawImage())
+	restorePD := &restorePrivateData{
+		Phase: RestoreRawImage,
+	}
+	createPrivateData(t, cfg, cfg.restoreInputs[0], restorePD)
+
+	// Act
+	randomData := testutil.FillFileRandomData(
+		t,
+		cfg.restoreInputs[0].RestoreVol.GetPath(),
+		defaultVolumeSize)
+	metadata, err := job.GetBackupMetadata(cfg.finRepo)
+	require.NoError(t, err)
+	r := NewRestore(cfg.restoreInputs[0])
+	require.Error(t, r.doRestoreRawImagePhase(restorePD, metadata.Raw))
+
+	// Assert
+	restorePD, err = getRestorePrivateData(cfg.finRepo, cfg.restoreInputs[0].ActionUID)
+	require.NoError(t, err)
+	assert.Equal(t, RestoreRawImage, restorePD.Phase)
+
+	// Verify the contents of the restore file.
+	restoreVolume, err := os.Open(cfg.restoreInputs[0].RestoreVol.GetPath())
+	require.NoError(t, err)
+	defer func() { require.NoError(t, restoreVolume.Close()) }()
+
+	utils.CompareReaders(t, bytes.NewReader(randomData), restoreVolume)
+}
+
+func TestRestore_doRestoreRawImagePhase_skip(t *testing.T) {
+	// CSATEST-1586
+	// Description:
+	//   Confirm skip processing for doRestoreRawImagePhase.
+	//
+	// Arrange:
+	//   There is a full backup.
+	//   The phase of private_data in the action_status table is set to `restore_diff`.
+	//
+	// Act:
+	//   Overwrite destination volume filled with random data.
+	//   Run doRestoreRawImagePhase process about the full backup.
+	//
+	// Assert:
+	//   The process will return nil.
+	//   The phase of private_data in the action_status table remains `restore_diff`.
+	//   The contents of the restore volume have not been restored (random data remains).
+
+	// Arrange
+	cfg := setup(t, &setupInput{})
+	restorePD := &restorePrivateData{
+		Phase: RestoreDiff,
+	}
+	createPrivateData(t, cfg, cfg.restoreInputs[0], restorePD)
+
+	// Act
+	randomData := testutil.FillFileRandomData(
+		t,
+		cfg.restoreInputs[0].RestoreVol.GetPath(),
+		defaultVolumeSize)
+	r := NewRestore(cfg.restoreInputs[0])
+	require.NoError(t, r.doRestoreRawImagePhase(restorePD, nil))
+
+	// Assert
+	restorePD, err := getRestorePrivateData(cfg.finRepo, cfg.restoreInputs[0].ActionUID)
+	require.NoError(t, err)
+	assert.Equal(t, RestoreDiff, restorePD.Phase)
+
+	// Verify the contents of the restore file.
+	restoreVolume, err := os.Open(cfg.restoreInputs[0].RestoreVol.GetPath())
+	require.NoError(t, err)
+	defer func() { require.NoError(t, restoreVolume.Close()) }()
+
+	utils.CompareReaders(t, bytes.NewReader(randomData), restoreVolume)
+}
