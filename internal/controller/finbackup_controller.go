@@ -7,10 +7,16 @@ import (
 	"fmt"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
+	finv1 "github.com/cybozu-go/fin/api/v1"
+	"github.com/cybozu-go/fin/internal/infrastructure/nlv"
+	"github.com/cybozu-go/fin/internal/model"
+	"github.com/go-logr/logr"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	storagev1 "k8s.io/api/storage/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -18,6 +24,7 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	storagehelpers "k8s.io/component-helpers/storage/volume"
 	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
@@ -26,11 +33,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
-
-	finv1 "github.com/cybozu-go/fin/api/v1"
-	"github.com/cybozu-go/fin/internal/infrastructure/nlv"
-	"github.com/cybozu-go/fin/internal/model"
-	"github.com/go-logr/logr"
 )
 
 const (
@@ -88,6 +90,26 @@ func NewFinBackupReconciler(
 	}
 }
 
+func (r *FinBackupReconciler) checkCephCluster(ctx context.Context, pvc *corev1.PersistentVolumeClaim) (bool, error) {
+	scName := storagehelpers.GetPersistentVolumeClaimClass(pvc)
+	var storageClass storagev1.StorageClass
+	if err := r.Get(ctx, types.NamespacedName{Name: scName}, &storageClass); err != nil {
+		return false, fmt.Errorf("failed to get StorageClass: %q: %w", scName, err)
+	}
+
+	if !strings.HasSuffix(storageClass.Provisioner, ".rbd.csi.ceph.com") {
+		return false, nil
+	}
+	clusterID, ok := storageClass.Parameters["clusterID"]
+	if !ok {
+		return false, nil
+	}
+	if clusterID != r.cephClusterNamespace {
+		return false, nil
+	}
+	return true, nil
+}
+
 //+kubebuilder:rbac:groups=fin.cybozu.io,resources=finbackups,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=fin.cybozu.io,resources=finbackups/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=fin.cybozu.io,resources=finbackups/finalizers,verbs=update
@@ -116,6 +138,24 @@ func (r *FinBackupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, err
 	}
 
+	var pvc corev1.PersistentVolumeClaim
+	err = r.Get(ctx, client.ObjectKey{Namespace: backup.Spec.PVCNamespace, Name: backup.Spec.PVC}, &pvc)
+	if err != nil {
+		logger.Error(err, "failed to get backup target PVC")
+		return ctrl.Result{}, err
+	}
+
+	ok, err := r.checkCephCluster(ctx, &pvc)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if !ok {
+		logger.Info("FinBackup skipped: Ceph cluster is not managed by this instance",
+			"pvc", fmt.Sprintf("%s/%s", pvc.Namespace, pvc.Name),
+			"cephClusterNamespace", r.cephClusterNamespace)
+		return ctrl.Result{}, nil
+	}
+
 	if !backup.DeletionTimestamp.IsZero() {
 		return r.reconcileDelete(ctx, &backup)
 	}
@@ -140,13 +180,6 @@ func (r *FinBackupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 	if !ret.IsZero() {
 		return ret, nil
-	}
-
-	var pvc corev1.PersistentVolumeClaim
-	err = r.Get(ctx, client.ObjectKey{Namespace: backup.Spec.PVCNamespace, Name: backup.Spec.PVC}, &pvc)
-	if err != nil {
-		logger.Error(err, "failed to get backup target PVC")
-		return ctrl.Result{}, err
 	}
 
 	err = checkPVCUIDConsistency(&backup, &pvc)
@@ -539,7 +572,7 @@ func (r *FinBackupReconciler) createOrUpdateBackupJob(
 	backupTargetPVCUID string, maxPartSize *resource.Quantity,
 ) error {
 	var job batchv1.Job
-	job.SetName("fin-backup-" + string(backup.GetUID()))
+	job.SetName(backupJobName(backup))
 	job.SetNamespace(r.cephClusterNamespace)
 	_, err := ctrl.CreateOrUpdate(ctx, r.Client, &job, func() error {
 		labels := job.GetLabels()

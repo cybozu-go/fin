@@ -96,6 +96,7 @@ func restorePVCNamespace(restore *finv1.FinRestore) string {
 //+kubebuilder:rbac:groups=fin.cybozu.io,resources=finrestores/finalizers,verbs=update
 //+kubebuilder:rbac:groups=core,resources=persistentvolumeclaims,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=core,resources=persistentvolumes,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=storage.k8s.io,resources=storageclasses,verbs=get;list;watch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
