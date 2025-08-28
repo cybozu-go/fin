@@ -36,7 +36,7 @@ type setupInput struct {
 	// Virtual volume size when creating backups.
 	volumeSize []uint64
 	// Restore target block device size.
-	blockDeviceSize []uint64
+	blockDeviceSize uint64
 	// chunk size for restore
 	chunkSize uint64
 	// if > 0, delete backups after creating them.
@@ -45,8 +45,9 @@ type setupInput struct {
 }
 
 type setupOutput struct {
-	nlvRepo model.NodeLocalVolumeRepository
-	finRepo model.FinRepository
+	nlvRepo    model.NodeLocalVolumeRepository
+	finRepo    model.FinRepository
+	restoreVol model.RestoreVolume
 	// RestoreInput instance used when calling the restore module.
 	// 0 index is for the full backup, and 1 index is for the incremental backup.
 	restoreInputs []*input.Restore
@@ -70,6 +71,17 @@ func setup(t *testing.T, config *setupInput) *setupOutput {
 	if config.chunkSize == 0 {
 		config.chunkSize = defaultChunkSize
 	}
+
+	// Create block device & RestoreVolume.
+	blockDeviceSize := defaultVolumeSize
+	if config.blockDeviceSize > 0 {
+		blockDeviceSize = config.blockDeviceSize
+	} else if len(config.volumeSize) > 0 {
+		blockDeviceSize = config.volumeSize[len(config.volumeSize)-1]
+	}
+	restorePath := testutil.CreateLoopDevice(t, blockDeviceSize)
+	restoreVol := restore.NewRestoreVolume(restorePath)
+
 	// Create backups.
 	backupCount := 1
 	if config.enableIncrementalBackup {
@@ -98,16 +110,8 @@ func setup(t *testing.T, config *setupInput) *setupOutput {
 		err = bk.Perform()
 		require.NoError(t, err)
 
-		// Create the restore file
-		blockDeviceSize := volumeSize
-		if len(config.blockDeviceSize) > i {
-			blockDeviceSize = config.blockDeviceSize[i]
-		}
-		restorePath := testutil.CreateLoopDevice(t, blockDeviceSize)
-		rVol := restore.NewRestoreVolume(restorePath)
-
 		restoreInputs = append(restoreInputs, testutil.NewRestoreInputTemplate(
-			backupInput, rVol, config.chunkSize, backupInput.TargetSnapshotID))
+			backupInput, restoreVol, config.chunkSize, backupInput.TargetSnapshotID))
 	}
 
 	// Delete backups if specified.
@@ -128,6 +132,7 @@ func setup(t *testing.T, config *setupInput) *setupOutput {
 	return &setupOutput{
 		nlvRepo:       nlvRepo,
 		finRepo:       finRepo,
+		restoreVol:    restoreVol,
 		restoreInputs: restoreInputs,
 		volumeRaws:    volumeRaws,
 	}
@@ -172,7 +177,7 @@ func TestRestore_FullBackup_Success(t *testing.T) {
 
 	testutil.FillFileRandomData(
 		t,
-		cfg.restoreInputs[0].RestoreVol.GetPath(),
+		cfg.restoreVol.GetPath(),
 		backupVolumeSize)
 
 	// Act
@@ -186,7 +191,7 @@ func TestRestore_FullBackup_Success(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { require.NoError(t, rawFile.Close()) }()
 
-	restoreVolume, err := os.Open(cfg.restoreInputs[0].RestoreVol.GetPath())
+	restoreVolume, err := os.Open(cfg.restoreVol.GetPath())
 	require.NoError(t, err)
 	defer func() { require.NoError(t, restoreVolume.Close()) }()
 
@@ -225,15 +230,12 @@ func TestRestore_IncrementalBackup_Success(t *testing.T) {
 			fullBackupVolumeSize,
 			incrementalVolumeSize,
 		},
-		blockDeviceSize: []uint64{
-			blockDeviceSize,
-			blockDeviceSize,
-		},
+		blockDeviceSize: blockDeviceSize,
 	})
 
 	testutil.FillFileRandomData(
 		t,
-		cfg.restoreInputs[1].RestoreVol.GetPath(),
+		cfg.restoreVol.GetPath(),
 		defaultChunkSize*4)
 
 	// Act
@@ -241,7 +243,7 @@ func TestRestore_IncrementalBackup_Success(t *testing.T) {
 	require.NoError(t, r.Perform())
 
 	// Assert
-	restoreVolume, err := os.Open(cfg.restoreInputs[1].RestoreVol.GetPath())
+	restoreVolume, err := os.Open(cfg.restoreVol.GetPath())
 	require.NoError(t, err)
 	defer func() { require.NoError(t, restoreVolume.Close()) }()
 	restoreData := make([]byte, blockDeviceSize)
@@ -421,7 +423,7 @@ func TestRestore_FullBackup_Success_withIncrementalBackup(t *testing.T) {
 
 	testutil.FillFileRandomData(
 		t,
-		cfg.restoreInputs[0].RestoreVol.GetPath(),
+		cfg.restoreVol.GetPath(),
 		defaultVolumeSize)
 
 	// Act
@@ -429,7 +431,7 @@ func TestRestore_FullBackup_Success_withIncrementalBackup(t *testing.T) {
 	require.NoError(t, r.Perform())
 
 	// Assert
-	restoreVolume, err := os.Open(cfg.restoreInputs[0].RestoreVol.GetPath())
+	restoreVolume, err := os.Open(cfg.restoreVol.GetPath())
 	require.NoError(t, err)
 	defer func() { require.NoError(t, restoreVolume.Close()) }()
 
@@ -465,7 +467,7 @@ func TestRestore_phase_skip(t *testing.T) {
 	// Act
 	randomData := testutil.FillFileRandomData(
 		t,
-		cfg.restoreInputs[0].RestoreVol.GetPath(),
+		cfg.restoreVol.GetPath(),
 		backupVolumeSize)
 
 	r := NewRestore(cfg.restoreInputs[0])
@@ -474,7 +476,7 @@ func TestRestore_phase_skip(t *testing.T) {
 	// Assert
 
 	// Verify the contents of the restore file.
-	restoreVolume, err := os.Open(cfg.restoreInputs[0].RestoreVol.GetPath())
+	restoreVolume, err := os.Open(cfg.restoreVol.GetPath())
 	require.NoError(t, err)
 	defer func() { require.NoError(t, restoreVolume.Close()) }()
 
@@ -573,7 +575,7 @@ func TestRestore_doDiscardPhase_success(t *testing.T) {
 	// Act
 	testutil.FillFileRandomData(
 		t,
-		cfg.restoreInputs[0].RestoreVol.GetPath(),
+		cfg.restoreVol.GetPath(),
 		defaultVolumeSize)
 	r := NewRestore(cfg.restoreInputs[0])
 	require.NoError(t, r.doDiscardPhase(restorePD))
@@ -584,7 +586,7 @@ func TestRestore_doDiscardPhase_success(t *testing.T) {
 	assert.Equal(t, RestoreRawImage, restorePD.Phase)
 
 	// Verify the contents of the restore file.
-	restoreVolume, err := os.Open(cfg.restoreInputs[0].RestoreVol.GetPath())
+	restoreVolume, err := os.Open(cfg.restoreVol.GetPath())
 	require.NoError(t, err)
 	defer func() { require.NoError(t, restoreVolume.Close()) }()
 
@@ -619,7 +621,7 @@ func TestRestore_doDiscardPhase_skip(t *testing.T) {
 	// Act
 	randomData := testutil.FillFileRandomData(
 		t,
-		cfg.restoreInputs[0].RestoreVol.GetPath(),
+		cfg.restoreVol.GetPath(),
 		defaultVolumeSize)
 
 	r := NewRestore(cfg.restoreInputs[0])
@@ -631,7 +633,7 @@ func TestRestore_doDiscardPhase_skip(t *testing.T) {
 	assert.Equal(t, RestoreRawImage, restorePD.Phase)
 
 	// Verify the contents of the restore file.
-	restoreVolume, err := os.Open(cfg.restoreInputs[0].RestoreVol.GetPath())
+	restoreVolume, err := os.Open(cfg.restoreVol.GetPath())
 	require.NoError(t, err)
 	defer func() { require.NoError(t, restoreVolume.Close()) }()
 	utils.CompareReaders(t, bytes.NewReader(randomData), restoreVolume)
@@ -660,7 +662,7 @@ func TestRestore_doRestoreRawImagePhase_success(t *testing.T) {
 
 	// Arrange
 	cfg := setup(t, &setupInput{
-		blockDeviceSize: []uint64{defaultVolumeSize + defaultMaxPartSize},
+		blockDeviceSize: defaultVolumeSize + defaultMaxPartSize,
 	})
 	restorePD := &restorePrivateData{
 		Phase:             RestoreRawImage,
@@ -668,8 +670,7 @@ func TestRestore_doRestoreRawImagePhase_success(t *testing.T) {
 	}
 	createPrivateData(t, cfg, cfg.restoreInputs[0], restorePD)
 
-	// Act
-	require.NoError(t, cfg.restoreInputs[0].RestoreVol.ZeroOut())
+	require.NoError(t, cfg.restoreVol.ZeroOut())
 	metadata, err := job.GetBackupMetadata(cfg.finRepo)
 	require.NoError(t, err)
 	r := NewRestore(cfg.restoreInputs[0])
@@ -719,10 +720,10 @@ func TestRestore_doRestoreRawImagePhase_resume(t *testing.T) {
 	createPrivateData(t, cfg, cfg.restoreInputs[0], restorePD)
 
 	// Act
-	require.NoError(t, cfg.restoreInputs[0].RestoreVol.ZeroOut())
+	require.NoError(t, cfg.restoreVol.ZeroOut())
 	randomData := testutil.FillFileRandomData(
 		t,
-		cfg.restoreInputs[0].RestoreVol.GetPath(),
+		cfg.restoreVol.GetPath(),
 		defaultChunkSize)
 	metadata, err := job.GetBackupMetadata(cfg.finRepo)
 	require.NoError(t, err)
@@ -735,7 +736,7 @@ func TestRestore_doRestoreRawImagePhase_resume(t *testing.T) {
 	assert.Equal(t, Completed, restorePD.Phase)
 
 	// Verify the contents of the restore file.
-	restoreVolume, err := os.Open(cfg.restoreInputs[0].RestoreVol.GetPath())
+	restoreVolume, err := os.Open(cfg.restoreVol.GetPath())
 	require.NoError(t, err)
 	defer func() { require.NoError(t, restoreVolume.Close()) }()
 
@@ -774,7 +775,7 @@ func TestRestore_doRestoreRawImagePhase_error(t *testing.T) {
 	// Act
 	randomData := testutil.FillFileRandomData(
 		t,
-		cfg.restoreInputs[0].RestoreVol.GetPath(),
+		cfg.restoreVol.GetPath(),
 		defaultVolumeSize)
 	metadata, err := job.GetBackupMetadata(cfg.finRepo)
 	require.NoError(t, err)
@@ -787,7 +788,7 @@ func TestRestore_doRestoreRawImagePhase_error(t *testing.T) {
 	assert.Equal(t, RestoreRawImage, restorePD.Phase)
 
 	// Verify the contents of the restore file.
-	restoreVolume, err := os.Open(cfg.restoreInputs[0].RestoreVol.GetPath())
+	restoreVolume, err := os.Open(cfg.restoreVol.GetPath())
 	require.NoError(t, err)
 	defer func() { require.NoError(t, restoreVolume.Close()) }()
 
@@ -822,7 +823,7 @@ func TestRestore_doRestoreRawImagePhase_skip(t *testing.T) {
 	// Act
 	randomData := testutil.FillFileRandomData(
 		t,
-		cfg.restoreInputs[0].RestoreVol.GetPath(),
+		cfg.restoreVol.GetPath(),
 		defaultVolumeSize)
 	r := NewRestore(cfg.restoreInputs[0])
 	require.NoError(t, r.doRestoreRawImagePhase(restorePD, nil))
@@ -833,9 +834,215 @@ func TestRestore_doRestoreRawImagePhase_skip(t *testing.T) {
 	assert.Equal(t, RestoreDiff, restorePD.Phase)
 
 	// Verify the contents of the restore file.
-	restoreVolume, err := os.Open(cfg.restoreInputs[0].RestoreVol.GetPath())
+	restoreVolume, err := os.Open(cfg.restoreVol.GetPath())
 	require.NoError(t, err)
 	defer func() { require.NoError(t, restoreVolume.Close()) }()
 
 	utils.CompareReaders(t, bytes.NewReader(randomData), restoreVolume)
+}
+
+func TestRestore_doRestoreDiffPhase_success(t *testing.T) {
+	// CSATEST-1587
+	// Description:
+	//   Confirm normal processing for doRestoreDiffPhase.
+	//
+	// Arrange:
+	//   There is a full backup and incremental backup.
+	//   Restore destination volume is restored with the full backup.
+	//   The phase of private_data in the action_status table is set to `restore_diff` and
+	//   nextDiffPart is 0.
+	//
+	// Act:
+	//   Run doRestoreDiffPhase process about the incremental backup.
+	//
+	// Assert:
+	//   The process will return nil.
+	//   The phase of private_data in the action_status table is set to `completed`.
+	//   The contents of the restore volume have been restored.
+
+	// Arrange
+	cfg := setup(t, &setupInput{
+		enableIncrementalBackup: true,
+	})
+	r := NewRestore(cfg.restoreInputs[0])
+	require.NoError(t, r.Perform())
+
+	restorePD := &restorePrivateData{
+		Phase:        RestoreDiff,
+		NextDiffPart: 0,
+	}
+	createPrivateData(t, cfg, cfg.restoreInputs[1], restorePD)
+
+	// Act
+	r = NewRestore(cfg.restoreInputs[1])
+	metadata, err := job.GetBackupMetadata(cfg.finRepo)
+	require.NoError(t, err)
+	require.NoError(t, r.doRestoreDiffPhase(restorePD, metadata))
+
+	// Assert
+	restorePD, err = getRestorePrivateData(cfg.finRepo, cfg.restoreInputs[1].ActionUID)
+	require.NoError(t, err)
+	assert.Equal(t, Completed, restorePD.Phase)
+
+	// Verify the contents of the restore file.
+	restoreVolume, err := os.Open(cfg.restoreVol.GetPath())
+	require.NoError(t, err)
+	defer func() { require.NoError(t, restoreVolume.Close()) }()
+
+	utils.CompareReaders(t, bytes.NewReader(cfg.volumeRaws[1]), restoreVolume)
+}
+
+func TestRestore_doRestoreDiffPhase_resume(t *testing.T) {
+	// CSATEST-1588
+	// Description:
+	//   Confirm normal processing for doRestoreDiffPhase.
+	//
+	// Arrange:
+	//   There is a full backup and incremental backup.
+	//   Restore destination volume is restored with the full backup.
+	//   The phase of private_data in the action_status table is set to `restore_diff` and
+	//   nextDiffPart is 1.
+	//
+	// Act:
+	//   Run doRestoreDiffPhase process about the incremental backup.
+	//
+	// Assert:
+	//   The process will return nil.
+	//   The phase of private_data in the action_status table is set to `completed`.
+	//   The contents of the restore volume have been restored, except for the first part.
+
+	// Arrange
+	cfg := setup(t, &setupInput{
+		enableIncrementalBackup: true,
+	})
+	r := NewRestore(cfg.restoreInputs[0])
+	require.NoError(t, r.Perform())
+
+	restorePD := &restorePrivateData{
+		Phase:        RestoreDiff,
+		NextDiffPart: 1,
+	}
+	createPrivateData(t, cfg, cfg.restoreInputs[1], restorePD)
+
+	// Act
+	r = NewRestore(cfg.restoreInputs[1])
+	metadata, err := job.GetBackupMetadata(cfg.finRepo)
+	require.NoError(t, err)
+	require.NoError(t, r.doRestoreDiffPhase(restorePD, metadata))
+
+	// Assert
+	restorePD, err = getRestorePrivateData(cfg.finRepo, cfg.restoreInputs[1].ActionUID)
+	require.NoError(t, err)
+	assert.Equal(t, Completed, restorePD.Phase)
+
+	// Verify the contents of the restore file.
+	restoreVolume, err := os.Open(cfg.restoreVol.GetPath())
+	require.NoError(t, err)
+	defer func() { require.NoError(t, restoreVolume.Close()) }()
+
+	expectedData := make([]byte, defaultVolumeSize)
+	copy(expectedData, cfg.volumeRaws[0][:defaultMaxPartSize])
+	copy(expectedData[defaultMaxPartSize:], cfg.volumeRaws[1][defaultMaxPartSize:])
+	utils.CompareReaders(t, bytes.NewReader(expectedData), restoreVolume)
+}
+
+func TestRestore_doRestoreDiffPhase_error(t *testing.T) {
+	// CSATEST-1589
+	// Description:
+	//   Confirm error processing for doRestoreDiffPhase.
+	//
+	// Arrange:
+	//   There are a full backup and an incremental backup, but the incremental backup data will fail to be read.
+	//   Restore destination volume is restored with the full backup.
+	//   The phase of private_data in the action_status table is set to `restore_diff` and
+	//   nextDiffPart is 0.
+	//
+	// Act:
+	//   Run doRestoreDiffPhase process about the incremental backup.
+	//
+	// Assert:
+	//   The process will return an error.
+	//   The phase of private_data in the action_status table remains `restore_diff`.
+	//   The contents of the restore volume have not been restored (full backup data remains).
+
+	// Arrange
+	cfg := setup(t, &setupInput{
+		enableIncrementalBackup: true,
+	})
+	r := NewRestore(cfg.restoreInputs[0])
+	require.NoError(t, r.Perform())
+
+	err := cfg.nlvRepo.RemoveDiffDirRecursively(cfg.restoreInputs[1].TargetSnapshotID)
+	require.NoError(t, err)
+
+	restorePD := &restorePrivateData{
+		Phase:        RestoreDiff,
+		NextDiffPart: 0,
+	}
+	createPrivateData(t, cfg, cfg.restoreInputs[1], restorePD)
+
+	// Act
+	r = NewRestore(cfg.restoreInputs[1])
+	metadata, err := job.GetBackupMetadata(cfg.finRepo)
+	require.NoError(t, err)
+	assert.Error(t, r.doRestoreDiffPhase(restorePD, metadata))
+
+	// Assert
+	restorePD, err = getRestorePrivateData(cfg.finRepo, cfg.restoreInputs[1].ActionUID)
+	require.NoError(t, err)
+	assert.Equal(t, RestoreDiff, restorePD.Phase)
+
+	// Verify the contents of the restore file.
+	restoreVolume, err := os.Open(cfg.restoreVol.GetPath())
+	require.NoError(t, err)
+	defer func() { require.NoError(t, restoreVolume.Close()) }()
+
+	utils.CompareReaders(t, bytes.NewReader(cfg.volumeRaws[0]), restoreVolume)
+}
+
+func TestRestore_doRestoreDiffPhase_skip(t *testing.T) {
+	// CSATEST-1590
+	// Description:
+	//   Confirm skip processing for doRestoreDiffPhase.
+	//
+	// Arrange:
+	//   There is a full backup and incremental backup.
+	//   Restore destination volume is restored with the full backup.
+	//   The phase of private_data in the action_status table is set to `completed`.
+	//
+	// Act:
+	//   Run doRestoreDiffPhase process about the incremental backup.
+	//
+	// Assert:
+	//   The process will return nil.
+	//   The phase of private_data in the action_status table remains `completed`.
+	//   The contents of the restore volume have not been restored (full backup data remains).
+
+	// Arrange
+	cfg := setup(t, &setupInput{
+		enableIncrementalBackup: true,
+	})
+	r := NewRestore(cfg.restoreInputs[0])
+	require.NoError(t, r.Perform())
+
+	restorePD := &restorePrivateData{
+		Phase: Completed,
+	}
+	createPrivateData(t, cfg, cfg.restoreInputs[1], restorePD)
+
+	// Act
+	r = NewRestore(cfg.restoreInputs[1])
+	require.NoError(t, r.doRestoreDiffPhase(restorePD, nil))
+
+	// Assert
+	restorePD, err := getRestorePrivateData(cfg.finRepo, cfg.restoreInputs[1].ActionUID)
+	require.NoError(t, err)
+	assert.Equal(t, Completed, restorePD.Phase)
+
+	// Verify the contents of the restore file.
+	restoreVolume, err := os.Open(cfg.restoreVol.GetPath())
+	require.NoError(t, err)
+	defer func() { require.NoError(t, restoreVolume.Close()) }()
+
+	utils.CompareReaders(t, bytes.NewReader(cfg.volumeRaws[0]), restoreVolume)
 }
