@@ -58,6 +58,10 @@ func (r *RBDRepository) ListSnapshots(poolName, imageName string) ([]*model.RBDS
 		return nil, fmt.Errorf("failed to unmarshal RBD snapshots: %w", err)
 	}
 
+	if len(snapshots) == 0 {
+		return nil, fmt.Errorf("no snapshots found for %s: %w", fmt.Sprintf("%s/%s", poolName, imageName), model.ErrNotFound)
+	}
+
 	return snapshots, nil
 }
 
