@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -54,7 +53,6 @@ const (
 )
 
 var (
-	errSnapshotNotFound     = errors.New("snapshot not found")
 	cleanupJobRequeueAfter  = 5 * time.Second
 	deletionJobRequeueAfter = 1 * time.Minute
 )
@@ -280,20 +278,10 @@ func (r *FinBackupReconciler) createSnapshot(ctx context.Context, backup *finv1.
 	labels[labelBackupTargetPVCUID] = string(pvc.GetUID())
 	backup.SetLabels(labels)
 
-	var pv corev1.PersistentVolume
-	err = r.Get(ctx, client.ObjectKey{Name: pvc.Spec.VolumeName}, &pv)
+	rbdPool, rbdImage, err := r.getRBDPoolAndImageFromPVC(ctx, &pvc)
 	if err != nil {
-		logger.Error(err, "failed to get backup target PV")
+		logger.Error(err, "failed to get pool/image from PVC")
 		return ctrl.Result{}, err
-	}
-
-	rbdImage := pv.Spec.CSI.VolumeAttributes["imageName"]
-	if rbdImage == "" {
-		return ctrl.Result{}, errors.New("imageName is not specified in PV")
-	}
-	rbdPool := pv.Spec.CSI.VolumeAttributes["pool"]
-	if rbdPool == "" {
-		return ctrl.Result{}, errors.New("pool is not specified in PV")
 	}
 
 	annotations := backup.GetAnnotations()
@@ -414,16 +402,8 @@ func (r *FinBackupReconciler) reconcileDelete(ctx context.Context, backup *finv1
 			return ctrl.Result{}, err
 		}
 	}
-
-	rbdPool := backup.GetAnnotations()[annotationRBDPool]
-	rbdImage := backup.GetAnnotations()[annotationBackupTargetRBDImage]
-	snapshotName := snapshotName(backup)
-	if err := r.removeSnapshot(rbdPool, rbdImage, snapshotName); err != nil {
-		if !errors.Is(err, errSnapshotNotFound) {
-			logger.Error(err, "failed to remove RBD snapshot")
-			return ctrl.Result{}, err
-		}
-		logger.Info("RBD snapshot not found, skipping removal", "pool", rbdPool, "image", rbdImage, "snapName", snapshotName)
+	if err := r.removeSnapshot(ctx, backup); err != nil {
+		return ctrl.Result{}, err
 	}
 
 	controllerutil.RemoveFinalizer(backup, FinBackupFinalizerName)
@@ -435,16 +415,16 @@ func (r *FinBackupReconciler) reconcileDelete(ctx context.Context, backup *finv1
 }
 
 func (r *FinBackupReconciler) createSnapshotIfNeeded(rbdPool, rbdImage, snapName string) (*model.RBDSnapshot, error) {
-	snap, err := r.getSnapshot(rbdPool, rbdImage, snapName)
+	snap, err := findSnapshot(r.snapRepo, rbdPool, rbdImage, snapName)
 	if err != nil {
-		if !errors.Is(err, errSnapshotNotFound) {
+		if !errors.Is(err, model.ErrNotFound) {
 			return nil, fmt.Errorf("failed to get snapshot: %w", err)
 		}
 		err = r.snapRepo.CreateSnapshot(rbdPool, rbdImage, snapName)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create snapshot: %w", err)
 		}
-		snap, err = r.getSnapshot(rbdPool, rbdImage, snapName)
+		snap, err = findSnapshot(r.snapRepo, rbdPool, rbdImage, snapName)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get snapshot after creation: %w", err)
 		}
@@ -452,9 +432,21 @@ func (r *FinBackupReconciler) createSnapshotIfNeeded(rbdPool, rbdImage, snapName
 	return snap, nil
 }
 
-func (r *FinBackupReconciler) removeSnapshot(rbdPool, rbdImage, snapName string) error {
-	_, err := r.getSnapshot(rbdPool, rbdImage, snapName)
+// removeSnapshot removes the RBD snapshot for the given FinBackup.
+func (r *FinBackupReconciler) removeSnapshot(ctx context.Context, backup *finv1.FinBackup) error {
+	logger := log.FromContext(ctx)
+	rbdPool, rbdImage, err := r.getRBDPoolAndImage(ctx, backup)
 	if err != nil {
+		logger.Error(err, "failed to get RBD pool/image from FinBackup")
+		return nil
+	}
+
+	snapName := snapshotName(backup)
+	if _, err = findSnapshot(r.snapRepo, rbdPool, rbdImage, snapName); err != nil {
+		if errors.Is(err, model.ErrNotFound) {
+			logger.Info("RBD snapshot not found", "pool", rbdPool, "image", rbdImage, "snapName", snapName)
+			return nil
+		}
 		return err
 	}
 	err = r.snapRepo.RemoveSnapshot(rbdPool, rbdImage, snapName)
@@ -464,24 +456,40 @@ func (r *FinBackupReconciler) removeSnapshot(rbdPool, rbdImage, snapName string)
 	return nil
 }
 
-func (r *FinBackupReconciler) getSnapshot(rbdPool, rbdImage, snapName string) (*model.RBDSnapshot, error) {
-	snapshots, err := r.snapRepo.ListSnapshots(rbdPool, rbdImage)
-	if err != nil {
-		if errors.Is(err, model.ErrNotFound) {
-			return nil, errSnapshotNotFound
-		}
-		return nil, fmt.Errorf("failed to list snapshots: %w", err)
+func (r *FinBackupReconciler) getRBDPoolAndImageFromPVC(
+	ctx context.Context,
+	pvc *corev1.PersistentVolumeClaim,
+) (string, string, error) {
+	if pvc == nil {
+		return "", "", errors.New("pvc is nil")
 	}
-	if len(snapshots) == 0 {
-		return nil, fmt.Errorf("%w (snapshot: %s, pool: %s, image: %s)", errSnapshotNotFound, snapName, rbdPool, rbdImage)
+	var pv corev1.PersistentVolume
+	if err := r.Get(ctx, client.ObjectKey{Name: pvc.Spec.VolumeName}, &pv); err != nil {
+		return "", "", err
 	}
-	i := slices.IndexFunc(snapshots, func(s *model.RBDSnapshot) bool {
-		return s.Name == snapName
-	})
-	if i == -1 {
-		return nil, fmt.Errorf("%w (snapshot: %s, pool: %s, image: %s)", errSnapshotNotFound, snapName, rbdPool, rbdImage)
+	if pv.Spec.CSI == nil || pv.Spec.CSI.VolumeAttributes == nil {
+		return "", "", errors.New("PV.Spec.CSI attributes missing")
 	}
-	return snapshots[i], nil
+	pool := pv.Spec.CSI.VolumeAttributes["pool"]
+	image := pv.Spec.CSI.VolumeAttributes["imageName"]
+	if pool == "" || image == "" {
+		return "", "", fmt.Errorf("pool %q or imageName %q is empty", pool, image)
+	}
+	return pool, image, nil
+}
+
+func (r *FinBackupReconciler) getRBDPoolAndImage(ctx context.Context, backup *finv1.FinBackup) (string, string, error) {
+	rbdPool := backup.GetAnnotations()[annotationRBDPool]
+	rbdImage := backup.GetAnnotations()[annotationBackupTargetRBDImage]
+	if rbdPool != "" && rbdImage != "" {
+		return rbdPool, rbdImage, nil
+	}
+
+	var pvc corev1.PersistentVolumeClaim
+	if err := r.Get(ctx, client.ObjectKey{Namespace: backup.Spec.PVCNamespace, Name: backup.Spec.PVC}, &pvc); err != nil {
+		return "", "", err
+	}
+	return r.getRBDPoolAndImageFromPVC(ctx, &pvc)
 }
 
 func checkPVCUIDConsistency(backup *finv1.FinBackup, pvc *corev1.PersistentVolumeClaim) error {
