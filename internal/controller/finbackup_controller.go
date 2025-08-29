@@ -90,10 +90,14 @@ func NewFinBackupReconciler(
 	}
 }
 
-func (r *FinBackupReconciler) checkCephCluster(ctx context.Context, pvc *corev1.PersistentVolumeClaim) (bool, error) {
+func checkCephCluster(ctx context.Context,
+	client client.Client,
+	pvc *corev1.PersistentVolumeClaim,
+	cephClusterNamespace string,
+) (bool, error) {
 	scName := storagehelpers.GetPersistentVolumeClaimClass(pvc)
 	var storageClass storagev1.StorageClass
-	if err := r.Get(ctx, types.NamespacedName{Name: scName}, &storageClass); err != nil {
+	if err := client.Get(ctx, types.NamespacedName{Name: scName}, &storageClass); err != nil {
 		return false, fmt.Errorf("failed to get StorageClass: %q: %w", scName, err)
 	}
 
@@ -104,7 +108,7 @@ func (r *FinBackupReconciler) checkCephCluster(ctx context.Context, pvc *corev1.
 	if !ok {
 		return false, nil
 	}
-	if clusterID != r.cephClusterNamespace {
+	if clusterID != cephClusterNamespace {
 		return false, nil
 	}
 	return true, nil
@@ -145,7 +149,7 @@ func (r *FinBackupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, err
 	}
 
-	ok, err := r.checkCephCluster(ctx, &pvc)
+	ok, err := checkCephCluster(ctx, r.Client, &pvc, r.cephClusterNamespace)
 	if err != nil {
 		return ctrl.Result{}, err
 	}

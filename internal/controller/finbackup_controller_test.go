@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"testing"
 	"time"
 
 	finv1 "github.com/cybozu-go/fin/api/v1"
@@ -22,6 +23,7 @@ import (
 	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	controllerfake "sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
 
@@ -394,4 +396,91 @@ func DeletePVCAndPV(ctx context.Context, namespace, pvcName string) {
 		err = k8sClient.Get(ctx, client.ObjectKey{Name: pvc.Spec.VolumeName}, &pv)
 		g.Expect(k8serrors.IsNotFound(err)).Should(BeTrue())
 	}, "5s", "1s").Should(Succeed())
+}
+
+func Test_checkCephCluster(t *testing.T) {
+	cephSC := NewRBDStorageClass("valid-ceph-cluster", "testPool")
+	otherCephSC := NewRBDStorageClass("other-ceph-cluster", "testPool")
+	otherSC := NewRBDStorageClass("other-storage", "testPool")
+	otherSC.Provisioner = "other.com"
+	type args struct {
+		pvc                  *corev1.PersistentVolumeClaim
+		cephClusterNamespace string
+	}
+	tests := []struct {
+		name    string
+		args    args
+		want    bool
+		wantErr bool
+	}{
+		{
+			name: "valid ceph cluster",
+			args: args{
+				pvc: &corev1.PersistentVolumeClaim{
+					ObjectMeta: metav1.ObjectMeta{Name: "pvc", Namespace: cephSC.Namespace},
+					Spec: corev1.PersistentVolumeClaimSpec{
+						StorageClassName: ptr.To(cephSC.Name),
+					},
+				},
+				cephClusterNamespace: cephSC.Name,
+			},
+			want:    true,
+			wantErr: false,
+		},
+		{
+			name: "other ceph cluster",
+			args: args{
+				pvc: &corev1.PersistentVolumeClaim{
+					ObjectMeta: metav1.ObjectMeta{Name: "pvc", Namespace: otherCephSC.Namespace},
+					Spec: corev1.PersistentVolumeClaimSpec{
+						StorageClassName: ptr.To(otherCephSC.Name),
+					},
+				},
+				cephClusterNamespace: cephSC.Name,
+			},
+			want:    false,
+			wantErr: false,
+		},
+		{
+			name: "non ceph provisioner",
+			args: args{
+				pvc: &corev1.PersistentVolumeClaim{
+					ObjectMeta: metav1.ObjectMeta{Name: "pvc", Namespace: otherSC.Namespace},
+					Spec: corev1.PersistentVolumeClaimSpec{
+						StorageClassName: ptr.To(otherSC.Name),
+					},
+				},
+				cephClusterNamespace: cephSC.Name,
+			},
+			want:    false,
+			wantErr: false,
+		},
+		{
+			name: "failed to get sc",
+			args: args{
+				pvc: &corev1.PersistentVolumeClaim{
+					ObjectMeta: metav1.ObjectMeta{Name: "pvc", Namespace: otherSC.Namespace},
+					Spec: corev1.PersistentVolumeClaimSpec{
+						StorageClassName: ptr.To("non-exist-sc"),
+					},
+				},
+				cephClusterNamespace: cephSC.Name,
+			},
+			want:    false,
+			wantErr: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := controllerfake.NewClientBuilder().WithObjects(cephSC, otherCephSC, otherSC, tt.args.pvc).Build()
+			got, err := checkCephCluster(context.TODO(), c, tt.args.pvc, tt.args.cephClusterNamespace)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("checkCephCluster() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if got != tt.want {
+				t.Errorf("checkCephCluster() = %v, want %v", got, tt.want)
+			}
+		})
+	}
 }
