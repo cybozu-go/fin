@@ -48,7 +48,7 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 	var stopFunc context.CancelFunc
 
 	BeforeAll(func() {
-		sc1 = NewRBDStorageClass(namespace, rbdPoolName)
+		sc1 = NewRBDStorageClass("integration", namespace, rbdPoolName)
 		Expect(k8sClient.Create(context.TODO(), sc1)).Should(Succeed())
 
 		rbdRepo = fake.NewRBDRepository(map[fake.PoolImageName][]*model.RBDSnapshot{
@@ -162,6 +162,12 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
 	var reconciler *FinBackupReconciler
 	var rbdRepo *fake.RBDRepository
+	var sc *storagev1.StorageClass
+
+	BeforeAll(func(ctx SpecContext) {
+		sc = NewRBDStorageClass("unit", namespace, rbdPoolName)
+		Expect(k8sClient.Create(ctx, sc)).Should(Succeed())
+	})
 
 	BeforeEach(func(ctx SpecContext) {
 		rbdRepo = fake.NewRBDRepository(map[fake.PoolImageName][]*model.RBDSnapshot{
@@ -176,6 +182,46 @@ var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
 			snapRepo:                rbdRepo,
 			rawImgExpansionUnitSize: 100 * 1 << 20,
 		}
+	})
+
+	// CSATEST-1620
+	// Description:
+	//   Confirm that the FinBackup is created with the correct labels and annotations.
+	//
+	// Arrange:
+	//   - Create a pair of PVC and PV.
+	//   - Create a FinBackup resource.
+	//
+	// Act:
+	//   - Run FinBackup Controller's Reconcile().
+	//
+	// Assert:
+	//   - Reconcile() does not return an error.
+	//   - The FinBackup has the correct labels and annotations.
+	Context("when reconciling a full backup", func() {
+		var pvc *corev1.PersistentVolumeClaim
+		var pv *corev1.PersistentVolume
+		var finbackup *finv1.FinBackup
+
+		BeforeAll(func(ctx SpecContext) {
+			pvc, pv = NewPVCAndPV(sc, namespace, "test-pvc-labels", "test-pv-labels", rbdImageName)
+			Expect(k8sClient.Create(ctx, pvc)).Should(Succeed())
+			Expect(k8sClient.Create(ctx, pv)).Should(Succeed())
+
+			finbackup = NewFinBackup(namespace, "test-full-backup-labels", pvc.Name, pvc.Namespace, "test-node")
+			Expect(k8sClient.Create(ctx, finbackup)).Should(Succeed())
+		})
+
+		It("should add spec-defined labels and annotations for a full backup", func(ctx SpecContext) {
+			_, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(finbackup)})
+			Expect(err).ShouldNot(HaveOccurred())
+
+			var updated finv1.FinBackup
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(finbackup), &updated)).Should(Succeed())
+			Expect(updated.GetLabels()).To(HaveKeyWithValue(labelBackupTargetPVCUID, string(pvc.GetUID())))
+			Expect(updated.GetAnnotations()).To(HaveKeyWithValue(annotationBackupTargetRBDImage, rbdImageName))
+			Expect(updated.GetAnnotations()).To(HaveKeyWithValue(annotationRBDPool, rbdPoolName))
+		})
 	})
 
 	// CSATEST-1607
@@ -202,7 +248,7 @@ var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
 			By("creating another storage class for another ceph cluster")
 			otherNamespace := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "test-namespace-2"}}
 			Expect(k8sClient.Create(ctx, otherNamespace)).Should(Succeed())
-			otherStorageClass := NewRBDStorageClass(otherNamespace.Name, rbdPoolName)
+			otherStorageClass := NewRBDStorageClass("other", otherNamespace.Name, rbdPoolName)
 			Expect(k8sClient.Create(ctx, otherStorageClass)).Should(Succeed())
 
 			By("creating PVC in the other storage class")
@@ -244,9 +290,9 @@ var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
 	})
 })
 
-func NewRBDStorageClass(cephClusterNamespace, poolName string) *storagev1.StorageClass {
+func NewRBDStorageClass(prefix, cephClusterNamespace, poolName string) *storagev1.StorageClass {
 	return &storagev1.StorageClass{
-		ObjectMeta:  metav1.ObjectMeta{Name: cephClusterNamespace},
+		ObjectMeta:  metav1.ObjectMeta{Name: fmt.Sprintf("%s-%s", prefix, cephClusterNamespace)},
 		Provisioner: fmt.Sprintf("%s.rbd.csi.ceph.com", cephClusterNamespace),
 		Parameters: map[string]string{
 			"clusterID": cephClusterNamespace,
