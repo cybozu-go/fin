@@ -121,7 +121,7 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 	//    - The snapshot for the incremental backup is not deleted
 	Describe("deleting a full backup when both full and incremental backups exist", func() {
 		var finbackup2 *finv1.FinBackup
-		BeforeAll(func(ctx SpecContext) {
+		BeforeEach(func(ctx SpecContext) {
 			By("creating a incremental FinBackup")
 			finbackup2 = NewFinBackup(namespace, "test-backup-2", pvc1.Name, pvc1.Namespace, "test-node")
 			Expect(k8sClient.Create(ctx, finbackup2)).Should(Succeed())
@@ -131,26 +131,26 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 			Expect(k8sClient.Delete(ctx, finbackup1)).Should(Succeed())
 		})
 
-		AfterAll(func(ctx SpecContext) {
+		AfterEach(func(ctx SpecContext) {
 			if err := k8sClient.Delete(ctx, finbackup2); err == nil {
 				WaitForFinBackupRemoved(ctx, finbackup2)
 			}
 		})
 
 		It("should delete the FinBackup for the full backup", func(ctx SpecContext) {
+			By("waiting for the FinBackup to be removed")
 			WaitForFinBackupRemoved(ctx, finbackup1)
-		})
-		It("should delete the snapshot for the original FinBackup", func(ctx SpecContext) {
+
+			By("waiting for the snapshot to be removed")
 			Eventually(func(g Gomega) {
 				snapshots, err := rbdRepo.ListSnapshots(rbdPoolName, rbdImageName)
 				g.Expect(err).ShouldNot(HaveOccurred())
 				snapshotIndex := slices.IndexFunc(snapshots, func(snapshot *model.RBDSnapshot) bool {
 					return snapshot.Name == backupJobName(finbackup1)
 				})
-				Expect(snapshotIndex).ShouldNot(Equal(-1))
+				Expect(snapshotIndex).Should(Equal(-1))
 			}, "5s", "1s").Should(Succeed())
-		})
-		It("should keep the FinBackup for the incremental backup", func(ctx SpecContext) {
+			By("checking another FinBackup is not deleted")
 			Consistently(func(g Gomega) {
 				var fb finv1.FinBackup
 				err := k8sClient.Get(ctx, client.ObjectKey{Namespace: namespace, Name: finbackup2.Name}, &fb)
@@ -246,7 +246,7 @@ var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
 		var pv2 *corev1.PersistentVolume
 		var finbackup *finv1.FinBackup
 
-		BeforeAll(func(ctx SpecContext) {
+		BeforeEach(func(ctx SpecContext) {
 			By("creating another storage class for another ceph cluster")
 			otherNamespace := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "test-namespace-2"}}
 			Expect(k8sClient.Create(ctx, otherNamespace)).Should(Succeed())
@@ -263,7 +263,7 @@ var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
 			Expect(k8sClient.Create(ctx, finbackup)).Should(Succeed())
 		})
 
-		AfterAll(func(ctx SpecContext) {
+		AfterEach(func(ctx SpecContext) {
 			if err := k8sClient.Delete(ctx, finbackup); err == nil {
 				WaitForFinBackupRemoved(ctx, finbackup)
 			}
@@ -271,17 +271,18 @@ var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
 		})
 
 		It("should not return an error in the reconcile process", func(ctx SpecContext) {
+			By("reconciling the FinBackup")
 			_, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(finbackup)})
 			Expect(err).ShouldNot(HaveOccurred())
-		})
-		It("should not create a backup job", func(ctx SpecContext) {
+
+			By("checking if the backup job is not created")
 			jobKey := types.NamespacedName{Name: backupJobName(finbackup), Namespace: namespace}
 			var job batchv1.Job
-			err := k8sClient.Get(ctx, jobKey, &job)
+			err = k8sClient.Get(ctx, jobKey, &job)
 			Expect(err).Should(HaveOccurred())
 			Expect(k8serrors.IsNotFound(err)).Should(BeTrue())
-		})
-		It("should not mark FinBackup as ready when the PVC is in the different Ceph cluster", func(ctx SpecContext) {
+
+			By("checking if the FinBackup is not marked as ready when the PVC is in a different Ceph cluster")
 			Consistently(func(g Gomega) {
 				var fb finv1.FinBackup
 				err := k8sClient.Get(ctx, client.ObjectKeyFromObject(finbackup), &fb)

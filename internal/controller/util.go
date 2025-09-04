@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	finv1 "github.com/cybozu-go/fin/api/v1"
+	"github.com/cybozu-go/fin/internal/model"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -76,4 +77,23 @@ func enqueueOnJobCompletion(e event.UpdateEvent) bool {
 
 func finVolumePVCName(backup *finv1.FinBackup) string {
 	return "fin-" + backup.Spec.Node
+}
+
+// findSnapshot searches for a snapshot with the given name by using the
+// provided RBDSnapshotListRepository. It returns model.ErrNotFound when not found.
+func findSnapshot(
+	repo model.RBDSnapshotListRepository,
+	poolName, imageName, snapName string,
+) (*model.RBDSnapshot, error) {
+	snapshots, err := repo.ListSnapshots(poolName, imageName)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, s := range snapshots {
+		if s.Name == snapName {
+			return s, nil
+		}
+	}
+	return nil, fmt.Errorf("%w: snapshot=%s pool=%s image=%s", model.ErrNotFound, snapName, poolName, imageName)
 }
