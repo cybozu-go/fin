@@ -4,11 +4,13 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"testing"
 	"time"
 
 	finv1 "github.com/cybozu-go/fin/api/v1"
 	"github.com/cybozu-go/fin/internal/infrastructure/fake"
 	"github.com/cybozu-go/fin/internal/model"
+	"github.com/go-logr/logr"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	batchv1 "k8s.io/api/batch/v1"
@@ -440,4 +442,150 @@ func DeletePVCAndPV(ctx context.Context, namespace, pvcName string) {
 		err = k8sClient.Get(ctx, client.ObjectKey{Name: pvc.Spec.VolumeName}, &pv)
 		g.Expect(k8serrors.IsNotFound(err)).Should(BeTrue())
 	}, "5s", "1s").Should(Succeed())
+}
+
+// CSATEST-1627
+// Description:
+//
+//	Do not proceed reconciliation until all FinBackups
+//	for the backup target PVC satisfy the preconditions.
+//
+// Arrange
+//   - The FinBackup resource that is the subject of reconciliation
+//   - For each test case, prepare an appropriate FinBackupList
+//
+// Act
+//   - Run snapIDPreconditionSatisfied
+//
+// Assert
+//   - If only self is present in the list, returns true.
+//   - If another backup has a nil SnapID, returns false (nil SnapID blocks reconciliation).
+//   - For Finbackups with a smaller SnapID:
+//     . On a different node, returns true.
+//     . On the same node but is being deleted, returns true.
+//     . On the same node, not ready and is not being deleted.
+//   - If a larger SnapID exists, returns true.
+func Test_snapIDPreconditionSatisfied(t *testing.T) {
+	logger := logr.Discard()
+	deletionTimestamp := metav1.Now()
+	createFinBackup := func(
+		uid string, snapID int, node string, ready bool, deletionTimestamp *metav1.Time,
+	) *finv1.FinBackup {
+		fb := &finv1.FinBackup{
+			ObjectMeta: metav1.ObjectMeta{
+				UID:               types.UID(uid),
+				DeletionTimestamp: deletionTimestamp,
+			},
+			Spec: finv1.FinBackupSpec{
+				Node: node,
+			},
+		}
+		if snapID > 0 {
+			fb.Status.SnapID = ptr.To(snapID)
+		}
+		if ready {
+			fb.Status.Conditions = []metav1.Condition{
+				{
+					Type:   finv1.BackupConditionReadyToUse,
+					Status: metav1.ConditionTrue,
+				},
+			}
+		}
+		return fb
+	}
+
+	type args struct {
+		backup        *finv1.FinBackup
+		finBackupList *finv1.FinBackupList
+	}
+	tests := []struct {
+		name string
+		args args
+		want bool
+	}{
+		{
+			name: "only self in list",
+			args: args{
+				backup: createFinBackup("backup-uid", 20, "node1", true, nil),
+				finBackupList: &finv1.FinBackupList{
+					Items: []finv1.FinBackup{
+						*createFinBackup("backup-uid", 20, "node1", true, nil),
+					},
+				},
+			},
+			want: true,
+		},
+		{
+			name: "another FinBackup with nil SnapID",
+			args: args{
+				backup: createFinBackup("backup-uid", 20, "node1", true, nil),
+				finBackupList: &finv1.FinBackupList{
+					Items: []finv1.FinBackup{
+						*createFinBackup("backup-uid", 20, "node1", true, nil),
+						*createFinBackup("other-uid", 0, "node1", true, nil),
+					},
+				},
+			},
+			want: false,
+		},
+		{
+			name: "anothoer FinBackup in different node",
+			args: args{
+				backup: createFinBackup("backup-uid", 20, "node1", true, nil),
+				finBackupList: &finv1.FinBackupList{
+					Items: []finv1.FinBackup{
+						*createFinBackup("backup-uid", 20, "node1", true, nil),
+						*createFinBackup("other-uid", 10, "node2", false, nil),
+					},
+				},
+			},
+			want: true,
+		},
+		{
+			name: "another FinBackup is deleted",
+			args: args{
+				backup: createFinBackup("backup-uid", 20, "node1", true, nil),
+				finBackupList: &finv1.FinBackupList{
+					Items: []finv1.FinBackup{
+						*createFinBackup("backup-uid", 20, "node1", true, nil),
+						*createFinBackup("other-uid", 10, "node1", false, &deletionTimestamp),
+					},
+				},
+			},
+			want: true,
+		},
+		{
+			name: "anothoer FinBackup is not ready",
+			args: args{
+				backup: createFinBackup("backup-uid", 20, "node1", true, nil),
+				finBackupList: &finv1.FinBackupList{
+					Items: []finv1.FinBackup{
+						*createFinBackup("backup-uid", 20, "node1", true, nil),
+						*createFinBackup("other-uid", 10, "node1", false, nil),
+					},
+				},
+			},
+			want: false,
+		},
+		{
+			name: "another FinBackup has a larger SnapID",
+			args: args{
+				backup: createFinBackup("backup-uid", 20, "node1", true, nil),
+				finBackupList: &finv1.FinBackupList{
+					Items: []finv1.FinBackup{
+						*createFinBackup("backup-uid", 20, "node1", true, nil),
+						*createFinBackup("other-uid", 30, "node1", false, nil),
+					},
+				},
+			},
+			want: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := snapIDPreconditionSatisfied(&logger, tt.args.backup, tt.args.finBackupList); got != tt.want {
+				t.Errorf("snapIDPreconditionSatisfied() = %v, want %v", got, tt.want)
+			}
+		})
+	}
 }
