@@ -159,6 +159,45 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 			}, "5s", "1s").Should(Succeed())
 		})
 	})
+
+	// CSATEST-1542
+	// Description:
+	//   FinBackup becomes ReadyToUse when a backup-target PVC is recreated.
+	//
+	// Arrange:
+	//   - Create a backup-target PVC.
+	//   - Create a FinBackup and make it ReadyToUse.
+	//   - Recreate the backup-target PVC.
+	//
+	// Act:
+	//   - Create a new FinBackup.
+	//
+	// Assert:
+	//   - The new FinBackup becomes ReadyToUse.
+	Describe("FinBackup becomes ReadyToUse when a backup-target PVC is recreated", func() {
+		var finbackup2 *finv1.FinBackup
+		BeforeEach(func(ctx SpecContext) {
+			By("recreating the backup-target PVC")
+			DeletePVCAndPV(ctx, pvc1.Namespace, pvc1.Name)
+			pvc1, pv1 = NewPVCAndPV(sc1, namespace, pvc1.Name, pv1.Name, rbdImageName)
+			Expect(k8sClient.Create(ctx, pvc1)).Should(Succeed())
+			Expect(k8sClient.Create(ctx, pv1)).Should(Succeed())
+
+			By("reconciling a new FinBackup")
+			finbackup2 = NewFinBackup(namespace, "test-backup-2", pvc1.Name, pvc1.Namespace, "test-node")
+			Expect(k8sClient.Create(ctx, finbackup2)).Should(Succeed())
+		})
+		AfterEach(func(ctx SpecContext) {
+			if err := k8sClient.Delete(ctx, finbackup2); err == nil {
+				WaitForFinBackupRemoved(ctx, finbackup2)
+			}
+		})
+
+		It("should make the new FinBackup ReadyToUse", func(ctx SpecContext) {
+			By("waiting for the FinBackup to be ready")
+			WaitForFinBackupIsReady(ctx, finbackup2)
+		})
+	})
 })
 
 var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
