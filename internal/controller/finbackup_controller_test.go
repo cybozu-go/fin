@@ -362,12 +362,7 @@ var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
 			_, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(finbackup)})
 			Expect(err).ShouldNot(HaveOccurred())
 
-			By("checking if the backup job is not created")
-			jobKey := types.NamespacedName{Name: backupJobName(finbackup), Namespace: namespace}
-			var job batchv1.Job
-			err = k8sClient.Get(ctx, jobKey, &job)
-			Expect(err).Should(HaveOccurred())
-			Expect(k8serrors.IsNotFound(err)).Should(BeTrue())
+			ExpectNoBackupJob(ctx, k8sClient, finbackup)
 
 			By("checking if the FinBackup is not marked as ready when the PVC is in a different Ceph cluster")
 			Consistently(func(g Gomega) {
@@ -533,12 +528,7 @@ var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
 				Expect(err).Should(HaveOccurred())
 				Expect(err).Should(MatchError(ContainSubstring("backup target PVC UID does not match (inLabel=")))
 
-				By("checking if the backup job is not created")
-				jobKey := types.NamespacedName{Name: backupJobName(finbackup), Namespace: namespace}
-				var job batchv1.Job
-				err = k8sClient.Get(ctx, jobKey, &job)
-				Expect(err).Should(HaveOccurred())
-				Expect(k8serrors.IsNotFound(err)).Should(BeTrue())
+				ExpectNoBackupJob(ctx, k8sClient, finbackup)
 			})
 		})
 
@@ -564,12 +554,7 @@ var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
 				Expect(err).Should(HaveOccurred())
 				Expect(err).Should(MatchError(ContainSubstring("backup target PVC UID does not match (inStatus=")))
 
-				By("checking if the backup job is not created")
-				jobKey := types.NamespacedName{Name: backupJobName(finbackup), Namespace: namespace}
-				var job batchv1.Job
-				err = k8sClient.Get(ctx, jobKey, &job)
-				Expect(err).Should(HaveOccurred())
-				Expect(k8serrors.IsNotFound(err)).Should(BeTrue())
+				ExpectNoBackupJob(ctx, k8sClient, finbackup)
 			})
 		})
 	})
@@ -725,6 +710,16 @@ func DeletePVCAndPV(ctx context.Context, namespace, pvcName string) {
 		err = k8sClient.Get(ctx, client.ObjectKey{Name: pvc.Spec.VolumeName}, &pv)
 		g.Expect(k8serrors.IsNotFound(err)).Should(BeTrue())
 	}, "5s", "1s").Should(Succeed())
+}
+
+func ExpectNoBackupJob(ctx context.Context, k8sClient client.Client, finbackup *finv1.FinBackup) {
+	GinkgoHelper()
+	By("checking if the backup job is not created")
+	jobKey := types.NamespacedName{Name: backupJobName(finbackup), Namespace: namespace}
+	var job batchv1.Job
+	err := k8sClient.Get(ctx, jobKey, &job)
+	Expect(err).Should(HaveOccurred())
+	Expect(k8serrors.IsNotFound(err)).Should(BeTrue())
 }
 
 // CSATEST-1627
