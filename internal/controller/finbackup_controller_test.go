@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strconv"
 	"testing"
 	"time"
 
@@ -196,6 +197,50 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 		It("should make the new FinBackup ReadyToUse", func(ctx SpecContext) {
 			By("waiting for the FinBackup to be ready")
 			WaitForFinBackupIsReady(ctx, finbackup2)
+		})
+	})
+
+	// CSATEST-1621
+	// Description:
+	//   Ensure that appropriate labels and annotations are added when reconciling
+	//   an incremental FinBackup.
+	//
+	// Arrange:
+	//   - An RBD PVC exists.
+	//   - A FinBackup as a full backup exists and is ReadyToUse.
+	//
+	// Act:
+	//   - Create a FinBackup (FB2) as an incremental backup.
+	//
+	// Assert:
+	//   - The FinBackup (FB2) has the correct labels and annotations.
+	Describe("creating an incremental backup after a full backup exists", Label("new"), func() {
+		var finbackup2 *finv1.FinBackup
+		BeforeEach(func(ctx SpecContext) {
+			By("creating an incremental FinBackup")
+			finbackup2 = NewFinBackup(namespace, "test-incr-backup", pvc1.Name, pvc1.Namespace, "test-node")
+			Expect(k8sClient.Create(ctx, finbackup2)).Should(Succeed())
+			WaitForFinBackupIsReady(ctx, finbackup2)
+		})
+
+		AfterEach(func(ctx SpecContext) {
+			if err := k8sClient.Delete(ctx, finbackup2); err == nil {
+				WaitForFinBackupRemoved(ctx, finbackup2)
+			}
+		})
+
+		It("should add appropriate labels and annotations for the incremental FinBackup", func(ctx SpecContext) {
+			By("verifying labels and annotations on the incremental FinBackup")
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(finbackup2), finbackup2)).Should(Succeed())
+			Expect(finbackup2.GetLabels()).To(HaveKeyWithValue(labelBackupTargetPVCUID, string(pvc1.GetUID())))
+			annotations := finbackup2.GetAnnotations()
+			Expect(annotations).To(HaveKeyWithValue(annotationBackupTargetRBDImage, rbdImageName))
+			Expect(annotations).To(HaveKeyWithValue(annotationRBDPool, rbdPoolName))
+
+			// Incremental backup specific: the diff-from annotation should exist and point to the SnapID of the full backup.
+			var fb1 finv1.FinBackup
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(finbackup1), &fb1)).Should(Succeed())
+			Expect(annotations).To(HaveKeyWithValue(annotationDiffFrom, strconv.Itoa(*fb1.Status.SnapID)))
 		})
 	})
 })
