@@ -291,6 +291,75 @@ var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
 			}, "5s", "1s").Should(Succeed())
 		})
 	})
+
+	// CSATEST-1626
+	// Description:
+	//  Do not create any cleanup or deletion jobs when a FinBackup without SnapID is deleted
+	//
+	// Arrange:
+	//   - Create a PVC and PV.
+	//   - Create a FinBackup resource and set a deletion timestamp.
+	//
+	// Act:
+	//   - Run FinBackup Controller's Reconcile().
+	//
+	// Assert:
+	//   - Reconcile() does not return an error.
+	//   - No cleanup or deletion jobs are created.
+	Context("when reconciling a deleted FinBackup without SnapID", func() {
+		var pvc *corev1.PersistentVolumeClaim
+		var pv *corev1.PersistentVolume
+		var finbackup *finv1.FinBackup
+		BeforeEach(func(ctx SpecContext) {
+			By("creating a FinBackup with a pair of PVC and PV")
+			pvc, pv = NewPVCAndPV(sc, namespace, "test-pvc-snapid", "test-pv-snapid", rbdImageName)
+			Expect(k8sClient.Create(ctx, pvc)).Should(Succeed())
+			Expect(k8sClient.Create(ctx, pv)).Should(Succeed())
+			finbackup = NewFinBackup(namespace, "test-finbackup-snapid", pvc.Name, pvc.Namespace, "test-node")
+			finbackup.Status.SnapID = ptr.To(1)
+			Expect(k8sClient.Create(ctx, finbackup)).Should(Succeed())
+
+			By("reconciling the FinBackup")
+			_, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(finbackup)})
+			Expect(err).ShouldNot(HaveOccurred())
+
+			By("removing SnapID from the FinBackup")
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(finbackup), finbackup)).Should(Succeed())
+			finbackup.Status.SnapID = nil
+			Expect(k8sClient.Status().Update(ctx, finbackup)).Should(Succeed())
+
+			By("adding a deletion timestamp")
+			Expect(k8sClient.Delete(ctx, finbackup)).Should(Succeed())
+		})
+
+		AfterEach(func(ctx SpecContext) {
+			DeletePVCAndPV(ctx, pvc.Namespace, pvc.Name)
+		})
+
+		It("should not create any cleanup or deletion jobs", func(ctx SpecContext) {
+			By("reconciling the FinBackup after removing SnapID and adding the deletion timestamp")
+			_, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(finbackup)})
+			Expect(err).ShouldNot(HaveOccurred())
+
+			By("checking that the FinBackup is deleted")
+			err = k8sClient.Get(ctx, client.ObjectKeyFromObject(finbackup), finbackup)
+			Expect(err).Should(HaveOccurred())
+			Expect(k8serrors.IsNotFound(err)).Should(BeTrue())
+
+			By("checking that no cleanup or deletion jobs are created")
+			cleanupJobKey := types.NamespacedName{Name: cleanupJobName(finbackup), Namespace: namespace}
+			var cleanupJob batchv1.Job
+			err = k8sClient.Get(ctx, cleanupJobKey, &cleanupJob)
+			Expect(err).Should(HaveOccurred())
+			Expect(k8serrors.IsNotFound(err)).Should(BeTrue())
+
+			deletionJobKey := types.NamespacedName{Name: deletionJobName(finbackup), Namespace: namespace}
+			var deletionJob batchv1.Job
+			err = k8sClient.Get(ctx, deletionJobKey, &deletionJob)
+			Expect(err).Should(HaveOccurred())
+			Expect(k8serrors.IsNotFound(err)).Should(BeTrue())
+		})
+	})
 })
 
 func NewRBDStorageClass(prefix, cephClusterNamespace, poolName string) *storagev1.StorageClass {
