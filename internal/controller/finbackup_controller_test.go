@@ -297,6 +297,11 @@ var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
 			finbackup = NewFinBackup(namespace, "test-full-backup-labels", pvc.Name, pvc.Namespace, "test-node")
 			Expect(k8sClient.Create(ctx, finbackup)).Should(Succeed())
 		})
+		AfterEach(func(ctx SpecContext) {
+			controllerutil.RemoveFinalizer(finbackup, "finbackup.fin.cybozu.io/finalizer")
+			Expect(k8sClient.Delete(ctx, finbackup)).Should(Succeed())
+			DeletePVCAndPV(ctx, pvc.Namespace, pvc.Name)
+		})
 
 		It("should add spec-defined labels and annotations for a full backup", func(ctx SpecContext) {
 			_, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(finbackup)})
@@ -348,9 +353,7 @@ var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
 		})
 
 		AfterEach(func(ctx SpecContext) {
-			if err := k8sClient.Delete(ctx, finbackup); err == nil {
-				WaitForFinBackupRemoved(ctx, finbackup)
-			}
+			Expect(k8sClient.Delete(ctx, finbackup)).Should(Succeed())
 			DeletePVCAndPV(ctx, pvc2.Namespace, pvc2.Name)
 		})
 
