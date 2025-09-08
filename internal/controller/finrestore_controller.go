@@ -202,7 +202,7 @@ func (r *FinRestoreReconciler) reconcileCreateOrUpdate(
 	}
 
 	var job batchv1.Job
-	err = r.Get(ctx, client.ObjectKey{Namespace: backup.GetNamespace(), Name: restoreJobName(restore)}, &job)
+	err = r.Get(ctx, client.ObjectKey{Namespace: r.cephClusterNamespace, Name: restoreJobName(restore)}, &job)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to get restore job: %w", err)
 	}
