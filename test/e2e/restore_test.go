@@ -18,6 +18,8 @@ func restoreTestSuite() {
 	var finbackup *finv1.FinBackup
 	var finrestore *finv1.FinRestore
 	var err error
+	var finbackupNamespace = pvcNamespace
+	var finrestoreNamespace = pvcNamespace
 
 	BeforeAll(func(ctx SpecContext) {
 		By("creating a namespace")
@@ -71,20 +73,21 @@ func restoreTestSuite() {
 		Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
 
 		By("creating a backup")
-		finbackup, err = GetFinBackup(rookNamespace, "finbackup-test", pvcNamespace, pvc.Name, "minikube-worker")
+		finbackup, err = GetFinBackup(finbackupNamespace, "finbackup-test", pvcNamespace, pvc.Name, "minikube-worker")
 		Expect(err).NotTo(HaveOccurred())
 		err = CreateFinBackup(ctx, ctrlClient, finbackup)
 		Expect(err).NotTo(HaveOccurred())
-		err = WaitForFinBackupReady(ctx, ctrlClient, rookNamespace, finbackup.Name, 2*time.Minute)
+		err = WaitForFinBackupReady(ctx, ctrlClient, finbackupNamespace, finbackup.Name, 2*time.Minute)
 		Expect(err).NotTo(HaveOccurred())
 
 		// Act
 		By("restoring from the backup")
-		finrestore, err = GetFinRestore(rookNamespace, "finrestore-test", finbackup.Name, "finrestore-test", rookNamespace)
+		finrestore, err = GetFinRestore(
+			finrestoreNamespace, "finrestore-test", finbackup.Name, "finrestore-test", rookNamespace)
 		Expect(err).NotTo(HaveOccurred())
 		err = CreateFinRestore(ctx, ctrlClient, finrestore)
 		Expect(err).NotTo(HaveOccurred())
-		err = WaitForFinRestoreReady(ctx, ctrlClient, rookNamespace, finrestore.Name, 2*time.Minute)
+		err = WaitForFinRestoreReady(ctx, ctrlClient, finrestoreNamespace, finrestore.Name, 2*time.Minute)
 		Expect(err).NotTo(HaveOccurred())
 
 		By("verifying the existence of the restore PVC")
@@ -131,9 +134,9 @@ func restoreTestSuite() {
 	It("should delete restore", func(ctx SpecContext) {
 		// Action
 		By("deleting FinRestore")
-		err = DeleteFinRestore(ctx, ctrlClient, rookNamespace, "finrestore-test")
+		err = DeleteFinRestore(ctx, ctrlClient, finrestoreNamespace, "finrestore-test")
 		Expect(err).NotTo(HaveOccurred())
-		err = WaitForFinRestoreDeletion(ctx, ctrlClient, rookNamespace, "finrestore-test", 2*time.Minute)
+		err = WaitForFinRestoreDeletion(ctx, ctrlClient, finrestoreNamespace, "finrestore-test", 2*time.Minute)
 		Expect(err).NotTo(HaveOccurred())
 
 		// Assert
@@ -161,9 +164,9 @@ func restoreTestSuite() {
 		Expect(err).NotTo(HaveOccurred())
 
 		By("deleting the backup")
-		err = DeleteFinBackup(ctx, ctrlClient, rookNamespace, finbackup.Name)
+		err = DeleteFinBackup(ctx, ctrlClient, finbackupNamespace, finbackup.Name)
 		Expect(err).NotTo(HaveOccurred())
-		err = WaitForFinBackupDeletion(ctx, ctrlClient, rookNamespace, finbackup.Name, 2*time.Minute)
+		err = WaitForFinBackupDeletion(ctx, ctrlClient, finbackupNamespace, finbackup.Name, 2*time.Minute)
 		Expect(err).NotTo(HaveOccurred())
 
 		By("deleting the pod to write data to the PVC")
