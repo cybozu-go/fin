@@ -356,7 +356,7 @@ var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
 			DeletePVCAndPV(ctx, pvc2.Namespace, pvc2.Name)
 		})
 
-		It("should not return an error in the reconcile process", func(ctx SpecContext) {
+		It("should neither return an error nor create a backup job during reconciliation", func(ctx SpecContext) {
 			By("reconciling the FinBackup")
 			_, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(finbackup)})
 			Expect(err).ShouldNot(HaveOccurred())
@@ -453,7 +453,7 @@ var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
 			DeletePVCAndPV(ctx, pvc.Namespace, pvc.Name)
 		})
 
-		It("should not create any cleanup or deletion jobs", func(ctx SpecContext) {
+		It("should neither return an error nor create a backup job during reconciliation", func(ctx SpecContext) {
 			By("reconciling the FinBackup")
 			_, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(finbackup)})
 			Expect(err).ShouldNot(HaveOccurred())
@@ -568,7 +568,7 @@ var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
 				Expect(k8sClient.Delete(ctx, finbackup)).Should(Succeed())
 			})
 
-			It("should neither return an error nor create a backup job during reconciliation", func(ctx SpecContext) {
+			It("should return an error and not create a backup job during reconciliation", func(ctx SpecContext) {
 				By("reconciling the FinBackup")
 				_, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(finbackup)})
 				Expect(err).Should(HaveOccurred())
@@ -594,7 +594,7 @@ var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
 				Expect(k8sClient.Delete(ctx, finbackup)).Should(Succeed())
 			})
 
-			It("should neither return an error nor create a backup job during reconciliation", func(ctx SpecContext) {
+			It("should return an error and not create a backup job during reconciliation", func(ctx SpecContext) {
 				By("reconciling the FinBackup")
 				_, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(finbackup)})
 				Expect(err).Should(HaveOccurred())
