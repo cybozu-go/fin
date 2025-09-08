@@ -361,7 +361,8 @@ var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
 			_, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(finbackup)})
 			Expect(err).ShouldNot(HaveOccurred())
 
-			ExpectNoBackupJob(ctx, k8sClient, finbackup)
+			By("checking that no backup job is created")
+			ExpectNoJob(ctx, k8sClient, backupJobName(finbackup), finbackup.Namespace)
 		})
 	})
 
@@ -416,7 +417,8 @@ var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
 			_, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(finbackup)})
 			Expect(err).ShouldNot(HaveOccurred())
 
-			ExpectNoBackupJob(ctx, k8sClient, finbackup)
+			By("checking that no backup job is created")
+			ExpectNoJob(ctx, k8sClient, backupJobName(finbackup), finbackup.Namespace)
 		})
 	})
 
@@ -459,11 +461,7 @@ var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
 			Expect(err).ShouldNot(HaveOccurred())
 
 			By("checking that no backup job is created")
-			backupJobKey := types.NamespacedName{Name: backupJobName(finbackup), Namespace: namespace}
-			var backupJob batchv1.Job
-			err = k8sClient.Get(ctx, backupJobKey, &backupJob)
-			Expect(err).Should(HaveOccurred())
-			Expect(k8serrors.IsNotFound(err)).Should(BeTrue())
+			ExpectNoJob(ctx, k8sClient, backupJobName(finbackup), finbackup.Namespace)
 		})
 
 		// CSATEST-1626
@@ -505,17 +503,8 @@ var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
 				Expect(k8serrors.IsNotFound(err)).Should(BeTrue())
 
 				By("checking that no cleanup or deletion jobs are created")
-				cleanupJobKey := types.NamespacedName{Name: cleanupJobName(finbackup), Namespace: namespace}
-				var cleanupJob batchv1.Job
-				err = k8sClient.Get(ctx, cleanupJobKey, &cleanupJob)
-				Expect(err).Should(HaveOccurred())
-				Expect(k8serrors.IsNotFound(err)).Should(BeTrue())
-
-				deletionJobKey := types.NamespacedName{Name: deletionJobName(finbackup), Namespace: namespace}
-				var deletionJob batchv1.Job
-				err = k8sClient.Get(ctx, deletionJobKey, &deletionJob)
-				Expect(err).Should(HaveOccurred())
-				Expect(k8serrors.IsNotFound(err)).Should(BeTrue())
+				ExpectNoJob(ctx, k8sClient, cleanupJobName(finbackup), finbackup.Namespace)
+				ExpectNoJob(ctx, k8sClient, deletionJobName(finbackup), finbackup.Namespace)
 			})
 		})
 	})
@@ -574,7 +563,8 @@ var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
 				Expect(err).Should(HaveOccurred())
 				Expect(err).Should(MatchError(ContainSubstring("backup target PVC UID does not match (inLabel=")))
 
-				ExpectNoBackupJob(ctx, k8sClient, finbackup)
+				By("checking that no backup job is created")
+				ExpectNoJob(ctx, k8sClient, backupJobName(finbackup), finbackup.Namespace)
 			})
 		})
 
@@ -600,7 +590,8 @@ var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
 				Expect(err).Should(HaveOccurred())
 				Expect(err).Should(MatchError(ContainSubstring("backup target PVC UID does not match (inStatus=")))
 
-				ExpectNoBackupJob(ctx, k8sClient, finbackup)
+				By("checking that no backup job is created")
+				ExpectNoJob(ctx, k8sClient, backupJobName(finbackup), finbackup.Namespace)
 			})
 		})
 	})
@@ -758,10 +749,9 @@ func DeletePVCAndPV(ctx context.Context, namespace, pvcName string) {
 	}, "5s", "1s").Should(Succeed())
 }
 
-func ExpectNoBackupJob(ctx context.Context, k8sClient client.Client, finbackup *finv1.FinBackup) {
+func ExpectNoJob(ctx context.Context, k8sClient client.Client, jobName, namespace string) {
 	GinkgoHelper()
-	By("checking if the backup job is not created")
-	jobKey := types.NamespacedName{Name: backupJobName(finbackup), Namespace: namespace}
+	jobKey := types.NamespacedName{Name: jobName, Namespace: namespace}
 	var job batchv1.Job
 	err := k8sClient.Get(ctx, jobKey, &job)
 	Expect(err).Should(HaveOccurred())
