@@ -478,6 +478,101 @@ var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
 			})
 		})
 	})
+
+	// CSATEST-1612
+	// Description:
+	//   Do not create a backup when the PVC UID recorded by FinBackup differs
+	//   from the UID of the actual backup-target PVC.
+	//
+	// Arrange:
+	//   - A backup-target PVC.
+	//   - A FinBackup corresponding to the backup-target PVC.
+	//
+	// Act:
+	//   1. Change the FinBackup label "fin.cybozu.io/backup-target-pvc-uid"
+	//      to a different UID and run Reconcile().
+	//   2. Change the PVC UID embedded in FinBackup.status.pvcManifest
+	//      and run Reconcile().
+	//
+	// Assert:
+	//   - Reconcile() returns an error.
+	//   - No backup job is created.
+	Context("Prevent backup when PVC UID differs", func() {
+		var pvc *corev1.PersistentVolumeClaim
+		var pv *corev1.PersistentVolume
+
+		BeforeAll(func(ctx SpecContext) {
+			pvc, pv = NewPVCAndPV(sc, namespace, "test-pvc-uid", "test-pv-uid", rbdImageName)
+			Expect(k8sClient.Create(ctx, pvc)).Should(Succeed())
+			Expect(k8sClient.Create(ctx, pv)).Should(Succeed())
+
+			var ppvc corev1.PersistentVolumeClaim
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(pvc), &ppvc)).Should(Succeed())
+		})
+		AfterAll(func(ctx SpecContext) {
+			DeletePVCAndPV(ctx, pvc.Namespace, pvc.Name)
+		})
+
+		When("The label in FinBackup differs the PVC UID", func() {
+			var finbackup *finv1.FinBackup
+			BeforeEach(func(ctx SpecContext) {
+				finbackup = NewFinBackup(namespace, "test-fin-backup-uid-1", pvc.Name, pvc.Namespace, "test-node")
+				Expect(k8sClient.Create(ctx, finbackup)).Should(Succeed())
+				finbackup.Status.SnapID = ptr.To(1)
+				finbackup.Labels = map[string]string{labelBackupTargetPVCUID: "invalid-uid"}
+				Expect(k8sClient.Status().Update(ctx, finbackup)).Should(Succeed())
+			})
+			AfterEach(func(ctx SpecContext) {
+				controllerutil.RemoveFinalizer(finbackup, "finbackup.fin.cybozu.io/finalizer")
+				Expect(k8sClient.Delete(ctx, finbackup)).Should(Succeed())
+			})
+
+			It("should neither return an error nor create a backup job during reconciliation", func(ctx SpecContext) {
+				By("reconciling the FinBackup")
+				_, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(finbackup)})
+				Expect(err).Should(HaveOccurred())
+				Expect(err).Should(MatchError(ContainSubstring("backup target PVC UID does not match (inLabel=")))
+
+				By("checking if the backup job is not created")
+				jobKey := types.NamespacedName{Name: backupJobName(finbackup), Namespace: namespace}
+				var job batchv1.Job
+				err = k8sClient.Get(ctx, jobKey, &job)
+				Expect(err).Should(HaveOccurred())
+				Expect(k8serrors.IsNotFound(err)).Should(BeTrue())
+			})
+		})
+
+		When("The UID in status.pvcManifest differs from the PVC UID", func() {
+			var finbackup *finv1.FinBackup
+			BeforeEach(func(ctx SpecContext) {
+				finbackup = NewFinBackup(namespace, "test-fin-backup-uid-2", pvc.Name, pvc.Namespace, "test-node")
+				finbackup.Labels = map[string]string{labelBackupTargetPVCUID: string(pvc.GetUID())}
+				Expect(k8sClient.Create(ctx, finbackup)).Should(Succeed())
+				finbackup.Status.SnapID = ptr.To(1)
+				finbackup.Status.PVCManifest = `{"metadata":{"uid":"invalid-uid"}}`
+				Expect(k8sClient.Status().Update(ctx, finbackup)).Should(Succeed())
+
+			})
+			AfterEach(func(ctx SpecContext) {
+				controllerutil.RemoveFinalizer(finbackup, "finbackup.fin.cybozu.io/finalizer")
+				Expect(k8sClient.Delete(ctx, finbackup)).Should(Succeed())
+			})
+
+			It("should neither return an error nor create a backup job during reconciliation", func(ctx SpecContext) {
+				By("reconciling the FinBackup")
+				_, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(finbackup)})
+				Expect(err).Should(HaveOccurred())
+				Expect(err).Should(MatchError(ContainSubstring("backup target PVC UID does not match (inStatus=")))
+
+				By("checking if the backup job is not created")
+				jobKey := types.NamespacedName{Name: backupJobName(finbackup), Namespace: namespace}
+				var job batchv1.Job
+				err = k8sClient.Get(ctx, jobKey, &job)
+				Expect(err).Should(HaveOccurred())
+				Expect(k8serrors.IsNotFound(err)).Should(BeTrue())
+			})
+		})
+	})
 })
 
 func NewRBDStorageClass(prefix, cephClusterNamespace, poolName string) *storagev1.StorageClass {
