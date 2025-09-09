@@ -32,6 +32,7 @@ rules:
 - apiGroups:
   - fin.cybozu.io
   resources:
+  - finbackupconfigs
   - finbackups
   - finrestores
   verbs:
@@ -45,6 +46,7 @@ rules:
 - apiGroups:
   - fin.cybozu.io
   resources:
+  - finbackupconfigs/finalizers
   - finbackups/finalizers
   - finrestores/finalizers
   verbs:
@@ -52,6 +54,7 @@ rules:
 - apiGroups:
   - fin.cybozu.io
   resources:
+  - finbackupconfigs/status
   - finbackups/status
   - finrestores/status
   verbs:
