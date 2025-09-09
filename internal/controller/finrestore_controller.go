@@ -255,6 +255,12 @@ func (r *FinRestoreReconciler) createOrUpdateRestoreJob(
 		annotations[annotationFinRestoreNamespace] = restore.GetNamespace()
 		job.SetAnnotations(annotations)
 
+		// Up to this point, we modify the mutable fields. From here on, we
+		// modify the immutable fields, which cannot be changed after creation.
+		if !job.CreationTimestamp.IsZero() {
+			return nil
+		}
+
 		job.Spec.BackoffLimit = ptr.To(int32(maxJobBackoffLimit))
 
 		job.Spec.Template.Spec.NodeName = backup.Spec.Node
@@ -360,10 +366,6 @@ func (r *FinRestoreReconciler) createOrUpdateRestorePVC(
 	pvc.SetNamespace(namespace)
 	_, err := ctrl.CreateOrUpdate(ctx, r.Client, &pvc, func() error {
 		// Copy essential fields from the source PVC.
-		pvc.Spec.AccessModes = src.Spec.AccessModes
-		pvc.Spec.StorageClassName = src.Spec.StorageClassName
-		pvc.Spec.VolumeAttributesClassName = src.Spec.VolumeAttributesClassName
-		pvc.Spec.VolumeMode = src.Spec.VolumeMode
 		if pvc.Annotations == nil {
 			pvc.Annotations = map[string]string{}
 		}
@@ -380,6 +382,17 @@ func (r *FinRestoreReconciler) createOrUpdateRestorePVC(
 		}
 		pvc.Spec.Resources.Requests[corev1.ResourceStorage] =
 			*resource.NewQuantity(*backup.Status.SnapSize, resource.BinarySI)
+
+		// Up to this point, we modify the mutable fields. From here on, we
+		// modify the immutable fields, which cannot be changed after creation.
+		if !pvc.CreationTimestamp.IsZero() {
+			return nil
+		}
+
+		pvc.Spec.AccessModes = src.Spec.AccessModes
+		pvc.Spec.StorageClassName = src.Spec.StorageClassName
+		pvc.Spec.VolumeAttributesClassName = src.Spec.VolumeAttributesClassName
+		pvc.Spec.VolumeMode = src.Spec.VolumeMode
 
 		return nil
 	})
@@ -401,6 +414,12 @@ func (r *FinRestoreReconciler) createOrUpdateRestoreJobPV(
 		labels["app.kubernetes.io/name"] = labelAppNameValue
 		labels["app.kubernetes.io/component"] = labelComponentRestoreJob
 		pv.SetLabels(labels)
+
+		// Up to this point, we modify the mutable fields. From here on, we
+		// modify the immutable fields, which cannot be changed after creation.
+		if !pv.CreationTimestamp.IsZero() {
+			return nil
+		}
 
 		pv.Spec.AccessModes = []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce}
 		pv.Spec.Capacity = restorePV.Spec.Capacity
@@ -448,6 +467,12 @@ func (r *FinRestoreReconciler) createOrUpdateRestoreJobPVC(
 		labels["app.kubernetes.io/name"] = labelAppNameValue
 		labels["app.kubernetes.io/component"] = labelComponentRestoreJob
 		pvc.SetLabels(labels)
+
+		// Up to this point, we modify the mutable fields. From here on, we
+		// modify the immutable fields, which cannot be changed after creation.
+		if !pvc.CreationTimestamp.IsZero() {
+			return nil
+		}
 
 		storageClassName := ""
 		pvc.Spec.StorageClassName = &storageClassName
