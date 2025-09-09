@@ -1,11 +1,19 @@
 # https://github.com/helm/helm/releases
 HELM_VERSION := 3.17.4
 # It is set by CI using the environment variable, use conditional assignment.
-KUBERNETES_VERSION ?= 1.31.11
+KUBERNETES_VERSION ?= 1.32.7
 # https://github.com/kubernetes/minikube/releases
-MINIKUBE_VERSION := v1.36.0
+#
+# NOTE(Sep. 9th, 2025):
+# We intentionally do not use the latest minikube v1.36.0.
+# It's because Rook takes too long time to create an OSD pod
+# with Kubernetes v1.32 created by minikube v1.36.0.
+#
+# We should revisit this decision when we would like to upgrade
+# kubernetes version to v1.33 or later.
+MINIKUBE_VERSION := v1.35.0
 # https://github.com/rook/rook/releases
-ROOK_CHART_VERSION := v1.16.4
+ROOK_CHART_VERSION := v1.17.8
 
 ENVTEST_K8S_VERSION := $(shell echo $(KUBERNETES_VERSION) | cut -d "." -f 1-2)
 
