@@ -678,11 +678,7 @@ func WaitForFinBackupIsReady(ctx context.Context, finbackup *finv1.FinBackup) {
 		key := types.NamespacedName{Name: backupJobName(finbackup), Namespace: namespace}
 		var job batchv1.Job
 		g.Expect(k8sClient.Get(ctx, key, &job)).To(Succeed())
-		job.Status.Conditions = []batchv1.JobCondition{{
-			Type:   batchv1.JobComplete,
-			Status: corev1.ConditionTrue,
-		}}
-		job.Status.Succeeded = 1
+		makeJobSucceeded(&job)
 		err := k8sClient.Status().Update(ctx, &job)
 		g.Expect(err).ShouldNot(HaveOccurred())
 	}, "5s", "1s").Should(Succeed())
@@ -707,11 +703,7 @@ func WaitForFinBackupRemoved(ctx context.Context, finbackup *finv1.FinBackup) {
 			key := types.NamespacedName{Name: jobName, Namespace: namespace}
 			var job batchv1.Job
 			g.Expect(k8sClient.Get(ctx, key, &job)).To(Succeed())
-			job.Status.Conditions = []batchv1.JobCondition{{
-				Type:   batchv1.JobComplete,
-				Status: corev1.ConditionTrue,
-			}}
-			job.Status.Succeeded = 1
+			makeJobSucceeded(&job)
 			err := k8sClient.Status().Update(ctx, &job)
 			g.Expect(err).ShouldNot(HaveOccurred())
 		}, "5s", "1s").Should(Succeed())
