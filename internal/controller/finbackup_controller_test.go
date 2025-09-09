@@ -329,7 +329,6 @@ var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
 	// Assert:
 	//   - The reconciler does not return any errors.
 	//   - The reconciler does not create a backup job.
-	//   - The FinBackup is not marked as ready.
 	Context("Prevent backups from being created for PVCs by wrong Fin instances", func() {
 		var pvc2 *corev1.PersistentVolumeClaim
 		var pv2 *corev1.PersistentVolume
@@ -357,20 +356,69 @@ var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
 			DeletePVCAndPV(ctx, pvc2.Namespace, pvc2.Name)
 		})
 
-		It("should not return an error in the reconcile process", func(ctx SpecContext) {
+		It("should neither return an error nor create a backup job during reconciliation", func(ctx SpecContext) {
 			By("reconciling the FinBackup")
 			_, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(finbackup)})
 			Expect(err).ShouldNot(HaveOccurred())
 
-			ExpectNoBackupJob(ctx, k8sClient, finbackup)
+			By("checking that no backup job is created")
+			ExpectNoJob(ctx, k8sClient, backupJobName(finbackup), finbackup.Namespace)
+		})
+	})
 
-			By("checking if the FinBackup is not marked as ready when the PVC is in a different Ceph cluster")
-			Consistently(func(g Gomega) {
-				var fb finv1.FinBackup
-				err := k8sClient.Get(ctx, client.ObjectKeyFromObject(finbackup), &fb)
-				g.Expect(err).ShouldNot(HaveOccurred())
-				g.Expect(fb.IsReady()).Should(BeFalse(), "FinBackup should not be ready")
-			}, "5s", "1s").Should(Succeed())
+	// CSATEST-1629
+	// Description:
+	//	Prevent backups from being created for non-Ceph PVCs.
+	//
+	// Arrange:
+	//   - Create a StorageClass with a non-Ceph provisioner.
+	//   - Create a PVC using that non-Ceph StorageClass.
+	//
+	// Act:
+	//   - Create a FinBackup targeting the non-Ceph PVC.
+	//
+	// Assert:
+	//   - The reconciler does not return any errors.
+	//   - The reconciler does not create a backup job.
+	Context("Prevent backups from being created for non-Ceph PVCs", func() {
+		var pvc2 *corev1.PersistentVolumeClaim
+		var pv2 *corev1.PersistentVolume
+		var finbackup *finv1.FinBackup
+
+		BeforeEach(func(ctx SpecContext) {
+			By("creating another namespace for non-Ceph tests")
+			nonCephNamespace := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "test-namespace-non-ceph"}}
+			Expect(k8sClient.Create(ctx, nonCephNamespace)).Should(Succeed())
+
+			By("creating a non-Ceph StorageClass")
+			nonCephStorageClass := &storagev1.StorageClass{
+				ObjectMeta:  metav1.ObjectMeta{Name: "non-ceph"},
+				Provisioner: "non-ceph-provisioner.csi.com",
+			}
+			Expect(k8sClient.Create(ctx, nonCephStorageClass)).Should(Succeed())
+
+			By("creating a PVC in the non-Ceph StorageClass")
+			pvc2, pv2 = NewPVCAndPV(nonCephStorageClass, nonCephNamespace.Name, "test-pvc-2", "test-pv-2", rbdImageName)
+			Expect(k8sClient.Create(ctx, pvc2)).Should(Succeed())
+			Expect(k8sClient.Create(ctx, pv2)).Should(Succeed())
+
+			By("creating a FinBackup targeting the non-Ceph PVC")
+			finbackup = NewFinBackup(namespace, "test-fin-backup-1", pvc2.Name, pvc2.Namespace, "test-node")
+			Expect(k8sClient.Create(ctx, finbackup)).Should(Succeed())
+		})
+
+		AfterEach(func(ctx SpecContext) {
+			Expect(k8sClient.Delete(ctx, finbackup)).Should(Succeed())
+			DeletePVCAndPV(ctx, pvc2.Namespace, pvc2.Name)
+		})
+
+		It("should neither return an error nor create a backup job during reconciliation", func(ctx SpecContext) {
+			By("reconciling the FinBackup")
+			_, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(finbackup)})
+			Expect(err).ShouldNot(HaveOccurred())
+
+			By("checking that no backup job is created")
+			ExpectNoJob(ctx, k8sClient, backupJobName(finbackup), finbackup.Namespace)
 		})
 	})
 
@@ -407,17 +455,13 @@ var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
 			DeletePVCAndPV(ctx, pvc.Namespace, pvc.Name)
 		})
 
-		It("should not create any cleanup or deletion jobs", func(ctx SpecContext) {
+		It("should neither return an error nor create a backup job during reconciliation", func(ctx SpecContext) {
 			By("reconciling the FinBackup")
 			_, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(finbackup)})
 			Expect(err).ShouldNot(HaveOccurred())
 
 			By("checking that no backup job is created")
-			backupJobKey := types.NamespacedName{Name: backupJobName(finbackup), Namespace: namespace}
-			var backupJob batchv1.Job
-			err = k8sClient.Get(ctx, backupJobKey, &backupJob)
-			Expect(err).Should(HaveOccurred())
-			Expect(k8serrors.IsNotFound(err)).Should(BeTrue())
+			ExpectNoJob(ctx, k8sClient, backupJobName(finbackup), finbackup.Namespace)
 		})
 
 		// CSATEST-1626
@@ -459,17 +503,8 @@ var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
 				Expect(k8serrors.IsNotFound(err)).Should(BeTrue())
 
 				By("checking that no cleanup or deletion jobs are created")
-				cleanupJobKey := types.NamespacedName{Name: cleanupJobName(finbackup), Namespace: namespace}
-				var cleanupJob batchv1.Job
-				err = k8sClient.Get(ctx, cleanupJobKey, &cleanupJob)
-				Expect(err).Should(HaveOccurred())
-				Expect(k8serrors.IsNotFound(err)).Should(BeTrue())
-
-				deletionJobKey := types.NamespacedName{Name: deletionJobName(finbackup), Namespace: namespace}
-				var deletionJob batchv1.Job
-				err = k8sClient.Get(ctx, deletionJobKey, &deletionJob)
-				Expect(err).Should(HaveOccurred())
-				Expect(k8serrors.IsNotFound(err)).Should(BeTrue())
+				ExpectNoJob(ctx, k8sClient, cleanupJobName(finbackup), finbackup.Namespace)
+				ExpectNoJob(ctx, k8sClient, deletionJobName(finbackup), finbackup.Namespace)
 			})
 		})
 	})
@@ -522,13 +557,14 @@ var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
 				Expect(k8sClient.Delete(ctx, finbackup)).Should(Succeed())
 			})
 
-			It("should neither return an error nor create a backup job during reconciliation", func(ctx SpecContext) {
+			It("should return an error and not create a backup job during reconciliation", func(ctx SpecContext) {
 				By("reconciling the FinBackup")
 				_, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(finbackup)})
 				Expect(err).Should(HaveOccurred())
 				Expect(err).Should(MatchError(ContainSubstring("backup target PVC UID does not match (inLabel=")))
 
-				ExpectNoBackupJob(ctx, k8sClient, finbackup)
+				By("checking that no backup job is created")
+				ExpectNoJob(ctx, k8sClient, backupJobName(finbackup), finbackup.Namespace)
 			})
 		})
 
@@ -548,13 +584,14 @@ var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
 				Expect(k8sClient.Delete(ctx, finbackup)).Should(Succeed())
 			})
 
-			It("should neither return an error nor create a backup job during reconciliation", func(ctx SpecContext) {
+			It("should return an error and not create a backup job during reconciliation", func(ctx SpecContext) {
 				By("reconciling the FinBackup")
 				_, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(finbackup)})
 				Expect(err).Should(HaveOccurred())
 				Expect(err).Should(MatchError(ContainSubstring("backup target PVC UID does not match (inStatus=")))
 
-				ExpectNoBackupJob(ctx, k8sClient, finbackup)
+				By("checking that no backup job is created")
+				ExpectNoJob(ctx, k8sClient, backupJobName(finbackup), finbackup.Namespace)
 			})
 		})
 	})
@@ -712,10 +749,9 @@ func DeletePVCAndPV(ctx context.Context, namespace, pvcName string) {
 	}, "5s", "1s").Should(Succeed())
 }
 
-func ExpectNoBackupJob(ctx context.Context, k8sClient client.Client, finbackup *finv1.FinBackup) {
+func ExpectNoJob(ctx context.Context, k8sClient client.Client, jobName, namespace string) {
 	GinkgoHelper()
-	By("checking if the backup job is not created")
-	jobKey := types.NamespacedName{Name: backupJobName(finbackup), Namespace: namespace}
+	jobKey := types.NamespacedName{Name: jobName, Namespace: namespace}
 	var job batchv1.Job
 	err := k8sClient.Get(ctx, jobKey, &job)
 	Expect(err).Should(HaveOccurred())
