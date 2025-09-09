@@ -500,9 +500,6 @@ var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
 			pvc, pv = NewPVCAndPV(sc, namespace, "test-pvc-uid", "test-pv-uid", rbdImageName)
 			Expect(k8sClient.Create(ctx, pvc)).Should(Succeed())
 			Expect(k8sClient.Create(ctx, pv)).Should(Succeed())
-
-			var ppvc corev1.PersistentVolumeClaim
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(pvc), &ppvc)).Should(Succeed())
 		})
 		AfterAll(func(ctx SpecContext) {
 			DeletePVCAndPV(ctx, pvc.Namespace, pvc.Name)
