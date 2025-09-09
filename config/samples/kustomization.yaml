@@ -2,4 +2,5 @@
 resources:
 - fin_v1_finbackup.yaml
 - fin_v1_finrestore.yaml
+- fin_v1_finbackupconfig.yaml
 #+kubebuilder:scaffold:manifestskustomizesamples

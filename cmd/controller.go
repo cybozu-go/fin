@@ -153,6 +153,16 @@ func controllerMain(args []string) {
 		setupLog.Error(err, "unable to create controller", "controller", "FinRestore")
 		os.Exit(1)
 	}
+
+	finBackupConfigReconciler := controller.NewFinBackupConfigReconciler(
+		mgr.GetClient(),
+		mgr.GetScheme(),
+	)
+	if err := finBackupConfigReconciler.SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "FinBackupConfig")
+		os.Exit(1)
+	}
+
 	//+kubebuilder:scaffold:builder
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {

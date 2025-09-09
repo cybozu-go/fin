@@ -1,0 +1,27 @@
+# permissions for end users to view finbackupconfigs.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/name: clusterrole
+    app.kubernetes.io/instance: finbackupconfig-viewer-role
+    app.kubernetes.io/component: rbac
+    app.kubernetes.io/created-by: fin
+    app.kubernetes.io/part-of: fin
+    app.kubernetes.io/managed-by: kustomize
+  name: finbackupconfig-viewer-role
+rules:
+- apiGroups:
+  - fin.cybozu.io
+  resources:
+  - finbackupconfigs
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - fin.cybozu.io
+  resources:
+  - finbackupconfigs/status
+  verbs:
+  - get
