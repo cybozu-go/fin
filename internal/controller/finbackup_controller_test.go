@@ -555,6 +555,95 @@ var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
 			})
 		})
 	})
+
+	// CSATEST-1608
+	// Description:
+	//   Verify that the FinBackup controller becomes ReadyToUse
+	//   after a temporary reconciliation error is resolved.
+	//
+	// Arrange:
+	//   - Create a pair of PVC and PV.
+	//   - Create a FinBackup resource.
+	//
+	// Act:
+	//   - Run reconciler twice to initialize backup job.
+	//   - Simulate backup job failure by setting JobFailed condition and Failed=1.
+	//   - Run reconcile while the backup job is in a failed state.
+	//   - Simulate a successful retry by setting JobComplete with Succeeded=1 and Failed=0.
+	//   - Run reconcile to process successful job status.
+	//
+	// Assert:
+	//   - FinBackup.IsReady() returns true after job completion.
+	Describe("FinBackup controller handles backup job retry from failure to success", func() {
+		var finbackup *finv1.FinBackup
+		var pvc *corev1.PersistentVolumeClaim
+		var pv *corev1.PersistentVolume
+		BeforeEach(func(ctx SpecContext) {
+			By("creating a pair of PVC and PV")
+			pvc, pv = NewPVCAndPV(sc, namespace, "test-pvc-retry", "test-pv-retry", rbdImageName)
+			Expect(k8sClient.Create(ctx, pvc)).Should(Succeed())
+			Expect(k8sClient.Create(ctx, pv)).Should(Succeed())
+
+			By("creating a FinBackup")
+			finbackup = NewFinBackup(namespace, "test-backup-retry", pvc.Name, pvc.Namespace, "test-node")
+			Expect(k8sClient.Create(ctx, finbackup)).Should(Succeed())
+		})
+		AfterEach(func(ctx SpecContext) {
+			controllerutil.RemoveFinalizer(finbackup, "finbackup.fin.cybozu.io/finalizer")
+			Expect(k8sClient.Delete(ctx, finbackup)).Should(Succeed())
+			DeletePVCAndPV(ctx, pvc.Namespace, pvc.Name)
+		})
+
+		It("should become ReadyToUse through retry even when reconcile encounters errors", func(ctx SpecContext) {
+			By("executing two reconcile calls to create backup job")
+			_, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(finbackup)})
+			Expect(err).ShouldNot(HaveOccurred())
+			_, err = reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(finbackup)})
+			Expect(err).ShouldNot(HaveOccurred())
+
+			By("simulating backup job failure")
+			Eventually(func(g Gomega) {
+				key := types.NamespacedName{Name: backupJobName(finbackup), Namespace: finbackup.Namespace}
+				var job batchv1.Job
+				g.Expect(k8sClient.Get(ctx, key, &job)).To(Succeed())
+				job.Status.Conditions = []batchv1.JobCondition{{
+					Type:   batchv1.JobFailed,
+					Status: corev1.ConditionTrue,
+				}}
+				job.Status.Failed = 1
+				err := k8sClient.Status().Update(ctx, &job)
+				g.Expect(err).ShouldNot(HaveOccurred())
+			}, "5s", "1s").Should(Succeed())
+
+			By("executing reconcile while backup job is in a failed state")
+			_, err = reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(finbackup)})
+			Expect(err).Should(HaveOccurred())
+
+			By("simulating backup job success on retry")
+			Eventually(func(g Gomega) {
+				key := types.NamespacedName{Name: backupJobName(finbackup), Namespace: finbackup.Namespace}
+				var job batchv1.Job
+				g.Expect(k8sClient.Get(ctx, key, &job)).To(Succeed())
+				job.Status.Conditions = []batchv1.JobCondition{{
+					Type:   batchv1.JobComplete,
+					Status: corev1.ConditionTrue,
+				}}
+				job.Status.Succeeded = 1
+				job.Status.Failed = 0
+				err := k8sClient.Status().Update(ctx, &job)
+				g.Expect(err).ShouldNot(HaveOccurred())
+			}, "5s", "1s").Should(Succeed())
+
+			By("executing reconcile to process successful job status")
+			_, err = reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(finbackup)})
+			Expect(err).ShouldNot(HaveOccurred())
+
+			By("verifying FinBackup becomes ReadyToUse after backup job completion")
+			var fb finv1.FinBackup
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(finbackup), &fb)).ShouldNot(HaveOccurred())
+			Expect(fb.IsReady()).Should(BeTrue(), "FinBackup should be ready after job completes")
+		})
+	})
 })
 
 func NewRBDStorageClass(prefix, cephClusterNamespace, poolName string) *storagev1.StorageClass {
