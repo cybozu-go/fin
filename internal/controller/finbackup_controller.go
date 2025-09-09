@@ -599,6 +599,12 @@ func (r *FinBackupReconciler) createOrUpdateBackupJob(
 		annotations[annotationFinBackupNamespace] = backup.GetNamespace()
 		job.SetAnnotations(annotations)
 
+		// Up to this point, we modify the mutable fields. From here on, we
+		// modify the immutable fields, which cannot be changed after creation.
+		if !job.CreationTimestamp.IsZero() {
+			return nil
+		}
+
 		job.Spec.BackoffLimit = ptr.To(int32(maxJobBackoffLimit))
 
 		job.Spec.Template.Spec.NodeName = backup.Spec.Node
@@ -782,6 +788,12 @@ func (r *FinBackupReconciler) createOrUpdateDeletionJob(ctx context.Context, bac
 		labels["app.kubernetes.io/component"] = labelComponentDeletionJob
 		job.SetLabels(labels)
 
+		// Up to this point, we modify the mutable fields. From here on, we
+		// modify the immutable fields, which cannot be changed after creation.
+		if !job.CreationTimestamp.IsZero() {
+			return nil
+		}
+
 		job.Spec.BackoffLimit = ptr.To(int32(maxJobBackoffLimit))
 
 		job.Spec.Template.Spec.NodeName = backup.Spec.Node
@@ -862,6 +874,12 @@ func (r *FinBackupReconciler) createOrUpdateCleanupJob(ctx context.Context, back
 		labels["app.kubernetes.io/name"] = labelAppNameValue
 		labels["app.kubernetes.io/component"] = labelComponentCleanupJob
 		job.SetLabels(labels)
+
+		// Up to this point, we modify the mutable fields. From here on, we
+		// modify the immutable fields, which cannot be changed after creation.
+		if !job.CreationTimestamp.IsZero() {
+			return nil
+		}
 
 		job.Spec.BackoffLimit = ptr.To(int32(maxJobBackoffLimit))
 
