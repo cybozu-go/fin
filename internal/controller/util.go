@@ -3,13 +3,11 @@ package controller
 import (
 	"context"
 	"fmt"
-	"time"
 
 	finv1 "github.com/cybozu-go/fin/api/v1"
 	"github.com/cybozu-go/fin/internal/model"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/event"
@@ -98,20 +96,4 @@ func findSnapshot(
 		}
 	}
 	return nil, fmt.Errorf("%w: snapshot=%s pool=%s image=%s", model.ErrNotFound, snapName, poolName, imageName)
-}
-
-func makeJobSucceeded(job *batchv1.Job) {
-	job.Status.Conditions = []batchv1.JobCondition{
-		{
-			Type:   batchv1.JobComplete,
-			Status: corev1.ConditionTrue,
-		},
-		{
-			Type:   batchv1.JobSuccessCriteriaMet,
-			Status: corev1.ConditionTrue,
-		},
-	}
-	job.Status.StartTime = &metav1.Time{Time: time.Now()}
-	job.Status.CompletionTime = job.Status.StartTime
-	job.Status.Succeeded = 1
 }
