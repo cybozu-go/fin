@@ -101,7 +101,10 @@ func findSnapshot(
 	return nil, fmt.Errorf("%w: snapshot=%s pool=%s image=%s", model.ErrNotFound, snapName, poolName, imageName)
 }
 
-func checkCephCluster(ctx context.Context, reader client.Reader, pvc *corev1.PersistentVolumeClaim, cephCluster string) (bool, error) {
+func checkCephCluster(
+	ctx context.Context, reader client.Reader,
+	pvc *corev1.PersistentVolumeClaim, cephCluster string,
+) (bool, error) {
 	scName := storagehelpers.GetPersistentVolumeClaimClass(pvc)
 	var storageClass storagev1.StorageClass
 	if err := reader.Get(ctx, types.NamespacedName{Name: scName}, &storageClass); err != nil {
