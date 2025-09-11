@@ -60,7 +60,7 @@ jobs:
 
       - name: Load image into minikube
         run: |
-            test/e2e/bin/minikube image load controller:latest || test/e2e/bin/minikube cache add controller:latest
+            make -C test/e2e image-tar-load
 
       - name: Launch rook-ceph and deploy components
         run: |
