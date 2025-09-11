@@ -18,6 +18,9 @@ TIMEOUT_SECS := 300
 
 export MINIKUBE_HOME
 
+# Image tag to use for e2e; default matches root Makefile default
+IMG ?= controller:latest
+
 .PHONY: test
 test:
 	$(MAKE) launch-minikube
@@ -120,9 +123,9 @@ launch-rook-ceph: create-loop-dev $(KUBECTL) $(HELM)
 
 .PHONY: image-build
 image-build:
-	eval $$($(MINIKUBE) docker-env); \
 	$(MAKE) -C ../.. docker-build
-	$(MINIKUBE) ssh -- docker images
+	$(MINIKUBE) image load ${IMG}
+	$(MINIKUBE) ssh -- docker images || true
 
 .PHONY: setup-components
 setup-components:
