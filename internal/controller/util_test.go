@@ -20,6 +20,13 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
 
+const (
+	namespace    = "default"
+	podImage     = "sample-image"
+	rbdPoolName  = "test-pool"
+	rbdImageName = "test-image"
+)
+
 func init() {
 	cleanupJobRequeueAfter = 1 * time.Second
 	deletionJobRequeueAfter = 1 * time.Second
