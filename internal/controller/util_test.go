@@ -200,3 +200,17 @@ func NewFinBackup(namespace, name, pvc, pvcNS, node string) *finv1.FinBackup {
 		},
 	}
 }
+
+func NewFinRestore(namespace, name string, fb *finv1.FinBackup) *finv1.FinRestore {
+	return &finv1.FinRestore{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+		},
+		Spec: finv1.FinRestoreSpec{
+			PVC:          fb.Spec.PVC,
+			PVCNamespace: fb.Spec.PVCNamespace,
+			Backup:       fb.Name,
+		},
+	}
+}
