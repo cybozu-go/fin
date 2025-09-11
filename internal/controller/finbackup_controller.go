@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
-	"strings"
 	"time"
 
 	finv1 "github.com/cybozu-go/fin/api/v1"
@@ -15,7 +14,6 @@ import (
 	"github.com/go-logr/logr"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
-	storagev1 "k8s.io/api/storage/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -23,7 +21,6 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
-	storagehelpers "k8s.io/component-helpers/storage/volume"
 	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
@@ -88,26 +85,6 @@ func NewFinBackupReconciler(
 	}
 }
 
-func (r *FinBackupReconciler) checkCephCluster(ctx context.Context, pvc *corev1.PersistentVolumeClaim) (bool, error) {
-	scName := storagehelpers.GetPersistentVolumeClaimClass(pvc)
-	var storageClass storagev1.StorageClass
-	if err := r.Get(ctx, types.NamespacedName{Name: scName}, &storageClass); err != nil {
-		return false, fmt.Errorf("failed to get StorageClass: %q: %w", scName, err)
-	}
-
-	if !strings.HasSuffix(storageClass.Provisioner, ".rbd.csi.ceph.com") {
-		return false, nil
-	}
-	clusterID, ok := storageClass.Parameters["clusterID"]
-	if !ok {
-		return false, nil
-	}
-	if clusterID != r.cephClusterNamespace {
-		return false, nil
-	}
-	return true, nil
-}
-
 //+kubebuilder:rbac:groups=fin.cybozu.io,resources=finbackups,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=fin.cybozu.io,resources=finbackups/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=fin.cybozu.io,resources=finbackups/finalizers,verbs=update
@@ -143,7 +120,7 @@ func (r *FinBackupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, err
 	}
 
-	ok, err := r.checkCephCluster(ctx, &pvc)
+	ok, err := checkCephCluster(ctx, r, &pvc, r.cephClusterNamespace)
 	if err != nil {
 		return ctrl.Result{}, err
 	}

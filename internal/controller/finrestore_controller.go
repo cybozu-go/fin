@@ -152,6 +152,24 @@ func (r *FinRestoreReconciler) reconcileCreateOrUpdate(
 		return ctrl.Result{}, err
 	}
 
+	var pvc corev1.PersistentVolumeClaim
+	err = r.Get(ctx, client.ObjectKey{Namespace: backup.Spec.PVCNamespace, Name: backup.Spec.PVC}, &pvc)
+	if err != nil {
+		logger.Error(err, "failed to get backup target PVC")
+		return ctrl.Result{}, err
+	}
+
+	ok, err := checkCephCluster(ctx, r, &pvc, r.cephClusterNamespace)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if !ok {
+		logger.Info("FinRestore skipped: Ceph cluster is not managed by this instance",
+			"pvc", fmt.Sprintf("%s/%s", pvc.Namespace, pvc.Name),
+			"cephClusterNamespace", r.cephClusterNamespace)
+		return ctrl.Result{}, nil
+	}
+
 	if !backup.IsReady() {
 		logger.Info("backup is not ready to use", "backup", backup.Name, "namespace", backup.Namespace)
 
