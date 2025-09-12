@@ -20,6 +20,13 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
 
+const (
+	namespace    = "default"
+	podImage     = "sample-image"
+	rbdPoolName  = "test-pool"
+	rbdImageName = "test-image"
+)
+
 func init() {
 	cleanupJobRequeueAfter = 1 * time.Second
 	deletionJobRequeueAfter = 1 * time.Second
@@ -190,6 +197,20 @@ func NewFinBackup(namespace, name, pvc, pvcNS, node string) *finv1.FinBackup {
 			PVC:          pvc,
 			PVCNamespace: pvcNS,
 			Node:         node,
+		},
+	}
+}
+
+func NewFinRestore(namespace, name string, fb *finv1.FinBackup) *finv1.FinRestore {
+	return &finv1.FinRestore{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+		},
+		Spec: finv1.FinRestoreSpec{
+			PVC:          fb.Spec.PVC,
+			PVCNamespace: fb.Spec.PVCNamespace,
+			Backup:       fb.Name,
 		},
 	}
 }

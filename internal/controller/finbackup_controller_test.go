@@ -26,13 +26,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
 
-const (
-	namespace    = "default"
-	podImage     = "sample-image"
-	rbdPoolName  = "test-pool"
-	rbdImageName = "test-image"
-)
-
 var (
 	defaultMaxPartSize = resource.MustParse("100Mi")
 )
@@ -82,6 +75,7 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 
 	AfterAll(func() {
 		stopFunc()
+		Expect(k8sClient.Delete(context.Background(), sc1)).Should(Succeed())
 	})
 
 	var pvc1 *corev1.PersistentVolumeClaim
@@ -253,6 +247,10 @@ var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
 		Expect(k8sClient.Create(ctx, sc)).Should(Succeed())
 	})
 
+	AfterAll(func(ctx SpecContext) {
+		Expect(k8sClient.Delete(ctx, sc)).Should(Succeed())
+	})
+
 	BeforeEach(func(ctx SpecContext) {
 		rbdRepo = fake.NewRBDRepository(map[fake.PoolImageName][]*model.RBDSnapshot{
 			{PoolName: rbdPoolName, ImageName: rbdImageName}: {{}},
@@ -328,15 +326,13 @@ var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
 	//   - The reconciler does not return any errors.
 	//   - The reconciler does not create a backup job.
 	Context("Prevent backups from being created for PVCs by wrong Fin instances", func() {
+		var otherStorageClass *storagev1.StorageClass
 		var pvc2 *corev1.PersistentVolumeClaim
 		var pv2 *corev1.PersistentVolume
 		var finbackup *finv1.FinBackup
 
 		BeforeEach(func(ctx SpecContext) {
-			By("creating another storage class for another ceph cluster")
-			otherNamespace := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "test-namespace-2"}}
-			Expect(k8sClient.Create(ctx, otherNamespace)).Should(Succeed())
-			otherStorageClass := NewRBDStorageClass("other", otherNamespace.Name, rbdPoolName)
+			otherStorageClass = NewRBDStorageClass("other", otherNamespace.Name, rbdPoolName)
 			Expect(k8sClient.Create(ctx, otherStorageClass)).Should(Succeed())
 
 			By("creating PVC in the other storage class")
@@ -352,6 +348,7 @@ var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
 		AfterEach(func(ctx SpecContext) {
 			Expect(k8sClient.Delete(ctx, finbackup)).Should(Succeed())
 			DeletePVCAndPV(ctx, pvc2.Namespace, pvc2.Name)
+			Expect(k8sClient.Delete(ctx, otherStorageClass)).Should(Succeed())
 		})
 
 		It("should neither return an error nor create a backup job during reconciliation", func(ctx SpecContext) {
@@ -379,6 +376,7 @@ var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
 	//   - The reconciler does not return any errors.
 	//   - The reconciler does not create a backup job.
 	Context("Prevent backups from being created for non-Ceph PVCs", func() {
+		var nonCephStorageClass *storagev1.StorageClass
 		var pvc2 *corev1.PersistentVolumeClaim
 		var pv2 *corev1.PersistentVolume
 		var finbackup *finv1.FinBackup
@@ -389,7 +387,7 @@ var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
 			Expect(k8sClient.Create(ctx, nonCephNamespace)).Should(Succeed())
 
 			By("creating a non-Ceph StorageClass")
-			nonCephStorageClass := &storagev1.StorageClass{
+			nonCephStorageClass = &storagev1.StorageClass{
 				ObjectMeta:  metav1.ObjectMeta{Name: "non-ceph"},
 				Provisioner: "non-ceph-provisioner.csi.com",
 			}
@@ -408,6 +406,7 @@ var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
 		AfterEach(func(ctx SpecContext) {
 			Expect(k8sClient.Delete(ctx, finbackup)).Should(Succeed())
 			DeletePVCAndPV(ctx, pvc2.Namespace, pvc2.Name)
+			Expect(k8sClient.Delete(ctx, nonCephStorageClass)).Should(Succeed())
 		})
 
 		It("should neither return an error nor create a backup job during reconciliation", func(ctx SpecContext) {

@@ -3,12 +3,15 @@ package controller
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	finv1 "github.com/cybozu-go/fin/api/v1"
 	"github.com/cybozu-go/fin/internal/model"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	storagev1 "k8s.io/api/storage/v1"
 	"k8s.io/apimachinery/pkg/types"
+	storagehelpers "k8s.io/component-helpers/storage/volume"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
@@ -96,4 +99,27 @@ func findSnapshot(
 		}
 	}
 	return nil, fmt.Errorf("%w: snapshot=%s pool=%s image=%s", model.ErrNotFound, snapName, poolName, imageName)
+}
+
+func checkCephCluster(
+	ctx context.Context, reader client.Reader,
+	pvc *corev1.PersistentVolumeClaim, cephCluster string,
+) (bool, error) {
+	scName := storagehelpers.GetPersistentVolumeClaimClass(pvc)
+	var storageClass storagev1.StorageClass
+	if err := reader.Get(ctx, types.NamespacedName{Name: scName}, &storageClass); err != nil {
+		return false, fmt.Errorf("failed to get StorageClass: %q: %w", scName, err)
+	}
+
+	if !strings.HasSuffix(storageClass.Provisioner, ".rbd.csi.ceph.com") {
+		return false, nil
+	}
+	clusterID, ok := storageClass.Parameters["clusterID"]
+	if !ok {
+		return false, nil
+	}
+	if clusterID != cephCluster {
+		return false, nil
+	}
+	return true, nil
 }
