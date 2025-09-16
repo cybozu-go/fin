@@ -13,6 +13,7 @@ import (
 	"github.com/go-logr/logr"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
@@ -250,6 +251,7 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 			if err := k8sClient.Delete(ctx, finbackup1); err == nil {
 				WaitForFinBackupRemoved(ctx, finbackup1)
 			}
+			DeletePVCAndPV(ctx, pvc1.Namespace, pvc1.Name)
 		})
 
 		It("should add appropriate labels and annotations for the incremental FinBackup", func(ctx SpecContext) {
@@ -264,6 +266,121 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 			var fb1 finv1.FinBackup
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(finbackup1), &fb1)).Should(Succeed())
 			Expect(annotations).To(HaveKeyWithValue(annotationDiffFrom, strconv.Itoa(*fb1.Status.SnapID)))
+		})
+	})
+
+	// CSATEST-1505
+	// Description:
+	//   Prioritize the FinBackup with the smallest SnapID as the full backup.
+	//
+	// Arrange:
+	//   - A backup-target PVC exists.
+	//
+	// Act:
+	//   - Two FinBackups are created to target the same PVC.
+	//
+	// Assert:
+	//   - A backup job is created only for the FinBackup with the smallest SnapID.
+	Describe("prioritize the FinBackup with the smallest snapID for initial backup", func() {
+		var pvc *corev1.PersistentVolumeClaim
+		var pv *corev1.PersistentVolume
+		var smallestFB *finv1.FinBackup
+		var largerFB *finv1.FinBackup
+
+		BeforeEach(func(ctx SpecContext) {
+			By("creating a pair of PVC and PV")
+			pvc, pv = NewPVCAndPV(sc1, namespace, "pvc-1505", "pv-1505", rbdImageName)
+			Expect(k8sClient.Create(ctx, pvc)).Should(Succeed())
+			Expect(k8sClient.Create(ctx, pv)).Should(Succeed())
+
+			By("creating two FinBackups and ordering them by SnapID")
+			fb1 := NewFinBackup(namespace, "fb1-1505", pvc.Name, pvc.Namespace, "test-node")
+			fb2 := NewFinBackup(namespace, "fb2-1505", pvc.Name, pvc.Namespace, "test-node")
+			smallestFB, largerFB = createTwoBackupsOrdered(ctx, k8sClient, fb1, fb2)
+		})
+
+		AfterEach(func(ctx SpecContext) {
+			for _, fb := range []*finv1.FinBackup{smallestFB, largerFB} {
+				Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(fb), fb)).To(Succeed())
+				if err := k8sClient.Delete(ctx, fb); err == nil {
+					WaitForFinBackupRemoved(ctx, fb)
+				}
+			}
+			DeletePVCAndPV(ctx, pvc.Namespace, pvc.Name)
+		})
+
+		It("should back up the FinBackup with the smallest SnapID", func(ctx SpecContext) {
+			By("waiting for a backup job for the FinBackup with the smallest SnapID")
+			Eventually(func(g Gomega) {
+				var job batchv1.Job
+				key := client.ObjectKey{Namespace: namespace, Name: backupJobName(smallestFB)}
+				g.Expect(k8sClient.Get(ctx, key, &job)).To(Succeed())
+			}, "5s", "1s").Should(Succeed())
+
+			By("verifying no backup job exists for the FinBackup with the larger SnapID")
+			Consistently(func(g Gomega) {
+				ExpectNoJob(ctx, k8sClient, backupJobName(largerFB), namespace)
+			}, "5s", "1s").Should(Succeed())
+		})
+	})
+
+	// CSATEST-1506
+	// Description:
+	//   Prioritize the FinBackup with the smallest SnapID as the next incremental backup.
+	//
+	// Arrange:
+	//   - A backup-target PVC exists.
+	//   - FinBackup referring this PVC and is ready to use.
+	//   - Create two new incremental FinBackups for the same PVC.
+	//
+	// Assert:
+	//   - A backup job is created only for the FinBackup with the smallest SnapID.
+	Describe("prioritize the FinBackup with the smallest snapID among new incrementals", func() {
+		var pvc *corev1.PersistentVolumeClaim
+		var pv *corev1.PersistentVolume
+		var finbackup *finv1.FinBackup
+		var smallestFB *finv1.FinBackup
+		var largerFB *finv1.FinBackup
+
+		BeforeEach(func(ctx SpecContext) {
+			By("creating a pair of PVC and PV")
+			pvc, pv = NewPVCAndPV(sc1, namespace, "pvc-1506", "pv-1506", rbdImageName)
+			Expect(k8sClient.Create(ctx, pvc)).Should(Succeed())
+			Expect(k8sClient.Create(ctx, pv)).Should(Succeed())
+
+			By("creating FinBackup as a full backup and waiting until it becomes ReadyToUse")
+			finbackup = NewFinBackup(namespace, "fb1-1506", pvc.Name, pvc.Namespace, "test-node")
+			Expect(k8sClient.Create(ctx, finbackup)).Should(Succeed())
+			WaitForFinBackupIsReady(ctx, finbackup)
+
+			By("creating two FinBackups and ordering them by SnapID")
+			fb2 := NewFinBackup(namespace, "fb2-1506", pvc.Name, pvc.Namespace, "test-node")
+			fb3 := NewFinBackup(namespace, "fb3-1506", pvc.Name, pvc.Namespace, "test-node")
+			smallestFB, largerFB = createTwoBackupsOrdered(ctx, k8sClient, fb2, fb3)
+		})
+
+		AfterEach(func(ctx SpecContext) {
+			for _, fb := range []*finv1.FinBackup{finbackup, smallestFB, largerFB} {
+				Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(fb), fb)).To(Succeed())
+				if err := k8sClient.Delete(ctx, fb); err == nil {
+					WaitForFinBackupRemoved(ctx, fb)
+				}
+			}
+			DeletePVCAndPV(ctx, pvc.Namespace, pvc.Name)
+		})
+
+		It("should back up the FinBackup with the smallest SnapID", func(ctx SpecContext) {
+			By("waiting for a backup job for the FinBackup with the smallest SnapID")
+			Eventually(func(g Gomega) {
+				var job batchv1.Job
+				key := client.ObjectKey{Namespace: namespace, Name: backupJobName(smallestFB)}
+				g.Expect(k8sClient.Get(ctx, key, &job)).To(Succeed())
+			}, "5s", "1s").Should(Succeed())
+
+			By("verifying no backup job exists for the FinBackup with the larger SnapID")
+			Consistently(func(g Gomega) {
+				ExpectNoJob(ctx, k8sClient, backupJobName(largerFB), namespace)
+			}, "5s", "1s").Should(Succeed())
 		})
 	})
 })
