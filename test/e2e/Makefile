@@ -18,10 +18,13 @@ TIMEOUT_SECS := 300
 
 export MINIKUBE_HOME
 
+IMG_TAR = controller.tar
+
 .PHONY: test
 test:
 	$(MAKE) launch-minikube
 	$(MAKE) image-build
+	$(MAKE) image-tar-load
 	$(MAKE) launch-rook-ceph
 	$(MAKE) setup-fin-volume
 	$(MAKE) setup-components
@@ -120,9 +123,14 @@ launch-rook-ceph: create-loop-dev $(KUBECTL) $(HELM)
 
 .PHONY: image-build
 image-build:
-	eval $$($(MINIKUBE) docker-env); \
 	$(MAKE) -C ../.. docker-build
-	$(MINIKUBE) ssh -- docker images
+
+.PHONY: image-tar-load
+image-tar-load:
+	$(MAKE) -C ../.. docker-save
+	$(MINIKUBE) image load ../../${IMG_TAR}
+	$(MINIKUBE) ssh -- docker images || true
+	rm ../../${IMG_TAR} || true
 
 .PHONY: setup-components
 setup-components:

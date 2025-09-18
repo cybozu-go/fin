@@ -22,7 +22,7 @@ COPY internal/ internal/
 # was called. For example, if we call make docker-build in a local env which has the Apple Silicon M1 SO
 # the docker BUILDPLATFORM arg will be linux/arm64 when for Apple x86 it will be linux/amd64. Therefore,
 # by leaving it empty we can ensure that the container and binary shipped on it will have the same platform.
-RUN CGO_ENABLED=1 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o manager main.go
+RUN CGO_ENABLED=1 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -trimpath -o manager main.go
 
 # Download and install custom RBD command.
 # cf. https://github.com/cybozu-go/mantle/blob/4728f019f9400c297b361a410efbc66c480db8e2/Dockerfile
@@ -37,15 +37,14 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && \
     apt-get install --no-install-recommends -y \
-        libstdc++-11-dev jq kmod lvm2 gdisk ca-certificates e2fsprogs attr udev libgflags2.2 \
-        curl unzip &&\
-    cd /tmp && \
+        libstdc++-11-dev jq kmod lvm2 gdisk ca-certificates e2fsprogs attr udev libgflags2.2 curl unzip
+RUN cd /tmp && \
     curl -L -o packages.zip https://github.com/cybozu-go/mantle/releases/download/ceph-export-diff-v${EXPORT_DIFF_VERSION}/packages.zip && \
     unzip packages.zip && \
     mkdir -p /usr/local/share/doc/ceph && \
     cp /tmp/COPYING* /usr/local/share/doc/ceph && \
-    mkdir -p /var/run/ceph && \
-    apt-get install --no-install-recommends -y /tmp/*.deb && \
+    mkdir -p /var/run/ceph
+RUN apt-get install --no-install-recommends -y /tmp/*.deb && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/* && \
     rm -rf /tmp/*.deb && \
@@ -64,8 +63,7 @@ RUN apt-get update && \
         /usr/share/{bash-completion,pkgconfig/bash-completion.pc} \
         /var/log/* \
         /var/tmp/* && \
-    find / -xdev \( -name "*.pyc" -o -name "*.pyo" \) -exec rm -f {} \; && \
-    mkdir -p /usr/local/share/doc/ceph
+    find / -xdev \( -name "*.pyc" -o -name "*.pyo" \) -delete
 
 # Squash the layers
 FROM scratch
