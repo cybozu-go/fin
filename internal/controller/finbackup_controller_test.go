@@ -78,25 +78,6 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 		Expect(k8sClient.Delete(context.Background(), sc1)).Should(Succeed())
 	})
 
-	var pvc1 *corev1.PersistentVolumeClaim
-	var pv1 *corev1.PersistentVolume
-	var finbackup1 *finv1.FinBackup
-	BeforeEach(func(ctx SpecContext) {
-		pvc1, pv1 = NewPVCAndPV(sc1, namespace, "test-pvc-1", "test-pv-1", rbdImageName)
-		Expect(k8sClient.Create(ctx, pvc1)).Should(Succeed())
-		Expect(k8sClient.Create(ctx, pv1)).Should(Succeed())
-		finbackup1 = NewFinBackup(namespace, "test-backup-1", pvc1.Name, pvc1.Namespace, "test-node")
-		Expect(k8sClient.Create(ctx, finbackup1)).Should(Succeed())
-		WaitForFinBackupIsReady(ctx, finbackup1)
-	})
-
-	AfterEach(func(ctx SpecContext) {
-		if err := k8sClient.Delete(ctx, finbackup1); err == nil {
-			WaitForFinBackupRemoved(ctx, finbackup1)
-		}
-		DeletePVCAndPV(ctx, pvc1.Namespace, pvc1.Name)
-	})
-
 	// This is the first example test.
 	// Description:
 	//    Deleting a full backup when both full and incremental backups exist.
@@ -113,10 +94,23 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 	//    - The snapshot for the full backup is deleted
 	//    - The snapshot for the incremental backup is not deleted
 	Describe("deleting a full backup when both full and incremental backups exist", func() {
+		var pvc1 *corev1.PersistentVolumeClaim
+		var pv1 *corev1.PersistentVolume
+		var finbackup1 *finv1.FinBackup
 		var finbackup2 *finv1.FinBackup
 		BeforeEach(func(ctx SpecContext) {
+			By("creating a pair of PVC and PV")
+			pvc1, pv1 = NewPVCAndPV(sc1, namespace, "pvc-sample", "pv-sample", rbdImageName)
+			Expect(k8sClient.Create(ctx, pvc1)).Should(Succeed())
+			Expect(k8sClient.Create(ctx, pv1)).Should(Succeed())
+
+			By("creating a full FinBackup")
+			finbackup1 = NewFinBackup(namespace, "fb1-sample", pvc1.Name, pvc1.Namespace, "test-node")
+			Expect(k8sClient.Create(ctx, finbackup1)).Should(Succeed())
+			WaitForFinBackupIsReady(ctx, finbackup1)
+
 			By("creating a incremental FinBackup")
-			finbackup2 = NewFinBackup(namespace, "test-backup-2", pvc1.Name, pvc1.Namespace, "test-node")
+			finbackup2 = NewFinBackup(namespace, "fb2-sample", pvc1.Name, pvc1.Namespace, "test-node")
 			Expect(k8sClient.Create(ctx, finbackup2)).Should(Succeed())
 			WaitForFinBackupIsReady(ctx, finbackup2)
 
@@ -128,6 +122,10 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 			if err := k8sClient.Delete(ctx, finbackup2); err == nil {
 				WaitForFinBackupRemoved(ctx, finbackup2)
 			}
+			if err := k8sClient.Delete(ctx, finbackup1); err == nil {
+				WaitForFinBackupRemoved(ctx, finbackup1)
+			}
+			DeletePVCAndPV(ctx, pvc1.Namespace, pvc1.Name)
 		})
 
 		It("should delete the FinBackup for the full backup", func(ctx SpecContext) {
@@ -168,8 +166,21 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 	// Assert:
 	//   - The new FinBackup becomes ReadyToUse.
 	Describe("FinBackup becomes ReadyToUse when a backup-target PVC is recreated", func() {
+		var pvc1 *corev1.PersistentVolumeClaim
+		var pv1 *corev1.PersistentVolume
+		var finbackup1 *finv1.FinBackup
 		var finbackup2 *finv1.FinBackup
 		BeforeEach(func(ctx SpecContext) {
+			By("creating a pair of PVC and PV")
+			pvc1, pv1 = NewPVCAndPV(sc1, namespace, "pvc-1542", "pv-1542", rbdImageName)
+			Expect(k8sClient.Create(ctx, pvc1)).Should(Succeed())
+			Expect(k8sClient.Create(ctx, pv1)).Should(Succeed())
+
+			By("creating a full FinBackup")
+			finbackup1 = NewFinBackup(namespace, "fb1-1542", pvc1.Name, pvc1.Namespace, "test-node")
+			Expect(k8sClient.Create(ctx, finbackup1)).Should(Succeed())
+			WaitForFinBackupIsReady(ctx, finbackup1)
+
 			By("recreating the backup-target PVC")
 			DeletePVCAndPV(ctx, pvc1.Namespace, pvc1.Name)
 			pvc1, pv1 = NewPVCAndPV(sc1, namespace, pvc1.Name, pv1.Name, rbdImageName)
@@ -177,13 +188,17 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 			Expect(k8sClient.Create(ctx, pv1)).Should(Succeed())
 
 			By("reconciling a new FinBackup")
-			finbackup2 = NewFinBackup(namespace, "test-backup-2", pvc1.Name, pvc1.Namespace, "test-node")
+			finbackup2 = NewFinBackup(namespace, "fb2-1542", pvc1.Name, pvc1.Namespace, "test-node")
 			Expect(k8sClient.Create(ctx, finbackup2)).Should(Succeed())
 		})
 		AfterEach(func(ctx SpecContext) {
 			if err := k8sClient.Delete(ctx, finbackup2); err == nil {
 				WaitForFinBackupRemoved(ctx, finbackup2)
 			}
+			if err := k8sClient.Delete(ctx, finbackup1); err == nil {
+				WaitForFinBackupRemoved(ctx, finbackup1)
+			}
+			DeletePVCAndPV(ctx, pvc1.Namespace, pvc1.Name)
 		})
 
 		It("should make the new FinBackup ReadyToUse", func(ctx SpecContext) {
@@ -206,11 +221,24 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 	//
 	// Assert:
 	//   - The FinBackup (FB2) has the correct labels and annotations.
-	Describe("creating an incremental backup after a full backup exists", Label("new"), func() {
+	Describe("creating an incremental backup after a full backup exists", func() {
+		var pvc1 *corev1.PersistentVolumeClaim
+		var pv1 *corev1.PersistentVolume
+		var finbackup1 *finv1.FinBackup
 		var finbackup2 *finv1.FinBackup
 		BeforeEach(func(ctx SpecContext) {
+			By("creating a pair of PVC and PV")
+			pvc1, pv1 = NewPVCAndPV(sc1, namespace, "pvc-1621", "pv-1621", rbdImageName)
+			Expect(k8sClient.Create(ctx, pvc1)).Should(Succeed())
+			Expect(k8sClient.Create(ctx, pv1)).Should(Succeed())
+
+			By("creating a full FinBackup")
+			finbackup1 = NewFinBackup(namespace, "fb1-1621", pvc1.Name, pvc1.Namespace, "test-node")
+			Expect(k8sClient.Create(ctx, finbackup1)).Should(Succeed())
+			WaitForFinBackupIsReady(ctx, finbackup1)
+
 			By("creating an incremental FinBackup")
-			finbackup2 = NewFinBackup(namespace, "test-incr-backup", pvc1.Name, pvc1.Namespace, "test-node")
+			finbackup2 = NewFinBackup(namespace, "fb2-1621", pvc1.Name, pvc1.Namespace, "test-node")
 			Expect(k8sClient.Create(ctx, finbackup2)).Should(Succeed())
 			WaitForFinBackupIsReady(ctx, finbackup2)
 		})
@@ -218,6 +246,9 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 		AfterEach(func(ctx SpecContext) {
 			if err := k8sClient.Delete(ctx, finbackup2); err == nil {
 				WaitForFinBackupRemoved(ctx, finbackup2)
+			}
+			if err := k8sClient.Delete(ctx, finbackup1); err == nil {
+				WaitForFinBackupRemoved(ctx, finbackup1)
 			}
 		})
 
