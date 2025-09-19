@@ -8,7 +8,6 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/cybozu-go/fin/internal/infrastructure/ceph"
 	"github.com/cybozu-go/fin/internal/infrastructure/db"
@@ -36,7 +35,6 @@ func NewBackupInput(k8sRepo model.KubernetesRepository, volume *fake.VolumeInfo,
 	}
 
 	return &input.Backup{
-		RetryInterval:             1 * time.Second,
 		ActionUID:                 uuid.New().String(),
 		TargetRBDPoolName:         pv.Spec.CSI.VolumeAttributes["pool"],
 		TargetRBDImageName:        pv.Spec.CSI.VolumeAttributes["imageName"],
@@ -59,7 +57,6 @@ func NewRestoreInputTemplate(bi *input.Backup,
 		RestoreVol:          rVol,
 		RawImageChunkSize:   chunkSize,
 		TargetSnapshotID:    snapID,
-		RetryInterval:       bi.RetryInterval,
 		ActionUID:           bi.ActionUID,
 		TargetPVCUID:        bi.TargetPVCUID,
 	}

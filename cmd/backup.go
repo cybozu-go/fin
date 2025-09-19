@@ -113,7 +113,6 @@ func backupJobMain() error {
 		KubernetesRepo:            k8sRepo,
 		RBDRepo:                   rbdRepo,
 		NodeLocalVolumeRepo:       nlvRepo,
-		RetryInterval:             job.RetryInterval,
 		ActionUID:                 actionUID,
 		TargetRBDPoolName:         rbdPool,
 		TargetRBDImageName:        rbdImageName,

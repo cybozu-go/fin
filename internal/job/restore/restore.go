@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"time"
 
 	"github.com/cybozu-go/fin/internal/job"
 	"github.com/cybozu-go/fin/internal/job/input"
@@ -17,7 +16,6 @@ type Restore struct {
 	rbdRepo             model.RBDRepository
 	nodeLocalVolumeRepo model.NodeLocalVolumeRepository
 	restoreVol          model.RestoreVolume
-	retryInterval       time.Duration
 	actionUID           string
 	targetSnapshotID    int
 	rawImageChunkSize   uint64
@@ -30,7 +28,6 @@ func NewRestore(in *input.Restore) *Restore {
 		rbdRepo:             in.RBDRepo,
 		nodeLocalVolumeRepo: in.NodeLocalVolumeRepo,
 		restoreVol:          in.RestoreVol,
-		retryInterval:       in.RetryInterval,
 		actionUID:           in.ActionUID,
 		targetSnapshotID:    in.TargetSnapshotID,
 		rawImageChunkSize:   in.RawImageChunkSize,
