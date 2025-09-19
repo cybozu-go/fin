@@ -108,12 +108,12 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 			By("creating a full FinBackup")
 			finbackup1 = NewFinBackup(namespace, "fb1-sample", pvc1.Name, pvc1.Namespace, "test-node")
 			Expect(k8sClient.Create(ctx, finbackup1)).Should(Succeed())
-			WaitForFinBackupIsReady(ctx, finbackup1)
+			MakeFinBackupReady(ctx, finbackup1)
 
 			By("creating a incremental FinBackup")
 			finbackup2 = NewFinBackup(namespace, "fb2-sample", pvc1.Name, pvc1.Namespace, "test-node")
 			Expect(k8sClient.Create(ctx, finbackup2)).Should(Succeed())
-			WaitForFinBackupIsReady(ctx, finbackup2)
+			MakeFinBackupReady(ctx, finbackup2)
 
 			By("deleting the full FinBackup")
 			Expect(k8sClient.Delete(ctx, finbackup1)).Should(Succeed())
@@ -180,7 +180,7 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 			By("creating a full FinBackup")
 			finbackup1 = NewFinBackup(namespace, "fb1-1542", pvc1.Name, pvc1.Namespace, "test-node")
 			Expect(k8sClient.Create(ctx, finbackup1)).Should(Succeed())
-			WaitForFinBackupIsReady(ctx, finbackup1)
+			MakeFinBackupReady(ctx, finbackup1)
 
 			By("recreating the backup-target PVC")
 			DeletePVCAndPV(ctx, pvc1.Namespace, pvc1.Name)
@@ -204,7 +204,7 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 
 		It("should make the new FinBackup ReadyToUse", func(ctx SpecContext) {
 			By("waiting for the FinBackup to be ready")
-			WaitForFinBackupIsReady(ctx, finbackup2)
+			MakeFinBackupReady(ctx, finbackup2)
 		})
 	})
 
@@ -236,12 +236,12 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 			By("creating a full FinBackup")
 			finbackup1 = NewFinBackup(namespace, "fb1-1621", pvc1.Name, pvc1.Namespace, "test-node")
 			Expect(k8sClient.Create(ctx, finbackup1)).Should(Succeed())
-			WaitForFinBackupIsReady(ctx, finbackup1)
+			MakeFinBackupReady(ctx, finbackup1)
 
 			By("creating an incremental FinBackup")
 			finbackup2 = NewFinBackup(namespace, "fb2-1621", pvc1.Name, pvc1.Namespace, "test-node")
 			Expect(k8sClient.Create(ctx, finbackup2)).Should(Succeed())
-			WaitForFinBackupIsReady(ctx, finbackup2)
+			MakeFinBackupReady(ctx, finbackup2)
 		})
 
 		AfterEach(func(ctx SpecContext) {
@@ -351,7 +351,7 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 			By("creating FinBackup as a full backup and waiting until it becomes ReadyToUse")
 			finbackup = NewFinBackup(namespace, "fb1-1506", pvc.Name, pvc.Namespace, "test-node")
 			Expect(k8sClient.Create(ctx, finbackup)).Should(Succeed())
-			WaitForFinBackupIsReady(ctx, finbackup)
+			MakeFinBackupReady(ctx, finbackup)
 
 			By("creating two FinBackups and ordering them by SnapID")
 			fb2 := NewFinBackup(namespace, "fb2-1506", pvc.Name, pvc.Namespace, "test-node")

@@ -98,7 +98,7 @@ func NewPVCAndPV(
 	}
 	return pvc, pv
 }
-func WaitForFinBackupIsReady(ctx context.Context, finbackup *finv1.FinBackup) {
+func MakeFinBackupReady(ctx context.Context, finbackup *finv1.FinBackup) {
 	GinkgoHelper()
 	Eventually(func(g Gomega) {
 		key := types.NamespacedName{Name: backupJobName(finbackup), Namespace: namespace}
