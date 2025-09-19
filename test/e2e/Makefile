@@ -14,7 +14,7 @@ NODE_NAME := minikube-worker
 LOOP_FILE := loop.img
 LOOP_DEV := /dev/loop0
 POLLING_INTERVAL := 2
-TIMEOUT_SECS := 300
+TIMEOUT_SECS := 120
 
 export MINIKUBE_HOME
 
@@ -65,9 +65,12 @@ launch-minikube: $(MINIKUBE) $(KUBECTL)
 			--driver=kvm2 \
 			--memory 6g \
 			--cpus=2 \
+			--disk-size 40g \
 			--extra-config=kubeadm.node-name=$(NODE_NAME) \
 			--extra-config=kubelet.hostname-override=$(NODE_NAME); \
 	fi
+	$(MINIKUBE) kubectl -- get nodes
+	$(MINIKUBE) node list
 
 .PHONY: delete-minikube
 delete-minikube: $(MINIKUBE)
@@ -86,6 +89,9 @@ setup-fin-volume: $(MINIKUBE) $(KUBECTL)
 	$(MINIKUBE) ssh -- sudo chown -R 10000:10000 /fin
 	$(MINIKUBE) ssh -- ls -ld /fin
 	$(KUBECTL) apply -f testdata/fin-volume.yaml
+	$(KUBECTL) -n $(NS) get pv local-osd -o yaml
+	$(KUBECTL) get nodes
+
 
 .PHONY: wait-deploy-ready
 wait-deploy-ready: NS=
@@ -117,9 +123,13 @@ launch-rook-ceph: create-loop-dev $(KUBECTL) $(HELM)
 		$(KUBECTL) apply -f -
 	$(HELM) upgrade --install --version $(ROOK_CHART_VERSION) --repo https://charts.rook.io/release --namespace $(NS) rook-ceph-cluster rook-ceph-cluster -f testdata/values-cluster.yaml --wait
 	$(MAKE) wait-deploy-ready NS=$(NS) DEPLOY=rook-ceph-operator
+	df -h
+	$(MINIKUBE) ssh -- df -h
 	$(MAKE) wait-deploy-ready NS=$(NS) DEPLOY=rook-ceph-osd-0
 	$(KUBECTL) apply -f testdata/cephblockpool.yaml
 	$(KUBECTL) apply -f testdata/storageclass.yaml
+	df -h
+	$(MINIKUBE) ssh -- df -h
 
 .PHONY: image-build
 image-build:
