@@ -214,3 +214,29 @@ func NewFinRestore(namespace, name string, fb *finv1.FinBackup) *finv1.FinRestor
 		},
 	}
 }
+
+// createTwoBackupsOrdered creates the two provided FinBackup objects, waits until both
+// have SnapIDs, then returns them ordered (smaller, larger) by SnapID.
+func createTwoBackupsOrdered(
+	ctx context.Context,
+	c client.Client,
+	fb1, fb2 *finv1.FinBackup,
+) (smaller, larger *finv1.FinBackup) {
+	GinkgoHelper()
+	Expect(c.Create(ctx, fb1)).To(Succeed())
+	Expect(c.Create(ctx, fb2)).To(Succeed())
+
+	Eventually(func(g Gomega) {
+		var a, b finv1.FinBackup
+		g.Expect(c.Get(ctx, client.ObjectKeyFromObject(fb1), &a)).To(Succeed())
+		g.Expect(c.Get(ctx, client.ObjectKeyFromObject(fb2), &b)).To(Succeed())
+		g.Expect(a.Status.SnapID).NotTo(BeNil())
+		g.Expect(b.Status.SnapID).NotTo(BeNil())
+		if *a.Status.SnapID < *b.Status.SnapID {
+			smaller, larger = &a, &b
+		} else {
+			smaller, larger = &b, &a
+		}
+	}, "5s", "1s").Should(Succeed())
+	return smaller, larger
+}
