@@ -83,7 +83,6 @@ func restoreJobMain() error {
 	r := restore.NewRestore(&input.Restore{
 		Repo:                finRepo,
 		NodeLocalVolumeRepo: nlvRepo,
-		RetryInterval:       job.RetryInterval,
 		ActionUID:           actionUID,
 		TargetSnapshotID:    targetSnapshotID,
 		TargetPVCUID:        pvcUID,

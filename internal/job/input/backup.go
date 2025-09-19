@@ -1,8 +1,6 @@
 package input
 
 import (
-	"time"
-
 	"github.com/cybozu-go/fin/internal/model"
 )
 
@@ -11,7 +9,6 @@ type Backup struct {
 	KubernetesRepo            model.KubernetesRepository
 	RBDRepo                   model.RBDRepository
 	NodeLocalVolumeRepo       model.NodeLocalVolumeRepository
-	RetryInterval             time.Duration
 	ActionUID                 string
 	TargetRBDPoolName         string
 	TargetRBDImageName        string

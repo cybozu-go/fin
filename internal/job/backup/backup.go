@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"math"
 	"slices"
-	"time"
 
 	"github.com/cybozu-go/fin/internal/job"
 	"github.com/cybozu-go/fin/internal/job/input"
@@ -23,7 +22,6 @@ type Backup struct {
 	kubernetesRepo            model.KubernetesRepository
 	rbdRepo                   model.RBDRepository
 	nodeLocalVolumeRepo       model.NodeLocalVolumeRepository
-	retryInterval             time.Duration
 	actionUID                 string
 	targetRBDPool             string
 	targetRBDImageName        string
@@ -41,7 +39,6 @@ func NewBackup(in *input.Backup) *Backup {
 		kubernetesRepo:            in.KubernetesRepo,
 		rbdRepo:                   in.RBDRepo,
 		nodeLocalVolumeRepo:       in.NodeLocalVolumeRepo,
-		retryInterval:             in.RetryInterval,
 		actionUID:                 in.ActionUID,
 		targetRBDPool:             in.TargetRBDPoolName,
 		targetRBDImageName:        in.TargetRBDImageName,
