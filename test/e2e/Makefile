@@ -63,8 +63,8 @@ launch-minikube: $(MINIKUBE) $(KUBECTL)
 		$(MINIKUBE) start \
 			--kubernetes-version="v$(KUBERNETES_VERSION)" \
 			--driver=kvm2 \
-			--memory 6g \
-			--cpus=2 \
+			--memory 10g \
+			--cpus=3 \
 			--extra-config=kubeadm.node-name=$(NODE_NAME) \
 			--extra-config=kubelet.hostname-override=$(NODE_NAME); \
 	fi
