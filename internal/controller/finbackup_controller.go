@@ -217,14 +217,14 @@ func (r *FinBackupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, nil
 	}
 
-	meta.SetStatusCondition(&backup.Status.Conditions, metav1.Condition{
+	updatedBackup := backup.DeepCopy()
+	meta.SetStatusCondition(&updatedBackup.Status.Conditions, metav1.Condition{
 		Type:    finv1.BackupConditionReadyToUse,
 		Status:  metav1.ConditionTrue,
 		Reason:  "BackupCompleted",
 		Message: "Backup completed successfully",
 	})
-
-	err = r.Status().Update(ctx, &backup)
+	err = r.Status().Patch(ctx, updatedBackup, client.MergeFrom(&backup))
 	if err != nil {
 		logger.Error(err, "failed to update FinBackup status")
 		return ctrl.Result{}, err
@@ -280,17 +280,18 @@ func (r *FinBackupReconciler) createSnapshot(ctx context.Context, backup *finv1.
 		logger.Error(err, "failed to create or get snapshot")
 		return ctrl.Result{}, err
 	}
-	backup.Status.CreatedAt = metav1.NewTime(snap.Timestamp.Time)
-	backup.Status.SnapID = &snap.ID
-	backup.Status.SnapSize = ptr.To(int64(snap.Size))
 
 	pvcManifest, err := json.Marshal(pvc)
 	if err != nil {
 		logger.Error(err, "failed to marshal PVC manifest")
 		return ctrl.Result{}, err
 	}
-	backup.Status.PVCManifest = string(pvcManifest)
-	err = r.Status().Update(ctx, backup)
+	updatedBackup := backup.DeepCopy()
+	updatedBackup.Status.CreatedAt = metav1.NewTime(snap.Timestamp.Time)
+	updatedBackup.Status.SnapID = &snap.ID
+	updatedBackup.Status.SnapSize = ptr.To(int64(snap.Size))
+	updatedBackup.Status.PVCManifest = string(pvcManifest)
+	err = r.Status().Patch(ctx, updatedBackup, client.MergeFrom(backup))
 	if err != nil {
 		logger.Error(err, "failed to update FinBackup status")
 		return ctrl.Result{}, err

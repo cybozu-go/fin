@@ -234,13 +234,14 @@ func (r *FinRestoreReconciler) reconcileCreateOrUpdate(
 		return ctrl.Result{}, nil
 	}
 
-	meta.SetStatusCondition(&restore.Status.Conditions, metav1.Condition{
+	updatedRestore := restore.DeepCopy()
+	meta.SetStatusCondition(&updatedRestore.Status.Conditions, metav1.Condition{
 		Type:    finv1.RestoreConditionReadyToUse,
 		Status:  metav1.ConditionTrue,
 		Reason:  "RestoreCompleted",
 		Message: "Restore completed successfully",
 	})
-	err = r.Status().Update(ctx, restore)
+	err = r.Status().Patch(ctx, updatedRestore, client.MergeFrom(restore))
 	if err != nil {
 		logger.Error(err, "failed to update status", "status", restore.Status)
 		return ctrl.Result{}, err
