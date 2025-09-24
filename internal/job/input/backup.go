@@ -10,6 +10,8 @@ type Backup struct {
 	RBDRepo                   model.RBDRepository
 	NodeLocalVolumeRepo       model.NodeLocalVolumeRepository
 	ActionUID                 string
+	TargetFinBackupName       string
+	TargetFinBackupNamespace  string
 	TargetRBDPoolName         string
 	TargetRBDImageName        string
 	TargetSnapshotID          int

@@ -99,6 +99,9 @@ func (d *Deletion) doDeletion() error {
 	}
 	metadata.Raw = metadata.Diff[0]
 	metadata.Diff = []*job.BackupMetadataEntry{}
+
+	// TODO(skoya76): Set annotation to the oldest FinBackup here.
+
 	return job.SetBackupMetadata(d.repo, metadata)
 }
 

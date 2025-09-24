@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	finv1 "github.com/cybozu-go/fin/api/v1"
 	corev1 "k8s.io/api/core/v1"
 )
 
@@ -61,6 +62,10 @@ type KubernetesRepository interface {
 	// It returns a non-nil pointer to the PV if it is found.
 	// If the PV is not found, it returns an error.
 	GetPV(name string) (*corev1.PersistentVolume, error)
+
+	GetFinBackup(name, namespace string) (*finv1.FinBackup, error)
+
+	UpdateFinBackup(fb *finv1.FinBackup) error
 }
 
 // Copied from the following source code.

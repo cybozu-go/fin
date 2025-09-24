@@ -7,6 +7,7 @@ import (
 	"math"
 	"slices"
 
+	"github.com/cybozu-go/fin/internal/controller"
 	"github.com/cybozu-go/fin/internal/job"
 	"github.com/cybozu-go/fin/internal/job/input"
 	"github.com/cybozu-go/fin/internal/model"
@@ -23,6 +24,8 @@ type Backup struct {
 	rbdRepo                   model.RBDRepository
 	nodeLocalVolumeRepo       model.NodeLocalVolumeRepository
 	actionUID                 string
+	targetFinBackupName       string
+	targetFinBackupNamespace  string
 	targetRBDPool             string
 	targetRBDImageName        string
 	targetSnapshotID          int
@@ -40,6 +43,8 @@ func NewBackup(in *input.Backup) *Backup {
 		rbdRepo:                   in.RBDRepo,
 		nodeLocalVolumeRepo:       in.NodeLocalVolumeRepo,
 		actionUID:                 in.ActionUID,
+		targetFinBackupName:       in.TargetFinBackupName,
+		targetFinBackupNamespace:  in.TargetFinBackupNamespace,
 		targetRBDPool:             in.TargetRBDPoolName,
 		targetRBDImageName:        in.TargetRBDImageName,
 		targetSnapshotID:          in.TargetSnapshotID,
@@ -126,11 +131,12 @@ func (b *Backup) doBackup() error {
 		return fmt.Errorf("failed to declare storing finished: %w", err)
 	}
 
-	// FIXME: We need to verify the backup.
-
 	if privateData.Mode == modeFull {
 		if err := b.loopApplyDiff(privateData, targetSnapshot); err != nil {
 			return fmt.Errorf("failed to loop apply diff: %w", err)
+		}
+		if err := b.setFullBackupAnnotation(); err != nil {
+			return fmt.Errorf("failed to set full backup annotation: %w", err)
 		}
 		if err := b.declareFullBackupApplicationCompleted(targetSnapshot); err != nil {
 			return fmt.Errorf("failed to declare full backup application completed: %w", err)
@@ -140,6 +146,28 @@ func (b *Backup) doBackup() error {
 		}
 	}
 
+	return nil
+}
+
+func (b *Backup) setFullBackupAnnotation() error {
+	fb, err := b.kubernetesRepo.GetFinBackup(b.targetFinBackupName, b.targetFinBackupNamespace)
+	if err != nil {
+		return fmt.Errorf("failed to get FinBackup %s/%s: %w", b.targetFinBackupNamespace, b.targetFinBackupName, err)
+	}
+	if fb == nil {
+		return fmt.Errorf("FinBackup %s/%s not found", b.targetFinBackupNamespace, b.targetFinBackupName)
+	}
+
+	anns := fb.GetAnnotations()
+	if anns == nil {
+		anns = map[string]string{}
+	}
+	anns[controller.AnnotationFullBackup] = "true"
+	fb.SetAnnotations(anns)
+
+	if err := b.kubernetesRepo.UpdateFinBackup(fb); err != nil {
+		return fmt.Errorf("failed to update FinBackup annotation: %w", err)
+	}
 	return nil
 }
 
