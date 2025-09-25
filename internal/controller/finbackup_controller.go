@@ -47,6 +47,7 @@ const (
 	annotationDiffFrom             = "fin.cybozu.io/diff-from"
 	annotationFinBackupName        = "fin.cybozu.io/finbackup-name"
 	annotationFinBackupNamespace   = "fin.cybozu.io/finbackup-namespace"
+	AnnotationFullBackup           = "fin.cybozu.io/full-backup"
 )
 
 var (
