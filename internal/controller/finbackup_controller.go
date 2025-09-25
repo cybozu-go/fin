@@ -493,6 +493,7 @@ func snapIDPreconditionSatisfied(
 	backup *finv1.FinBackup,
 	finBackupList *finv1.FinBackupList,
 ) bool {
+	smallerIDs := 0
 	for _, fb := range finBackupList.Items {
 		if fb.GetUID() == backup.GetUID() {
 			continue
@@ -501,6 +502,7 @@ func snapIDPreconditionSatisfied(
 			logger.Info("found another FinBackup with nil SnapID", "name", fb.Name)
 			return false
 		}
+
 		if *fb.Status.SnapID < *backup.Status.SnapID {
 			if !fb.IsReady() &&
 				fb.DeletionTimestamp.IsZero() &&
@@ -509,8 +511,14 @@ func snapIDPreconditionSatisfied(
 					"name", fb.Name, "snapID", *fb.Status.SnapID)
 				return false
 			}
+			smallerIDs++
+		}
+		if smallerIDs >= 2 {
+			logger.Info("found incremental FinBackup", "name", fb.Name, "snapID", *fb.Status.SnapID)
+			return false
 		}
 	}
+	logger.Info("SnapID precondition satisfied", "name", backup.Name, "snapID", *backup.Status.SnapID, "smallerIDs", smallerIDs, "totalFinBackups", len(finBackupList.Items))
 	return true
 }
 
