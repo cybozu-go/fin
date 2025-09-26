@@ -62,6 +62,9 @@ func setup(t *testing.T, input *setupInput) *setupOutput {
 	fullBackupInput.RBDRepo = rbdRepo
 	fullBackupInput.NodeLocalVolumeRepo = nlvRepo
 
+	// Create corresponding FinBackup resource for the full backup
+	testutil.CreateFinBackupForTest(k8sRepo, fullBackupInput)
+
 	// Take a fake snapshot for incremental backup
 	incrementalSnapshotSize := uint64(1000)
 	incrementalSnapshot := rbdRepo.CreateFakeSnapshot(utils.GetUniqueName("snap-"), incrementalSnapshotSize, time.Now())
@@ -74,6 +77,9 @@ func setup(t *testing.T, input *setupInput) *setupOutput {
 	incrementalBackupInput.RBDRepo = rbdRepo
 	incrementalBackupInput.NodeLocalVolumeRepo = nlvRepo
 
+	// Create corresponding FinBackup resource for the incremental backup
+	testutil.CreateFinBackupForTest(k8sRepo, incrementalBackupInput)
+
 	// Take a second fake snapshot for second incremental backup
 	incrementalSnapshot2 := rbdRepo.CreateFakeSnapshot(utils.GetUniqueName("snap-"), incrementalSnapshotSize, time.Now())
 
@@ -84,6 +90,9 @@ func setup(t *testing.T, input *setupInput) *setupOutput {
 	incrementalBackupInput2.KubernetesRepo = k8sRepo
 	incrementalBackupInput2.RBDRepo = rbdRepo
 	incrementalBackupInput2.NodeLocalVolumeRepo = nlvRepo
+
+	// Create corresponding FinBackup resource for the second incremental backup
+	testutil.CreateFinBackupForTest(k8sRepo, incrementalBackupInput2)
 
 	return &setupOutput{
 		fullBackupInput:         fullBackupInput,

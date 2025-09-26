@@ -1,6 +1,7 @@
 package fake
 
 import (
+	finv1 "github.com/cybozu-go/fin/api/v1"
 	"github.com/cybozu-go/fin/internal/model"
 	"github.com/cybozu-go/fin/test/utils"
 	"github.com/google/uuid"
@@ -22,8 +23,9 @@ type VolumeInfo struct {
 // The PVC is associated with a PV and a corresponding RBD volume.
 func NewStorage() (*KubernetesRepository, *RBDRepository, *VolumeInfo) {
 	k8sRepo := &KubernetesRepository{
-		pvcMap: make(map[types.NamespacedName]*corev1.PersistentVolumeClaim, 1),
-		pvMap:  make(map[string]*corev1.PersistentVolume, 1),
+		pvcMap:       make(map[types.NamespacedName]*corev1.PersistentVolumeClaim, 1),
+		pvMap:        make(map[string]*corev1.PersistentVolume, 1),
+		finBackupMap: make(map[string]*finv1.FinBackup),
 	}
 
 	volumeInfo := &VolumeInfo{

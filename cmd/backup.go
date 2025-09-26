@@ -57,7 +57,13 @@ func backupJobMain() error {
 	if err != nil {
 		return fmt.Errorf("failed to get Kubernetes clientset: %w", err)
 	}
-	k8sRepo := kubernetes.NewKubernetesRepository(clientSet)
+
+	client, err := getClient()
+	if err != nil {
+		return fmt.Errorf("failed to get runtime client: %w", err)
+	}
+
+	k8sRepo := kubernetes.NewKubernetesRepository(clientSet, client)
 	rbdRepo := ceph.NewRBDRepository()
 
 	actionUID := os.Getenv("ACTION_UID")

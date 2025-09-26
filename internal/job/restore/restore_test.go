@@ -106,6 +106,9 @@ func setup(t *testing.T, config *setupInput) *setupOutput {
 		backupInput.RBDRepo = rbdRepo
 		backupInput.NodeLocalVolumeRepo = nlvRepo
 
+		// Create corresponding FinBackup resource for the backup
+		testutil.CreateFinBackupForTest(k8sRepo, backupInput)
+
 		bk := backup.NewBackup(backupInput)
 		err = bk.Perform()
 		require.NoError(t, err)
