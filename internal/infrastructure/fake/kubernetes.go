@@ -65,6 +65,10 @@ func (r *KubernetesRepository) GetFinBackup(name, namespace string) (*finv1.FinB
 	return nil, model.ErrNotFound
 }
 
+func (r *KubernetesRepository) SetFinBackup(fb *finv1.FinBackup) {
+	r.finBackupMap[string(fb.GetUID())] = fb
+}
+
 func (r *KubernetesRepository) UpdateFinBackup(fb *finv1.FinBackup) error {
 	r.finBackupMap[string(fb.GetUID())] = fb
 	return nil

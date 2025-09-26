@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	finv1 "github.com/cybozu-go/fin/api/v1"
 	"github.com/cybozu-go/fin/internal/infrastructure/ceph"
 	"github.com/cybozu-go/fin/internal/infrastructure/db"
 	"github.com/cybozu-go/fin/internal/infrastructure/fake"
@@ -18,6 +19,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 )
 
 const SnapshotTimeFormat = "Mon Jan  2 15:04:05 2006"
@@ -34,8 +37,13 @@ func NewBackupInput(k8sRepo model.KubernetesRepository, volume *fake.VolumeInfo,
 		panic(fmt.Sprintf("failed to get PV: %v", err))
 	}
 
+	// Generate FinBackup name based on PVC name and snapshot ID for testing
+	finBackupName := fmt.Sprintf("%s-snap-%d", pvc.Name, targetSnapID)
+	
 	return &input.Backup{
 		ActionUID:                 uuid.New().String(),
+		TargetFinBackupName:       finBackupName,
+		TargetFinBackupNamespace:  pvc.Namespace,
 		TargetRBDPoolName:         pv.Spec.CSI.VolumeAttributes["pool"],
 		TargetRBDImageName:        pv.Spec.CSI.VolumeAttributes["imageName"],
 		TargetSnapshotID:          targetSnapID,
@@ -155,4 +163,25 @@ func executeSudo(args ...string) ([]byte, error) {
 
 	err := cmd.Run()
 	return stdoutBuf.Bytes(), err
+}
+
+// CreateFinBackupForTest creates a FinBackup resource for testing and adds it to the fake KubernetesRepository
+func CreateFinBackupForTest(k8sRepo *fake.KubernetesRepository, backupInput *input.Backup) {
+	finBackup := &finv1.FinBackup{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      backupInput.TargetFinBackupName,
+			Namespace: backupInput.TargetFinBackupNamespace,
+			UID:       types.UID(uuid.New().String()),
+		},
+		Spec: finv1.FinBackupSpec{
+			PVC:          backupInput.TargetPVCName,
+			PVCNamespace: backupInput.TargetPVCNamespace,
+			Node:         "test-node",
+		},
+		Status: finv1.FinBackupStatus{
+			CreatedAt: metav1.Now(),
+		},
+	}
+	
+	k8sRepo.SetFinBackup(finBackup)
 }
