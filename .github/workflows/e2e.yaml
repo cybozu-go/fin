@@ -21,6 +21,13 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: "go.mod"
+
+      - name: Free up disk space
+        run: |
+          df -h /
+          sudo rm -rf /usr/share/dotnet
+          df -h /
+
       - name: KVM setup
         run: |
           VIRTUALIZATION_SUPPORT=$(grep -E -q 'vmx|svm' /proc/cpuinfo && echo yes || echo no)
