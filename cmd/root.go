@@ -11,7 +11,10 @@ var rootCmd = &cobra.Command{
 	Use:                "fin",
 	DisableFlagParsing: true,
 	Run: func(cmd *cobra.Command, args []string) {
-		controllerMain(args)
+		if err := controllerMain(args); err != nil {
+			slog.Error("failed to run controller", "error", err)
+			os.Exit(1)
+		}
 	},
 }
 

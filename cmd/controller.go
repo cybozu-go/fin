@@ -3,6 +3,7 @@ package cmd
 import (
 	"crypto/tls"
 	"flag"
+	"fmt"
 	"os"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
@@ -14,6 +15,7 @@ import (
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/certwatcher"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
@@ -22,6 +24,7 @@ import (
 	finv1 "github.com/cybozu-go/fin/api/v1"
 	"github.com/cybozu-go/fin/internal/controller"
 	"github.com/cybozu-go/fin/internal/infrastructure/ceph"
+	webhookv1 "github.com/cybozu-go/fin/internal/webhook/v1"
 	//+kubebuilder:scaffold:imports
 )
 
@@ -37,13 +40,15 @@ func init() {
 	//+kubebuilder:scaffold:scheme
 }
 
-func controllerMain(args []string) {
+func controllerMain(args []string) error {
 	var metricsAddr string
 	var enableLeaderElection bool
 	var probeAddr string
 	var secureMetrics bool
 	var enableHTTP2 bool
 	var rawImgExpansionUnitSize uint64
+	var webhookCertPath string
+	var webhookKeyPath string
 
 	fs := flag.NewFlagSet("", flag.ExitOnError)
 	fs.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "The address the metric endpoint binds to.")
@@ -57,6 +62,10 @@ func controllerMain(args []string) {
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
 	fs.Uint64Var(&rawImgExpansionUnitSize, "raw-img-expansion-unit-size", 0,
 		"Set FIN_RAW_IMG_EXPANSION_UNIT_SIZE in backup job.")
+	fs.StringVar(&webhookCertPath, "webhook-cert-path", "",
+		"The file path of the webhook certificate file.")
+	fs.StringVar(&webhookKeyPath, "webhook-key-path", "",
+		"The file path of the webhook key file.")
 	opts := zap.Options{
 		Development: true,
 	}
@@ -65,6 +74,10 @@ func controllerMain(args []string) {
 	if err != nil {
 		setupLog.Error(err, "unable to parse flags")
 		os.Exit(1)
+	}
+
+	if webhookCertPath == "" || webhookKeyPath == "" {
+		return fmt.Errorf("--webhook-cert-path and --webhook-key-path must be provided")
 	}
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
@@ -85,18 +98,13 @@ func controllerMain(args []string) {
 		tlsOpts = append(tlsOpts, disableHTTP2)
 	}
 
-	webhookServer := webhook.NewServer(webhook.Options{
-		TLSOpts: tlsOpts,
-	})
-
-	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
+	mgrOptions := ctrl.Options{
 		Scheme: scheme,
 		Metrics: metricsserver.Options{
 			BindAddress:   metricsAddr,
 			SecureServing: secureMetrics,
 			TLSOpts:       tlsOpts,
 		},
-		WebhookServer:          webhookServer,
 		HealthProbeBindAddress: probeAddr,
 		LeaderElection:         enableLeaderElection,
 		LeaderElectionID:       "07c0f9a3.cybozu.io",
@@ -111,7 +119,29 @@ func controllerMain(args []string) {
 		// if you are doing or is intended to do any operation such as perform cleanups
 		// after the manager stops then its usage might be unsafe.
 		// LeaderElectionReleaseOnCancel: true,
+	}
+
+	var webhookCertWatcher *certwatcher.CertWatcher
+	webhookTLSOpts := append([]func(*tls.Config){}, tlsOpts...)
+
+	setupLog.Info("Initializing webhook certificate watcher using provided certificates",
+		"webhook-cert-path", webhookCertPath, "webhook-key-path", webhookKeyPath)
+
+	webhookCertWatcher, err = certwatcher.New(webhookCertPath, webhookKeyPath)
+	if err != nil {
+		setupLog.Error(err, "Failed to initialize webhook certificate watcher")
+		os.Exit(1)
+	}
+
+	webhookTLSOpts = append(webhookTLSOpts, func(config *tls.Config) {
+		config.GetCertificate = webhookCertWatcher.GetCertificate
 	})
+
+	mgrOptions.WebhookServer = webhook.NewServer(webhook.Options{
+		TLSOpts: webhookTLSOpts,
+	})
+
+	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), mgrOptions)
 	if err != nil {
 		setupLog.Error(err, "unable to start manager")
 		os.Exit(1)
@@ -165,6 +195,20 @@ func controllerMain(args []string) {
 
 	//+kubebuilder:scaffold:builder
 
+	if err := webhookv1.SetupFinBackupDeletionWebhookWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to setup FinBackup webhook")
+		os.Exit(1)
+	}
+	setupLog.Info("FinBackup validating webhook enabled")
+
+	if webhookCertWatcher != nil {
+		setupLog.Info("Adding webhook certificate watcher to manager")
+		if err := mgr.Add(webhookCertWatcher); err != nil {
+			setupLog.Error(err, "unable to add webhook certificate watcher to manager")
+			os.Exit(1)
+		}
+	}
+
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
 		setupLog.Error(err, "unable to set up health check")
 		os.Exit(1)
@@ -179,4 +223,6 @@ func controllerMain(args []string) {
 		setupLog.Error(err, "problem running manager")
 		os.Exit(1)
 	}
+
+	return nil
 }
