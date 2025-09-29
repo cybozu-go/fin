@@ -761,6 +761,7 @@ var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
 //     . On a different node, returns true.
 //     . On the same node but is being deleted, returns true.
 //     . On the same node, not ready and is not being deleted, returns false.
+//     . On the same node, two Finbackups exists, returns false.
 //   - If a larger SnapID exists, returns true.
 func Test_snapIDPreconditionSatisfied(t *testing.T) {
 	deletionTimestamp := metav1.Now()
@@ -835,6 +836,34 @@ func Test_snapIDPreconditionSatisfied(t *testing.T) {
 			backup: createFinBackup("new-backup", 3, "node1", true, nil),
 			otherFinBackups: []finv1.FinBackup{
 				*createFinBackup("larger-backup", 4, "node1", true, nil),
+			},
+			wantErr: false,
+		},
+		{
+			name:   "two smaller SnapIDs",
+			backup: createFinBackup("new-backup", 3, "node1", false, nil),
+			otherFinBackups: []finv1.FinBackup{
+				*createFinBackup("backup", 1, "node1", true, nil),
+				*createFinBackup("other", 2, "node1", true, nil),
+			},
+			wantErr: true,
+		},
+		{
+			name:   "two smaller SnapIDs one being deleted",
+			backup: createFinBackup("new-backup", 3, "node1", false, nil),
+			otherFinBackups: []finv1.FinBackup{
+				*createFinBackup("backup", 1, "node1", true, &deletionTimestamp),
+				*createFinBackup("other", 2, "node1", true, nil),
+			},
+			wantErr: true,
+		},
+		{
+			name:   "two smaller SnapIDs on different node",
+			backup: createFinBackup("new-backup", 4, "node2", true, nil),
+			otherFinBackups: []finv1.FinBackup{
+				*createFinBackup("other-1", 3, "node1", true, nil),
+				*createFinBackup("backup", 1, "node2", true, nil),
+				*createFinBackup("other-2", 2, "node1", true, nil),
 			},
 			wantErr: false,
 		},

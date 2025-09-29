@@ -493,6 +493,7 @@ func checkPVCUIDConsistency(backup *finv1.FinBackup, pvc *corev1.PersistentVolum
 }
 
 func snapIDPreconditionSatisfied(backup *finv1.FinBackup, otherFinBackups []finv1.FinBackup) error {
+	smallerIDs := 0
 	targetSnapID := *backup.Status.SnapID
 	for _, fb := range otherFinBackups {
 		if fb.Status.SnapID == nil {
@@ -508,6 +509,10 @@ func snapIDPreconditionSatisfied(backup *finv1.FinBackup, otherFinBackups []finv
 		}
 		if !fb.IsReady() && fb.DeletionTimestamp.IsZero() {
 			return fmt.Errorf("found not ready FinBackup: %s/%d", fb.Name, snapID)
+		}
+		smallerIDs++
+		if smallerIDs >= 2 {
+			return errors.New("found incremental FinBackup")
 		}
 	}
 	return nil
