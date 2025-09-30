@@ -11,7 +11,6 @@ import (
 
 	"github.com/cybozu-go/fin/internal/infrastructure/ceph"
 	"github.com/cybozu-go/fin/internal/infrastructure/db"
-	"github.com/cybozu-go/fin/internal/infrastructure/kubernetes"
 	"github.com/cybozu-go/fin/internal/infrastructure/nlv"
 	"github.com/cybozu-go/fin/internal/job"
 	"github.com/cybozu-go/fin/internal/job/backup"
@@ -57,7 +56,6 @@ func backupJobMain() error {
 	if err != nil {
 		return fmt.Errorf("failed to get Kubernetes clientset: %w", err)
 	}
-	k8sRepo := kubernetes.NewKubernetesRepository(clientSet)
 	rbdRepo := ceph.NewRBDRepository()
 
 	actionUID := os.Getenv("ACTION_UID")
@@ -110,7 +108,7 @@ func backupJobMain() error {
 
 	b := backup.NewBackup(&input.Backup{
 		Repo:                      finRepo,
-		KubernetesRepo:            k8sRepo,
+		K8sClient:                 clientSet,
 		RBDRepo:                   rbdRepo,
 		NodeLocalVolumeRepo:       nlvRepo,
 		ActionUID:                 actionUID,

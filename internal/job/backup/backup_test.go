@@ -1,6 +1,7 @@
 package backup
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,7 +20,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/api/equality"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/utils/ptr"
 )
 
@@ -30,7 +33,7 @@ type setupInput struct {
 
 type setupOutput struct {
 	fullBackupInput, incrementalBackupInput, incrementalBackupInput2 *input.Backup
-	k8sRepo                                                          *fake.KubernetesRepository
+	k8sClient                                                        kubernetes.Interface
 	finRepo                                                          model.FinRepository
 	nlvRepo                                                          model.NodeLocalVolumeRepository
 	rbdRepo                                                          *fake.RBDRepository
@@ -49,16 +52,16 @@ func setup(t *testing.T, input *setupInput) *setupOutput {
 		fullSnapshotSize = input.fullSnapshotSize
 	}
 
-	k8sRepo, rbdRepo, volumeInfo := fake.NewStorage()
+	k8sClient, rbdRepo, volumeInfo := fake.NewStorage()
 	nlvRepo, finRepo, _ := testutil.CreateNLVAndFinRepoForTest(t)
 
 	// Take a fake snapshot for full backup
 	fullSnapshot := rbdRepo.CreateFakeSnapshot(utils.GetUniqueName("snap-"), fullSnapshotSize, time.Now())
 
 	// Create a full backup input
-	fullBackupInput := testutil.NewBackupInput(k8sRepo, volumeInfo, fullSnapshot.ID, nil, maxPartSize)
+	fullBackupInput := testutil.NewBackupInput(k8sClient, volumeInfo, fullSnapshot.ID, nil, maxPartSize)
 	fullBackupInput.Repo = finRepo
-	fullBackupInput.KubernetesRepo = k8sRepo
+	fullBackupInput.K8sClient = k8sClient
 	fullBackupInput.RBDRepo = rbdRepo
 	fullBackupInput.NodeLocalVolumeRepo = nlvRepo
 
@@ -68,9 +71,9 @@ func setup(t *testing.T, input *setupInput) *setupOutput {
 
 	// Create an incremental backup input
 	incrementalBackupInput := testutil.NewBackupInput(
-		k8sRepo, volumeInfo, incrementalSnapshot.ID, &fullSnapshot.ID, maxPartSize)
+		k8sClient, volumeInfo, incrementalSnapshot.ID, &fullSnapshot.ID, maxPartSize)
 	incrementalBackupInput.Repo = finRepo
-	incrementalBackupInput.KubernetesRepo = k8sRepo
+	incrementalBackupInput.K8sClient = k8sClient
 	incrementalBackupInput.RBDRepo = rbdRepo
 	incrementalBackupInput.NodeLocalVolumeRepo = nlvRepo
 
@@ -79,9 +82,9 @@ func setup(t *testing.T, input *setupInput) *setupOutput {
 
 	// Create a second incremental backup input
 	incrementalBackupInput2 := testutil.NewBackupInput(
-		k8sRepo, volumeInfo, incrementalSnapshot2.ID, &incrementalSnapshot.ID, maxPartSize)
+		k8sClient, volumeInfo, incrementalSnapshot2.ID, &incrementalSnapshot.ID, maxPartSize)
 	incrementalBackupInput2.Repo = finRepo
-	incrementalBackupInput2.KubernetesRepo = k8sRepo
+	incrementalBackupInput2.K8sClient = k8sClient
 	incrementalBackupInput2.RBDRepo = rbdRepo
 	incrementalBackupInput2.NodeLocalVolumeRepo = nlvRepo
 
@@ -89,7 +92,7 @@ func setup(t *testing.T, input *setupInput) *setupOutput {
 		fullBackupInput:         fullBackupInput,
 		incrementalBackupInput:  incrementalBackupInput,
 		incrementalBackupInput2: incrementalBackupInput2,
-		k8sRepo:                 k8sRepo,
+		k8sClient:               k8sClient,
 		finRepo:                 finRepo,
 		nlvRepo:                 nlvRepo,
 		rbdRepo:                 rbdRepo,
@@ -131,16 +134,19 @@ func TestFullBackup_Success(t *testing.T) {
 	assert.Equal(t, cfg.fullBackupInput.MaxPartSize, rawImage.AppliedDiffs[1].ReadOffset)
 	assert.Equal(t, cfg.fullBackupInput.MaxPartSize, rawImage.AppliedDiffs[1].ReadLength)
 
-	fakePVC, err := cfg.k8sRepo.GetPVC(cfg.fullBackupInput.TargetPVCName, cfg.fullBackupInput.TargetPVCNamespace)
+	ctx := context.Background()
+	fakePVC, err := cfg.k8sClient.CoreV1().
+		PersistentVolumeClaims(cfg.fullBackupInput.TargetPVCNamespace).
+		Get(ctx, cfg.fullBackupInput.TargetPVCName, metav1.GetOptions{})
 	require.NoError(t, err)
 	resPVC, err := cfg.nlvRepo.GetPVC()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.True(t, equality.Semantic.DeepEqual(fakePVC, resPVC))
 
-	fakePV, err := cfg.k8sRepo.GetPV(cfg.targetPVName)
+	fakePV, err := cfg.k8sClient.CoreV1().PersistentVolumes().Get(ctx, cfg.targetPVName, metav1.GetOptions{})
 	require.NoError(t, err)
 	resPV, err := cfg.nlvRepo.GetPV()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.True(t, equality.Semantic.DeepEqual(fakePV, resPV))
 
 	for _, diff := range rawImage.AppliedDiffs {
@@ -194,17 +200,24 @@ func TestIncrementalBackup_Success(t *testing.T) {
 
 	// Change PVC and PV annotations to non-nil values.
 	// This step is necessary to ensure that pv.yaml and pvc.yaml won't be changed after the incremental backup.
-	pvc, err := cfg.k8sRepo.GetPVC(cfg.incrementalBackupInput.TargetPVCName, cfg.incrementalBackupInput.TargetPVCNamespace)
+	ctx := context.Background()
+	pvc, err := cfg.k8sClient.CoreV1().
+		PersistentVolumeClaims(cfg.incrementalBackupInput.TargetPVCNamespace).
+		Get(ctx, cfg.incrementalBackupInput.TargetPVCName, metav1.GetOptions{})
 	require.NoError(t, err)
 	require.Nil(t, pvc.Annotations)
 	pvc.Annotations = map[string]string{"test": "pvc"}
-	cfg.k8sRepo.SetPVC(cfg.incrementalBackupInput.TargetPVCName, cfg.incrementalBackupInput.TargetPVCNamespace, pvc)
+	_, err = cfg.k8sClient.CoreV1().
+		PersistentVolumeClaims(cfg.incrementalBackupInput.TargetPVCNamespace).
+		Update(ctx, pvc, metav1.UpdateOptions{})
+	require.NoError(t, err)
 
-	pv, err := cfg.k8sRepo.GetPV(cfg.targetPVName)
+	pv, err := cfg.k8sClient.CoreV1().PersistentVolumes().Get(ctx, pvc.Spec.VolumeName, metav1.GetOptions{})
 	require.NoError(t, err)
 	require.Nil(t, pv.Annotations)
 	pv.Annotations = map[string]string{"test": "pv"}
-	cfg.k8sRepo.SetPV(pv.Name, pv)
+	_, err = cfg.k8sClient.CoreV1().PersistentVolumes().Update(ctx, pv, metav1.UpdateOptions{})
+	require.NoError(t, err)
 
 	expectedPVC, err := nlvRepo.GetPVC()
 	require.NoError(t, err)
@@ -580,12 +593,17 @@ func Test_FullBackup_Error_NonExistentTargetPVAndPVC(t *testing.T) {
 
 	// Arrange
 	cfg := setup(t, &setupInput{})
-	cfg.k8sRepo.DeletePV(cfg.targetPVName)
-	cfg.k8sRepo.DeletePVC(cfg.fullBackupInput.TargetPVCName, cfg.fullBackupInput.TargetPVCNamespace)
+	ctx := context.Background()
+	err := cfg.k8sClient.CoreV1().PersistentVolumes().Delete(ctx, cfg.targetPVName, metav1.DeleteOptions{})
+	require.NoError(t, err)
+	err = cfg.k8sClient.CoreV1().
+		PersistentVolumeClaims(cfg.fullBackupInput.TargetPVCNamespace).
+		Delete(ctx, cfg.fullBackupInput.TargetPVCName, metav1.DeleteOptions{})
+	require.NoError(t, err)
 
 	// Act
 	backup := NewBackup(cfg.fullBackupInput)
-	err := backup.Perform()
+	err = backup.Perform()
 
 	// Assert
 	assert.Error(t, err)
@@ -608,11 +626,12 @@ func Test_FullBackup_Error_DifferentRBDImageName(t *testing.T) {
 
 	// Arrange
 	cfg := setup(t, &setupInput{})
-
-	pv, err := cfg.k8sRepo.GetPV(cfg.targetPVName)
+	ctx := context.Background()
+	pv, err := cfg.k8sClient.CoreV1().PersistentVolumes().Get(ctx, cfg.targetPVName, metav1.GetOptions{})
 	require.NoError(t, err)
 	pv.Spec.CSI.VolumeAttributes["imageName"] = fmt.Sprintf("recreated-%s", pv.Spec.CSI.VolumeAttributes["imageName"])
-	cfg.k8sRepo.SetPV(cfg.targetPVName, pv)
+	_, err = cfg.k8sClient.CoreV1().PersistentVolumes().Update(ctx, pv, metav1.UpdateOptions{})
+	require.NoError(t, err)
 
 	// Act
 	backup := NewBackup(cfg.fullBackupInput)
@@ -639,11 +658,16 @@ func Test_FullBackup_Error_DifferentPVCUID(t *testing.T) {
 
 	// Arrange
 	cfg := setup(t, &setupInput{})
-
-	pvc, err := cfg.k8sRepo.GetPVC(cfg.fullBackupInput.TargetPVCName, cfg.fullBackupInput.TargetPVCNamespace)
+	ctx := context.Background()
+	pvc, err := cfg.k8sClient.CoreV1().
+		PersistentVolumeClaims(cfg.fullBackupInput.TargetPVCNamespace).
+		Get(ctx, cfg.fullBackupInput.TargetPVCName, metav1.GetOptions{})
 	require.NoError(t, err)
 	pvc.UID = types.UID(fmt.Sprintf("recreated-%s", pvc.UID))
-	cfg.k8sRepo.SetPVC(cfg.fullBackupInput.TargetPVCName, cfg.fullBackupInput.TargetPVCNamespace, pvc)
+	_, err = cfg.k8sClient.CoreV1().
+		PersistentVolumeClaims(cfg.fullBackupInput.TargetPVCNamespace).
+		Update(ctx, pvc, metav1.UpdateOptions{})
+	require.NoError(t, err)
 
 	// Act
 	backup := NewBackup(cfg.fullBackupInput)

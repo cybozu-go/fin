@@ -2,6 +2,7 @@ package testutil
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"fmt"
 	"os"
@@ -18,18 +19,25 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
 )
 
 const SnapshotTimeFormat = "Mon Jan  2 15:04:05 2006"
 
-// NewBackupInput creates a BackupInput for testing using a KubernetesRepository and a fake.VolumeInfo.
-func NewBackupInput(k8sRepo model.KubernetesRepository, volume *fake.VolumeInfo,
-	targetSnapID int, sourceSnapID *int, maxPartSize uint64) *input.Backup {
-	pvc, err := k8sRepo.GetPVC(volume.PVCName, volume.Namespace)
+// NewBackupInput creates a BackupInput for testing using a fake clientSet and a fake.VolumeInfo.
+func NewBackupInput(
+	k8sClient kubernetes.Interface, volume *fake.VolumeInfo,
+	targetSnapID int, sourceSnapID *int, maxPartSize uint64,
+) *input.Backup {
+	ctx := context.Background()
+	pvc, err := k8sClient.CoreV1().
+		PersistentVolumeClaims(volume.Namespace).
+		Get(ctx, volume.PVCName, metav1.GetOptions{})
 	if err != nil {
 		panic(fmt.Sprintf("failed to get PVC: %v", err))
 	}
-	pv, err := k8sRepo.GetPV(volume.PVName)
+	pv, err := k8sClient.CoreV1().PersistentVolumes().Get(ctx, volume.PVName, metav1.GetOptions{})
 	if err != nil {
 		panic(fmt.Sprintf("failed to get PV: %v", err))
 	}
