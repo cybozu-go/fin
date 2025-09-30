@@ -50,6 +50,14 @@ func controllerMain(args []string) error {
 	var webhookCertPath string
 	var webhookKeyPath string
 
+	// NOTE:
+	// The validating webhook is not yet supported in the e2e test suite.
+	// To avoid requiring TLS flags and webhook resources during e2e runs,
+	// webhook registration is disabled here.
+	// Once e2e tests support the webhook, enable it by setting this to true
+	// or revert the disabling commit to restore the original behavior.
+	enableWebhook := false
+
 	fs := flag.NewFlagSet("", flag.ExitOnError)
 	fs.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "The address the metric endpoint binds to.")
 	fs.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
@@ -76,8 +84,10 @@ func controllerMain(args []string) error {
 		os.Exit(1)
 	}
 
-	if webhookCertPath == "" || webhookKeyPath == "" {
-		return fmt.Errorf("--webhook-cert-path and --webhook-key-path must be provided")
+	if enableWebhook {
+		if webhookCertPath == "" || webhookKeyPath == "" {
+			return fmt.Errorf("--webhook-cert-path and --webhook-key-path must be provided when --enable-webhook is set")
+		}
 	}
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
@@ -124,22 +134,24 @@ func controllerMain(args []string) error {
 	var webhookCertWatcher *certwatcher.CertWatcher
 	webhookTLSOpts := append([]func(*tls.Config){}, tlsOpts...)
 
-	setupLog.Info("Initializing webhook certificate watcher using provided certificates",
-		"webhook-cert-path", webhookCertPath, "webhook-key-path", webhookKeyPath)
+	if enableWebhook {
+		setupLog.Info("Initializing webhook certificate watcher using provided certificates",
+			"webhook-cert-path", webhookCertPath, "webhook-key-path", webhookKeyPath)
 
-	webhookCertWatcher, err = certwatcher.New(webhookCertPath, webhookKeyPath)
-	if err != nil {
-		setupLog.Error(err, "Failed to initialize webhook certificate watcher")
-		os.Exit(1)
+		webhookCertWatcher, err = certwatcher.New(webhookCertPath, webhookKeyPath)
+		if err != nil {
+			setupLog.Error(err, "Failed to initialize webhook certificate watcher")
+			os.Exit(1)
+		}
+
+		webhookTLSOpts = append(webhookTLSOpts, func(config *tls.Config) {
+			config.GetCertificate = webhookCertWatcher.GetCertificate
+		})
+
+		mgrOptions.WebhookServer = webhook.NewServer(webhook.Options{
+			TLSOpts: webhookTLSOpts,
+		})
 	}
-
-	webhookTLSOpts = append(webhookTLSOpts, func(config *tls.Config) {
-		config.GetCertificate = webhookCertWatcher.GetCertificate
-	})
-
-	mgrOptions.WebhookServer = webhook.NewServer(webhook.Options{
-		TLSOpts: webhookTLSOpts,
-	})
 
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), mgrOptions)
 	if err != nil {
@@ -195,17 +207,19 @@ func controllerMain(args []string) error {
 
 	//+kubebuilder:scaffold:builder
 
-	if err := webhookv1.SetupFinBackupDeletionWebhookWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to setup FinBackup webhook")
-		os.Exit(1)
-	}
-	setupLog.Info("FinBackup validating webhook enabled")
-
-	if webhookCertWatcher != nil {
-		setupLog.Info("Adding webhook certificate watcher to manager")
-		if err := mgr.Add(webhookCertWatcher); err != nil {
-			setupLog.Error(err, "unable to add webhook certificate watcher to manager")
+	if enableWebhook {
+		if err := webhookv1.SetupFinBackupDeletionWebhookWithManager(mgr); err != nil {
+			setupLog.Error(err, "unable to setup FinBackup webhook")
 			os.Exit(1)
+		}
+		setupLog.Info("FinBackup validating webhook enabled")
+
+		if webhookCertWatcher != nil {
+			setupLog.Info("Adding webhook certificate watcher to manager")
+			if err := mgr.Add(webhookCertWatcher); err != nil {
+				setupLog.Error(err, "unable to add webhook certificate watcher to manager")
+				os.Exit(1)
+			}
 		}
 	}
 
