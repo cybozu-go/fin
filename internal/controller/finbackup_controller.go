@@ -5,13 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"time"
 
 	finv1 "github.com/cybozu-go/fin/api/v1"
 	"github.com/cybozu-go/fin/internal/infrastructure/nlv"
 	"github.com/cybozu-go/fin/internal/model"
-	"github.com/go-logr/logr"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
@@ -173,13 +173,17 @@ func (r *FinBackupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		logger.Error(err, "failed to list FinBackups for the PVC")
 		return ctrl.Result{}, err
 	}
+	otherFinBackups := slices.DeleteFunc(finBackupList.Items, func(fb finv1.FinBackup) bool {
+		return fb.GetUID() == backup.GetUID()
+	})
 
-	if !snapIDPreconditionSatisfied(&logger, &backup, &finBackupList) {
+	if err := snapIDPreconditionSatisfied(&backup, otherFinBackups); err != nil {
+		logger.Info("wait for other FinBackups to become ready or be deleted", "reason", err.Error())
 		// FIXME: The following "requeue after" is temporary code.
 		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 	}
 
-	diffFromStr, updated := findDiffSourceSnapID(&backup, &finBackupList)
+	diffFromStr, updated := findDiffSourceSnapID(&backup, otherFinBackups)
 	if updated {
 		annotations := backup.GetAnnotations()
 		if annotations == nil {
@@ -488,40 +492,40 @@ func checkPVCUIDConsistency(backup *finv1.FinBackup, pvc *corev1.PersistentVolum
 	return nil
 }
 
-func snapIDPreconditionSatisfied(
-	logger *logr.Logger,
-	backup *finv1.FinBackup,
-	finBackupList *finv1.FinBackupList,
-) bool {
-	for _, fb := range finBackupList.Items {
-		if fb.GetUID() == backup.GetUID() {
+func snapIDPreconditionSatisfied(backup *finv1.FinBackup, otherFinBackups []finv1.FinBackup) error {
+	smallerIDs := 0
+	targetSnapID := *backup.Status.SnapID
+	for _, fb := range otherFinBackups {
+		if fb.Status.SnapID == nil {
+			return fmt.Errorf("found another FinBackup with nil SnapID: %s", fb.Name)
+		}
+		if fb.Spec.Node != backup.Spec.Node {
 			continue
 		}
-		if fb.Status.SnapID == nil {
-			logger.Info("found another FinBackup with nil SnapID", "name", fb.Name)
-			return false
+
+		snapID := *fb.Status.SnapID
+		if snapID > targetSnapID {
+			continue
 		}
-		if *fb.Status.SnapID < *backup.Status.SnapID {
-			if !fb.IsReady() &&
-				fb.DeletionTimestamp.IsZero() &&
-				fb.Spec.Node == backup.Spec.Node {
-				logger.Info("found another FinBackup which has smaller SnapID and is not ready",
-					"name", fb.Name, "snapID", *fb.Status.SnapID)
-				return false
-			}
+		if !fb.IsReady() && fb.DeletionTimestamp.IsZero() {
+			return fmt.Errorf("found not ready FinBackup: %s/%d", fb.Name, snapID)
+		}
+		smallerIDs++
+		if smallerIDs >= 2 {
+			return errors.New("found incremental FinBackup")
 		}
 	}
-	return true
+	return nil
 }
 
-func findDiffSourceSnapID(backup *finv1.FinBackup, finBackupList *finv1.FinBackupList) (string, bool) {
+func findDiffSourceSnapID(backup *finv1.FinBackup, otherFinBackups []finv1.FinBackup) (string, bool) {
 	diffFromStr := backup.GetAnnotations()[annotationDiffFrom]
 	if diffFromStr != "" {
 		return diffFromStr, false
 	}
 
 	var diffFrom *int
-	for _, fb := range finBackupList.Items {
+	for _, fb := range otherFinBackups {
 		if *fb.Status.SnapID < *backup.Status.SnapID &&
 			fb.DeletionTimestamp.IsZero() &&
 			fb.Spec.Node == backup.Spec.Node {
