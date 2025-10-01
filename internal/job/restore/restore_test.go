@@ -57,7 +57,7 @@ type setupOutput struct {
 func setup(t *testing.T, config *setupInput) *setupOutput {
 	t.Helper()
 
-	k8sRepo, _, volumeInfo := fake.NewStorage()
+	k8sClient, _, volumeInfo := fake.NewStorage()
 	rbdRepo := fake.NewRBDRepository2(volumeInfo.PoolName, volumeInfo.ImageName)
 	nlvRepo, finRepo, _ := testutil.CreateNLVAndFinRepoForTest(t)
 
@@ -100,9 +100,9 @@ func setup(t *testing.T, config *setupInput) *setupOutput {
 		if i != 0 {
 			srcSnapID = &snapIDs[i-1]
 		}
-		backupInput := testutil.NewBackupInput(k8sRepo, volumeInfo, snapshot.ID, srcSnapID, config.maxPartSize)
+		backupInput := testutil.NewBackupInput(k8sClient, volumeInfo, snapshot.ID, srcSnapID, config.maxPartSize)
 		backupInput.Repo = finRepo
-		backupInput.KubernetesRepo = k8sRepo
+		backupInput.K8sClient = k8sClient
 		backupInput.RBDRepo = rbdRepo
 		backupInput.NodeLocalVolumeRepo = nlvRepo
 

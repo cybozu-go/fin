@@ -1,6 +1,7 @@
 package backup
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +11,8 @@ import (
 	"github.com/cybozu-go/fin/internal/job"
 	"github.com/cybozu-go/fin/internal/job/input"
 	"github.com/cybozu-go/fin/internal/model"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
 )
 
 const (
@@ -19,7 +22,7 @@ const (
 
 type Backup struct {
 	repo                      model.FinRepository
-	kubernetesRepo            model.KubernetesRepository
+	k8sClient                 kubernetes.Interface
 	rbdRepo                   model.RBDRepository
 	nodeLocalVolumeRepo       model.NodeLocalVolumeRepository
 	actionUID                 string
@@ -36,7 +39,7 @@ type Backup struct {
 func NewBackup(in *input.Backup) *Backup {
 	return &Backup{
 		repo:                      in.Repo,
-		kubernetesRepo:            in.KubernetesRepo,
+		k8sClient:                 in.K8sClient,
 		rbdRepo:                   in.RBDRepo,
 		nodeLocalVolumeRepo:       in.NodeLocalVolumeRepo,
 		actionUID:                 in.ActionUID,
@@ -163,7 +166,10 @@ func (b *Backup) prepareFullBackup() error {
 		return fmt.Errorf("failed to get backup metadata: %w", err)
 	}
 
-	targetPVC, err := b.kubernetesRepo.GetPVC(b.targetPVCName, b.targetPVCNamespace)
+	ctx := context.Background()
+	targetPVC, err := b.k8sClient.CoreV1().
+		PersistentVolumeClaims(b.targetPVCNamespace).
+		Get(ctx, b.targetPVCName, metav1.GetOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to get target PVC: %w", err)
 	}
@@ -171,7 +177,7 @@ func (b *Backup) prepareFullBackup() error {
 		return fmt.Errorf("target PVC UID (%s) does not match the expected one (%s)", targetPVC.GetUID(), b.targetPVCUID)
 	}
 
-	targetPV, err := b.kubernetesRepo.GetPV(targetPVC.Spec.VolumeName)
+	targetPV, err := b.k8sClient.CoreV1().PersistentVolumes().Get(ctx, targetPVC.Spec.VolumeName, metav1.GetOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to get target PV: %w", err)
 	}

@@ -51,18 +51,6 @@ type FinRepository interface {
 	DeleteBackupMetadata() error
 }
 
-type KubernetesRepository interface {
-	// GetPVC retrieves the PVC with the given name and namespace.
-	// It returns a non-nil pointer to the PVC if it is found.
-	// If the PVC is not found, it returns an error.
-	GetPVC(name, namespace string) (*corev1.PersistentVolumeClaim, error)
-
-	// GetPV retrieves the PV with the given name.
-	// It returns a non-nil pointer to the PV if it is found.
-	// If the PV is not found, it returns an error.
-	GetPV(name string) (*corev1.PersistentVolume, error)
-}
-
 // Copied from the following source code.
 // ref. https://github.com/cybozu-go/mantle/blob/4728f019f9400c297b361a410efbc66c480db8e2/internal/ceph/ceph.go#L19-L39
 type RBDTimeStamp struct {
