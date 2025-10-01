@@ -1,96 +1,93 @@
 package v1
 
 import (
-	"context"
-
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"k8s.io/utils/ptr"
 
 	finv1 "github.com/cybozu-go/fin/api/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
-	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"k8s.io/utils/ptr"
 )
 
-var _ = Describe("FinBackup validation webhook", func() {
+var _ = Describe("FinBackup Webhook", func() {
 	var (
-		validator *FinBackupCustomValidator
-		ctx       context.Context
-		k8sClient client.Client
+		namespace *corev1.Namespace
 	)
 
-	BeforeEach(func() {
-		ctx = context.TODO()
-		scheme := runtime.NewScheme()
-		Expect(finv1.AddToScheme(scheme)).To(Succeed())
+	BeforeEach(func(ctx SpecContext) {
+		// Create a unique namespace for each test to avoid conflicts
+		namespace = &corev1.Namespace{
+			ObjectMeta: metav1.ObjectMeta{
+				GenerateName: "webhook-test-",
+			},
+		}
+		Expect(k8sClient.Create(ctx, namespace)).To(Succeed())
+	})
 
-		k8sClient = fake.NewClientBuilder().
-			WithScheme(scheme).
-			Build()
-
-		validator = &FinBackupCustomValidator{
-			client:    k8sClient,
-			apiReader: k8sClient,
+	AfterEach(func(ctx SpecContext) {
+		// Clean up the namespace and all resources in it
+		if namespace != nil {
+			Expect(k8sClient.Delete(ctx, namespace)).To(Succeed())
 		}
 	})
 
 	Describe("ValidateDelete", func() {
 		Context("full vs incremental deletion validation", func() {
-			It("should allow deletion of the full backup", func() {
-				// Create the full backup (snapID = 1)
+			It("should allow deletion of the full backup", func(ctx SpecContext) {
 				fullBackup := &finv1.FinBackup{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "full-backup",
-						Namespace: "default",
+						Namespace: namespace.Name,
 					},
 					Spec: finv1.FinBackupSpec{
 						PVC:          "test-pvc",
-						PVCNamespace: "default",
+						PVCNamespace: namespace.Name,
 						Node:         "test-node",
 					},
 					Status: finv1.FinBackupStatus{
 						SnapID: ptr.To(1),
 					},
 				}
+
+				incrementalBackup := &finv1.FinBackup{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "incremental-backup",
+						Namespace: namespace.Name,
+					},
+					Spec: finv1.FinBackupSpec{
+						PVC:          "test-pvc",
+						PVCNamespace: namespace.Name,
+						Node:         "test-node",
+					},
+					Status: finv1.FinBackupStatus{
+						SnapID: ptr.To(2),
+					},
+				}
+
+				// Create the full backup (snapID = 1)
+				Expect(k8sClient.Create(ctx, fullBackup)).To(Succeed())
+				fullBackup.Status.SnapID = ptr.To(1)
+				Expect(k8sClient.Status().Update(ctx, fullBackup)).To(Succeed())
 
 				// Create an incremental backup (snapID = 2)
-				incrementalBackup := &finv1.FinBackup{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      "incremental-backup",
-						Namespace: "default",
-					},
-					Spec: finv1.FinBackupSpec{
-						PVC:          "test-pvc",
-						PVCNamespace: "default",
-						Node:         "test-node",
-					},
-					Status: finv1.FinBackupStatus{
-						SnapID: ptr.To(2),
-					},
-				}
-
-				// Add backups to fake client
-				Expect(k8sClient.Create(ctx, fullBackup)).To(Succeed())
 				Expect(k8sClient.Create(ctx, incrementalBackup)).To(Succeed())
+				incrementalBackup.Status.SnapID = ptr.To(2)
+				Expect(k8sClient.Status().Update(ctx, incrementalBackup)).To(Succeed())
 
-				// Deletion of the full backup should be allowed
-				warnings, err := validator.ValidateDelete(ctx, fullBackup)
-				Expect(err).NotTo(HaveOccurred())
-				Expect(warnings).To(BeNil())
+				// Deleting the full backup should be allowed by the validating webhook.
+				Expect(k8sClient.Delete(ctx, fullBackup)).To(Succeed())
 			})
 
-			It("should deny deletion of the incremental backup", func() {
-				// Create the full backup
+			It("should deny deletion of the incremental backup", func(ctx SpecContext) {
 				fullBackup := &finv1.FinBackup{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "full-backup",
-						Namespace: "default",
+						Namespace: namespace.Name,
 					},
 					Spec: finv1.FinBackupSpec{
 						PVC:          "test-pvc",
-						PVCNamespace: "default",
+						PVCNamespace: namespace.Name,
 						Node:         "test-node",
 					},
 					Status: finv1.FinBackupStatus{
@@ -98,15 +95,14 @@ var _ = Describe("FinBackup validation webhook", func() {
 					},
 				}
 
-				// Create an incremental backup to be deleted
 				incrementalBackup := &finv1.FinBackup{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "incremental-backup",
-						Namespace: "default",
+						Namespace: namespace.Name,
 					},
 					Spec: finv1.FinBackupSpec{
 						PVC:          "test-pvc",
-						PVCNamespace: "default",
+						PVCNamespace: namespace.Name,
 						Node:         "test-node",
 					},
 					Status: finv1.FinBackupStatus{
@@ -114,19 +110,25 @@ var _ = Describe("FinBackup validation webhook", func() {
 					},
 				}
 
-				// Add backups to fake client
+				// Create the full backup (snapID = 1)
 				Expect(k8sClient.Create(ctx, fullBackup)).To(Succeed())
-				Expect(k8sClient.Create(ctx, incrementalBackup)).To(Succeed())
+				fullBackup.Status.SnapID = ptr.To(1)
+				Expect(k8sClient.Status().Update(ctx, fullBackup)).To(Succeed())
 
-				// Deletion of the incremental backup should be denied
-				warnings, err := validator.ValidateDelete(ctx, incrementalBackup)
+				// Create an incremental backup (snapID = 2)
+				Expect(k8sClient.Create(ctx, incrementalBackup)).To(Succeed())
+				incrementalBackup.Status.SnapID = ptr.To(2)
+				Expect(k8sClient.Status().Update(ctx, incrementalBackup)).To(Succeed())
+
+				// Deleting the incremental backup should be denied by the validating webhook.
+				err := k8sClient.Delete(ctx, incrementalBackup)
 				Expect(err).To(HaveOccurred())
 				Expect(err.Error()).To(Equal(
-					"deletion denied: FinBackup(name=incremental-backup, namespace=default) is not a full backup " +
-						"(node=test-node, pvc=default/test-pvc); deletable full backup has snapID=1",
+					"admission webhook \"vfinbackup-v1.kb.io\" denied the request: deletion denied: FinBackup(name=incremental-backup, namespace=" + namespace.Name + ") is not a full backup " +
+						"(node=test-node, pvc=" + namespace.Name + "/test-pvc); deletable full backup has snapID=1",
 				))
-				Expect(warnings).To(BeNil())
 			})
 		})
 	})
+
 })

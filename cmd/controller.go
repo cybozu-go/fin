@@ -50,14 +50,6 @@ func controllerMain(args []string) error {
 	var webhookCertPath string
 	var webhookKeyPath string
 
-	// NOTE:
-	// The validating webhook is not yet supported in the e2e test suite.
-	// To avoid requiring TLS flags and webhook resources during e2e runs,
-	// webhook registration is disabled here.
-	// Once e2e tests support the webhook, enable it by setting this to true
-	// or revert the disabling commit to restore the original behavior.
-	enableWebhook := false
-
 	fs := flag.NewFlagSet("", flag.ExitOnError)
 	fs.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "The address the metric endpoint binds to.")
 	fs.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
@@ -80,13 +72,13 @@ func controllerMain(args []string) error {
 	opts.BindFlags(fs)
 	err := fs.Parse(args)
 	if err != nil {
-		setupLog.Error(err, "unable to parse flags")
-		os.Exit(1)
+		return fmt.Errorf("unable to parse flags: %w", err)
 	}
 
+	enableWebhook := os.Getenv("ENABLE_WEBHOOKS") != "false"
 	if enableWebhook {
 		if webhookCertPath == "" || webhookKeyPath == "" {
-			return fmt.Errorf("--webhook-cert-path and --webhook-key-path must be provided when --enable-webhook is set")
+			return fmt.Errorf("--webhook-cert-path and --webhook-key-path must be provided when webhooks are enabled")
 		}
 	}
 
@@ -132,16 +124,15 @@ func controllerMain(args []string) error {
 	}
 
 	var webhookCertWatcher *certwatcher.CertWatcher
-	webhookTLSOpts := append([]func(*tls.Config){}, tlsOpts...)
 
 	if enableWebhook {
+		webhookTLSOpts := append([]func(*tls.Config){}, tlsOpts...)
 		setupLog.Info("Initializing webhook certificate watcher using provided certificates",
 			"webhook-cert-path", webhookCertPath, "webhook-key-path", webhookKeyPath)
 
 		webhookCertWatcher, err = certwatcher.New(webhookCertPath, webhookKeyPath)
 		if err != nil {
-			setupLog.Error(err, "Failed to initialize webhook certificate watcher")
-			os.Exit(1)
+			return fmt.Errorf("failed to initialize webhook certificate watcher: %w", err)
 		}
 
 		webhookTLSOpts = append(webhookTLSOpts, func(config *tls.Config) {
@@ -155,15 +146,13 @@ func controllerMain(args []string) error {
 
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), mgrOptions)
 	if err != nil {
-		setupLog.Error(err, "unable to start manager")
-		os.Exit(1)
+		return fmt.Errorf("unable to start manager: %w", err)
 	}
 
 	snapRepo := ceph.NewRBDRepository()
 	maxPartSize, err := resource.ParseQuantity(os.Getenv("MAX_PART_SIZE"))
 	if err != nil {
-		setupLog.Error(err, "failed to parse MAX_PART_SIZE environment variable")
-		os.Exit(1)
+		return fmt.Errorf("failed to parse MAX_PART_SIZE environment variable: %w", err)
 	}
 	finBackupReconciler := controller.NewFinBackupReconciler(
 		mgr.GetClient(),
@@ -175,14 +164,12 @@ func controllerMain(args []string) error {
 		rawImgExpansionUnitSize,
 	)
 	if err = finBackupReconciler.SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "FinBackup")
-		os.Exit(1)
+		return fmt.Errorf("unable to create controller FinBackup: %w", err)
 	}
 
 	rawImageChunkSize, err := resource.ParseQuantity(os.Getenv("RAW_IMAGE_CHUNK_SIZE"))
 	if err != nil {
-		setupLog.Error(err, "failed to parse RAW_IMAGE_CHUNK_SIZE environment variable")
-		os.Exit(1)
+		return fmt.Errorf("failed to parse RAW_IMAGE_CHUNK_SIZE environment variable: %w", err)
 	}
 	finRestoreReconciler := controller.NewFinRestoreReconciler(
 		mgr.GetClient(),
@@ -192,8 +179,7 @@ func controllerMain(args []string) error {
 		&rawImageChunkSize,
 	)
 	if err = finRestoreReconciler.SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "FinRestore")
-		os.Exit(1)
+		return fmt.Errorf("unable to create controller FinRestore: %w", err)
 	}
 
 	finBackupConfigReconciler := controller.NewFinBackupConfigReconciler(
@@ -201,41 +187,32 @@ func controllerMain(args []string) error {
 		mgr.GetScheme(),
 	)
 	if err := finBackupConfigReconciler.SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "FinBackupConfig")
-		os.Exit(1)
+		return fmt.Errorf("unable to create controller FinBackupConfig: %w", err)
 	}
 
-	//+kubebuilder:scaffold:builder
-
 	if enableWebhook {
-		if err := webhookv1.SetupFinBackupDeletionWebhookWithManager(mgr); err != nil {
-			setupLog.Error(err, "unable to setup FinBackup webhook")
-			os.Exit(1)
+		if err := webhookv1.SetupFinBackupWebhookWithManager(mgr); err != nil {
+			return fmt.Errorf("unable to create webhook FinBackup: %w", err)
 		}
 		setupLog.Info("FinBackup validating webhook enabled")
 
-		if webhookCertWatcher != nil {
-			setupLog.Info("Adding webhook certificate watcher to manager")
-			if err := mgr.Add(webhookCertWatcher); err != nil {
-				setupLog.Error(err, "unable to add webhook certificate watcher to manager")
-				os.Exit(1)
-			}
+		setupLog.Info("Adding webhook certificate watcher to manager")
+		if err := mgr.Add(webhookCertWatcher); err != nil {
+			return fmt.Errorf("unable to add webhook certificate watcher to manager: %w", err)
 		}
 	}
+	//+kubebuilder:scaffold:builder
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
-		setupLog.Error(err, "unable to set up health check")
-		os.Exit(1)
+		return fmt.Errorf("unable to set up health check: %w", err)
 	}
 	if err := mgr.AddReadyzCheck("readyz", healthz.Ping); err != nil {
-		setupLog.Error(err, "unable to set up ready check")
-		os.Exit(1)
+		return fmt.Errorf("unable to set up ready check: %w", err)
 	}
 
 	setupLog.Info("starting manager")
 	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
-		setupLog.Error(err, "problem running manager")
-		os.Exit(1)
+		return fmt.Errorf("problem running manager: %w", err)
 	}
 
 	return nil

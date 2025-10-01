@@ -10,15 +10,17 @@ webhooks:
     service:
       name: webhook-service
       namespace: system
-      path: /validate-fin-cybozu-io-v1-finbackupdeletion
+      path: /validate-fin-cybozu-io-v1-finbackup
   failurePolicy: Fail
-  name: finbackupdeletion.fin.cybozu.io
+  name: vfinbackup-v1.kb.io
   rules:
   - apiGroups:
     - fin.cybozu.io
     apiVersions:
     - v1
     operations:
+    - CREATE
+    - UPDATE
     - DELETE
     resources:
     - finbackups
