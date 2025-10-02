@@ -6,6 +6,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 
@@ -15,10 +16,11 @@ import (
 )
 
 const (
-	pvcFilePath   = "pvc.yaml"
-	pvFilePath    = "pv.yaml"
-	imageFilePath = "raw.img"
-	VolumePath    = "/volume"
+	pvcFilePath                = "pvc.yaml"
+	pvFilePath                 = "pv.yaml"
+	imageFilePath              = "raw.img"
+	instantVerifyImageFilePath = "instant_verify.img"
+	VolumePath                 = "/volume"
 )
 
 type NodeLocalVolumeRepository struct {
@@ -62,7 +64,11 @@ func (r *NodeLocalVolumeRepository) GetDiffPartPath(snapshotID, partIndex int) s
 }
 
 func (r *NodeLocalVolumeRepository) GetRawImagePath() string {
-	return filepath.Join(r.root.Name(), "raw.img")
+	return filepath.Join(r.root.Name(), imageFilePath)
+}
+
+func (r *NodeLocalVolumeRepository) GetInstantVerifyImagePath() string {
+	return filepath.Join(r.root.Name(), instantVerifyImageFilePath)
 }
 
 func (r *NodeLocalVolumeRepository) GetDBPath() string {
@@ -201,6 +207,17 @@ func (r *NodeLocalVolumeRepository) RemoveRawImage() error {
 	return nil
 }
 
+func (r *NodeLocalVolumeRepository) RemoveInstantVerifyImage() error {
+	if err := r.root.Remove(instantVerifyImageFilePath); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("failed to remove file %s: %w", instantVerifyImageFilePath, err)
+	}
+
+	return nil
+}
+
 // RemoveOngoingFullBackupFiles removes all files corresponding to ongoing full backup.
 // This method returns nil if all files does not exist.
 func (r *NodeLocalVolumeRepository) RemoveOngoingFullBackupFiles(snapID int) error {
@@ -218,5 +235,19 @@ func (r *NodeLocalVolumeRepository) RemoveOngoingFullBackupFiles(snapID int) err
 		return fmt.Errorf("failed to remove the pv file: %w", err)
 	}
 
+	return nil
+}
+
+func (r *NodeLocalVolumeRepository) ReflinkRawImageToInstantVerifyImage() error {
+	cmd := exec.Command(
+		"cp",
+		"--reflink=always",
+		r.GetRawImagePath(),
+		r.GetInstantVerifyImagePath(),
+	)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to reflink: %w: %s", err, output)
+	}
 	return nil
 }

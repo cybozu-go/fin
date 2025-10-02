@@ -11,16 +11,18 @@ import (
 type ActionKind string
 
 const (
-	Backup   ActionKind = "Backup"
-	Restore  ActionKind = "Restore"
-	Deletion ActionKind = "Deletion"
-	Cleanup  ActionKind = "Cleanup"
+	Backup       ActionKind = "Backup"
+	Restore      ActionKind = "Restore"
+	Deletion     ActionKind = "Deletion"
+	Cleanup      ActionKind = "Cleanup"
+	Verification ActionKind = "Verification"
 )
 
 var (
 	ErrBusy          = errors.New("repository is busy")
 	ErrAlreadyExists = errors.New("already exists")
 	ErrNotFound      = errors.New("not found")
+	ErrFsckFailed    = errors.New("fsck failed")
 )
 
 type FinRepository interface {
@@ -130,6 +132,9 @@ type NodeLocalVolumeRepository interface {
 	// GetRawImagePath returns the path of raw.img
 	GetRawImagePath() string
 
+	// GetInstantVerifyImagePath returns the path of instant_verify.img
+	GetInstantVerifyImagePath() string
+
 	// PutPVC puts PVC's manifest into this repository.
 	PutPVC(pvc *corev1.PersistentVolumeClaim) error
 
@@ -158,7 +163,14 @@ type NodeLocalVolumeRepository interface {
 	// RemoveRawImage removes the raw image file.
 	RemoveRawImage() error
 
+	// RemoveInstantVerifyImage removes the instant verify image file. If the
+	// file does not exist, it does nothing and returns nil.
+	RemoveInstantVerifyImage() error
+
 	// RemoveOngoingFullBackupFiles remove all files corresponding
 	// to the ongoing full backup.
 	RemoveOngoingFullBackupFiles(snapID int) error
+
+	// Copy raw image file to instant verify image file using reflink.
+	ReflinkRawImageToInstantVerifyImage() error
 }
