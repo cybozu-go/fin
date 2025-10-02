@@ -56,7 +56,7 @@ func backupTestSuite() {
 	//   Create FinBackup, referring the PVC.
 	//
 	// Assert:
-	//   - FinBackup.conditions["ReadyToUse"] is true.
+	//   - FinBackup.conditions["SyncedToNode"] is true.
 	//   - the head of the raw.img in the PVC's directory is filled
 	//     with the same data as the head of the PVC.
 	It("should create full backup", func(ctx SpecContext) {
@@ -70,7 +70,7 @@ func backupTestSuite() {
 		Expect(err).NotTo(HaveOccurred())
 		err = CreateFinBackup(ctx, ctrlClient, finbackup)
 		Expect(err).NotTo(HaveOccurred())
-		err = WaitForFinBackupReady(ctx, ctrlClient, rookNamespace, finbackup.GetName(), 1*time.Minute)
+		err = WaitForFinBackupSyncedToNode(ctx, ctrlClient, rookNamespace, finbackup.GetName(), 1*time.Minute)
 		Expect(err).NotTo(HaveOccurred())
 
 		By("verifying the data in raw.img")

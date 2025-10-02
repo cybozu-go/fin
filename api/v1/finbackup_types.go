@@ -51,7 +51,7 @@ type FinBackupStatus struct {
 }
 
 const (
-	BackupConditionReadyToUse = "ReadyToUse"
+	BackupConditionSyncedToNode = "SyncedToNode"
 )
 
 //+kubebuilder:object:root=true
@@ -77,8 +77,8 @@ type FinBackupList struct {
 	Items           []FinBackup `json:"items"`
 }
 
-func (fb *FinBackup) IsReady() bool {
-	return meta.IsStatusConditionTrue(fb.Status.Conditions, BackupConditionReadyToUse)
+func (fb *FinBackup) IsSyncedToNode() bool {
+	return meta.IsStatusConditionTrue(fb.Status.Conditions, BackupConditionSyncedToNode)
 }
 
 func init() {
