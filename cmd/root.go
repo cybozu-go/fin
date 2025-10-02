@@ -1,9 +1,11 @@
 package cmd
 
 import (
+	"errors"
 	"log/slog"
 	"os"
 
+	"github.com/cybozu-go/fin/internal/job/verification"
 	"github.com/spf13/cobra"
 )
 
@@ -19,6 +21,9 @@ func Execute() {
 	err := rootCmd.Execute()
 	if err != nil {
 		slog.Error("Error executing command", "error", err)
+		if errors.Is(err, verification.ErrFsckFailed) {
+			os.Exit(2)
+		}
 		os.Exit(1)
 	}
 }
