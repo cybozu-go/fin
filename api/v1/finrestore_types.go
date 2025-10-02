@@ -65,7 +65,7 @@ type FinRestoreList struct {
 }
 
 func (fr *FinRestore) IsReady() bool {
-	return meta.IsStatusConditionTrue(fr.Status.Conditions, BackupConditionReadyToUse)
+	return meta.IsStatusConditionTrue(fr.Status.Conditions, RestoreConditionReadyToUse)
 }
 
 func init() {
