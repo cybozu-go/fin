@@ -98,7 +98,7 @@ func NewPVCAndPV(
 	}
 	return pvc, pv
 }
-func MakeFinBackupSyncedToNode(ctx context.Context, finbackup *finv1.FinBackup) {
+func MakeFinBackupStoredToNode(ctx context.Context, finbackup *finv1.FinBackup) {
 	GinkgoHelper()
 	Eventually(func(g Gomega) {
 		key := types.NamespacedName{Name: backupJobName(finbackup), Namespace: namespace}
@@ -113,7 +113,7 @@ func MakeFinBackupSyncedToNode(ctx context.Context, finbackup *finv1.FinBackup) 
 		var createdFinBackup finv1.FinBackup
 		err := k8sClient.Get(ctx, client.ObjectKeyFromObject(finbackup), &createdFinBackup)
 		g.Expect(err).ShouldNot(HaveOccurred())
-		g.Expect(createdFinBackup.IsSyncedToNode()).Should(BeTrue(), "FinBackup should be ready")
+		g.Expect(createdFinBackup.IsStoredToNode()).Should(BeTrue(), "FinBackup should be ready")
 	}, "5s", "1s").Should(Succeed())
 }
 

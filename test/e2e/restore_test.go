@@ -77,7 +77,7 @@ func restoreTestSuite() {
 		Expect(err).NotTo(HaveOccurred())
 		err = CreateFinBackup(ctx, ctrlClient, finbackup)
 		Expect(err).NotTo(HaveOccurred())
-		err = WaitForFinBackupSyncedToNode(ctx, ctrlClient, finbackupNamespace, finbackup.Name, 2*time.Minute)
+		err = WaitForFinBackupStoredToNode(ctx, ctrlClient, finbackupNamespace, finbackup.Name, 2*time.Minute)
 		Expect(err).NotTo(HaveOccurred())
 
 		// Act

@@ -107,12 +107,12 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 			By("creating a full FinBackup")
 			finbackup1 = NewFinBackup(namespace, "fb1-sample", pvc1.Name, pvc1.Namespace, "test-node")
 			Expect(k8sClient.Create(ctx, finbackup1)).Should(Succeed())
-			MakeFinBackupSyncedToNode(ctx, finbackup1)
+			MakeFinBackupStoredToNode(ctx, finbackup1)
 
 			By("creating a incremental FinBackup")
 			finbackup2 = NewFinBackup(namespace, "fb2-sample", pvc1.Name, pvc1.Namespace, "test-node")
 			Expect(k8sClient.Create(ctx, finbackup2)).Should(Succeed())
-			MakeFinBackupSyncedToNode(ctx, finbackup2)
+			MakeFinBackupStoredToNode(ctx, finbackup2)
 
 			By("deleting the full FinBackup")
 			Expect(k8sClient.Delete(ctx, finbackup1)).Should(Succeed())
@@ -153,19 +153,19 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 
 	// CSATEST-1542
 	// Description:
-	//   FinBackup becomes SyncedToNode when a backup-target PVC is recreated.
+	//   FinBackup becomes StoredToNode when a backup-target PVC is recreated.
 	//
 	// Arrange:
 	//   - Create a backup-target PVC.
-	//   - Create a FinBackup and make it SyncedToNode.
+	//   - Create a FinBackup and make it StoredToNode.
 	//   - Recreate the backup-target PVC.
 	//
 	// Act:
 	//   - Create a new FinBackup.
 	//
 	// Assert:
-	//   - The new FinBackup becomes SyncedToNode.
-	Describe("FinBackup becomes SyncedToNode when a backup-target PVC is recreated", func() {
+	//   - The new FinBackup becomes StoredToNode.
+	Describe("FinBackup becomes StoredToNode when a backup-target PVC is recreated", func() {
 		var pvc1 *corev1.PersistentVolumeClaim
 		var pv1 *corev1.PersistentVolume
 		var finbackup1 *finv1.FinBackup
@@ -179,7 +179,7 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 			By("creating a full FinBackup")
 			finbackup1 = NewFinBackup(namespace, "fb1-1542", pvc1.Name, pvc1.Namespace, "test-node")
 			Expect(k8sClient.Create(ctx, finbackup1)).Should(Succeed())
-			MakeFinBackupSyncedToNode(ctx, finbackup1)
+			MakeFinBackupStoredToNode(ctx, finbackup1)
 
 			By("recreating the backup-target PVC")
 			DeletePVCAndPV(ctx, pvc1.Namespace, pvc1.Name)
@@ -201,9 +201,9 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 			DeletePVCAndPV(ctx, pvc1.Namespace, pvc1.Name)
 		})
 
-		It("should make the new FinBackup SyncedToNode", func(ctx SpecContext) {
+		It("should make the new FinBackup StoredToNode", func(ctx SpecContext) {
 			By("waiting for the FinBackup to be ready")
-			MakeFinBackupSyncedToNode(ctx, finbackup2)
+			MakeFinBackupStoredToNode(ctx, finbackup2)
 		})
 	})
 
@@ -214,7 +214,7 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 	//
 	// Arrange:
 	//   - An RBD PVC exists.
-	//   - A FinBackup as a full backup exists and is SyncedToNode.
+	//   - A FinBackup as a full backup exists and is StoredToNode.
 	//
 	// Act:
 	//   - Create a FinBackup (FB2) as an incremental backup.
@@ -235,12 +235,12 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 			By("creating a full FinBackup")
 			finbackup1 = NewFinBackup(namespace, "fb1-1621", pvc1.Name, pvc1.Namespace, "test-node")
 			Expect(k8sClient.Create(ctx, finbackup1)).Should(Succeed())
-			MakeFinBackupSyncedToNode(ctx, finbackup1)
+			MakeFinBackupStoredToNode(ctx, finbackup1)
 
 			By("creating an incremental FinBackup")
 			finbackup2 = NewFinBackup(namespace, "fb2-1621", pvc1.Name, pvc1.Namespace, "test-node")
 			Expect(k8sClient.Create(ctx, finbackup2)).Should(Succeed())
-			MakeFinBackupSyncedToNode(ctx, finbackup2)
+			MakeFinBackupStoredToNode(ctx, finbackup2)
 		})
 
 		AfterEach(func(ctx SpecContext) {
@@ -347,10 +347,10 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 			Expect(k8sClient.Create(ctx, pvc)).Should(Succeed())
 			Expect(k8sClient.Create(ctx, pv)).Should(Succeed())
 
-			By("creating FinBackup as a full backup and waiting until it becomes SyncedToNode")
+			By("creating FinBackup as a full backup and waiting until it becomes StoredToNode")
 			finbackup = NewFinBackup(namespace, "fb1-1506", pvc.Name, pvc.Namespace, "test-node")
 			Expect(k8sClient.Create(ctx, finbackup)).Should(Succeed())
-			MakeFinBackupSyncedToNode(ctx, finbackup)
+			MakeFinBackupStoredToNode(ctx, finbackup)
 
 			By("creating two FinBackups and ordering them by SnapID")
 			fb2 := NewFinBackup(namespace, "fb2-1506", pvc.Name, pvc.Namespace, "test-node")
@@ -783,7 +783,7 @@ func Test_snapIDPreconditionSatisfied(t *testing.T) {
 		if ready {
 			fb.Status.Conditions = []metav1.Condition{
 				{
-					Type:   finv1.BackupConditionSyncedToNode,
+					Type:   finv1.BackupConditionStoredToNode,
 					Status: metav1.ConditionTrue,
 				},
 			}
