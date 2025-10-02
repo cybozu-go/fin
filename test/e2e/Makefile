@@ -14,7 +14,7 @@ NODE_NAME := minikube-worker
 LOOP_FILE := loop.img
 LOOP_DEV := /dev/loop0
 POLLING_INTERVAL := 2
-TIMEOUT_SECS := 300
+TIMEOUT_SECS := 600
 
 export MINIKUBE_HOME
 
