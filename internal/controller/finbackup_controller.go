@@ -136,7 +136,7 @@ func (r *FinBackupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return r.reconcileDelete(ctx, &backup)
 	}
 
-	if backup.IsSyncedToNode() {
+	if backup.IsStoredToNode() {
 		return ctrl.Result{}, nil
 	}
 
@@ -224,7 +224,7 @@ func (r *FinBackupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 	updatedBackup := backup.DeepCopy()
 	meta.SetStatusCondition(&updatedBackup.Status.Conditions, metav1.Condition{
-		Type:    finv1.BackupConditionSyncedToNode,
+		Type:    finv1.BackupConditionStoredToNode,
 		Status:  metav1.ConditionTrue,
 		Reason:  "BackupCompleted",
 		Message: "Backup completed successfully",
@@ -507,8 +507,8 @@ func snapIDPreconditionSatisfied(backup *finv1.FinBackup, otherFinBackups []finv
 		if snapID > targetSnapID {
 			continue
 		}
-		if !fb.IsSyncedToNode() && fb.DeletionTimestamp.IsZero() {
-			return fmt.Errorf("found FinBackup not yet synced to node: %s/%d", fb.Name, snapID)
+		if !fb.IsStoredToNode() && fb.DeletionTimestamp.IsZero() {
+			return fmt.Errorf("found FinBackup not yet stored to node: %s/%d", fb.Name, snapID)
 		}
 		smallerIDs++
 		if smallerIDs >= 2 {

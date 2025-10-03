@@ -23,14 +23,14 @@ import (
 //  1. An RBD PVC is created on the Ceph cluster.
 //  2. Random data is written to the RBD PVC.
 //  3. A FinBackup1 that references the PVC
-//     and has the "SyncedToNode" condition set to "True" is created.
+//     and has the "StoredToNode" condition set to "True" is created.
 //  4. New random data is written to the RBD PVC.
 //
 // Act:
 //   - Create FinBackup2 for the incremental backup.
 //
 // Assert:
-//   - The FinBackup2's condition "SyncedToNode" becomes "True".
+//   - The FinBackup2's condition "StoredToNode" becomes "True".
 //   - On the Fin node for the FinBackup2, the backup directory has:
 //     1. raw.img with the data from step 2.
 //     2. A diff file under the diff directory for the incremental backup.
@@ -77,7 +77,7 @@ func incrementalBackupTestSuite() {
 		finbackup1, err = GetFinBackup(rookNamespace, "fb-incremental-1", pvcNamespace, pvc.Name, "minikube-worker")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(CreateFinBackup(ctx, ctrlClient, finbackup1)).NotTo(HaveOccurred())
-		Expect(WaitForFinBackupSyncedToNode(ctx, ctrlClient, rookNamespace, finbackup1.Name, 1*time.Minute)).
+		Expect(WaitForFinBackupStoredToNode(ctx, ctrlClient, rookNamespace, finbackup1.Name, 1*time.Minute)).
 			NotTo(HaveOccurred())
 
 		By("verifying the data in raw.img from the full backup")
@@ -114,7 +114,7 @@ func incrementalBackupTestSuite() {
 		finbackup2, err := GetFinBackup(rookNamespace, "fb-incremental-2", pvcNamespace, pvc.Name, "minikube-worker")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(CreateFinBackup(ctx, ctrlClient, finbackup2)).NotTo(HaveOccurred())
-		Expect(WaitForFinBackupSyncedToNode(ctx, ctrlClient, rookNamespace, finbackup2.Name, 1*time.Minute)).
+		Expect(WaitForFinBackupStoredToNode(ctx, ctrlClient, rookNamespace, finbackup2.Name, 1*time.Minute)).
 			NotTo(HaveOccurred())
 
 		By("verifying the data in raw.img as full backup")
