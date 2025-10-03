@@ -158,7 +158,7 @@ func applyDiffToRawImage(
 		}
 		defer func() { _ = rawImgFile.Close() }()
 		if err := unix.Fallocate(int(rawImgFile.Fd()), 0, 0, int64(expansionUnitSize)); err != nil {
-			return fmt.Errorf("failed to fallocate: %s: %w", rawImageFilePath, err)
+			return fmt.Errorf("failed to fallocate: %s: %d: %w", rawImageFilePath, expansionUnitSize, err)
 		}
 	} else if err != nil {
 		return fmt.Errorf("failed to stat raw image file: %w", err)
@@ -233,7 +233,7 @@ func applyDiffDataRecords(
 			if !isDstBlockDevice && offset+length > uint64(fileSize) {
 				fileSize = int64(math.Ceil(float64(offset+length)/float64(expansionUnitSize)) * float64(expansionUnitSize))
 				if err := unix.Fallocate(int(dstFile.Fd()), 0, 0, fileSize); err != nil {
-					return fmt.Errorf("failed to fallocate: %s: %w", dstFilePath, err)
+					return fmt.Errorf("failed to fallocate: %s: %d: %w", dstFilePath, fileSize, err)
 				}
 			}
 
