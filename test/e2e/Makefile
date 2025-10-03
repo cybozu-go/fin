@@ -132,12 +132,19 @@ image-tar-load:
 	$(MINIKUBE) ssh -- docker images || true
 	rm ../../${IMG_TAR} || true
 
+
+
 .PHONY: setup-components
 setup-components:
 	$(MAKE) -C ../.. install
 	$(MAKE) -C ../.. deploy
+	# Disable webhooks for e2e tests
+	$(KUBECTL) -n $(NS) set env deployment/fin-controller-manager ENABLE_WEBHOOKS=false
+	$(KUBECTL) -n $(NS) rollout status deploy/fin-controller-manager --timeout=60s || true
+	$(KUBECTL) -n $(NS) wait --for=condition=Ready pod -l control-plane=controller-manager --timeout=60s || true
+	echo "---- fin-controller-manager logs (tail 200) ----"
+	$(KUBECTL) -n $(NS) logs -l control-plane=controller-manager -c manager --tail=200 || true
 	$(KUBECTL) patch deploy -n $(NS) fin-controller-manager --type='json' -p='[{"op": "add", "path": "/spec/template/spec/containers/0/args/-", "value":"--raw-img-expansion-unit-size=10485760"}]'
-
 
 .PHONY: do-test
 do-test: $(GINKGO) $(KUBECTL) $(MINIKUBE)

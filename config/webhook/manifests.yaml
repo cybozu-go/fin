@@ -1,0 +1,27 @@
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: validating-webhook-configuration
+webhooks:
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
+      path: /validate-fin-cybozu-io-v1-finbackup
+  failurePolicy: Fail
+  name: vfinbackup-v1.kb.io
+  rules:
+  - apiGroups:
+    - fin.cybozu.io
+    apiVersions:
+    - v1
+    operations:
+    - CREATE
+    - UPDATE
+    - DELETE
+    resources:
+    - finbackups
+  sideEffects: None

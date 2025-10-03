@@ -29,6 +29,12 @@ linters:
       - linters:
           - lll
         path: "test/e2e/util.go"
+      - linters:
+          - lll
+        path: "cmd/controller.go"
+      - linters:
+          - lll
+        path: "internal/webhook/.*"
 formatters:
   enable:
     - gofmt
