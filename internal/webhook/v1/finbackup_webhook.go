@@ -77,8 +77,6 @@ func (v *FinBackupCustomValidator) ValidateDelete(ctx context.Context, obj runti
 
 	// Retrieve the list of FinBackups with the same target.Spec.Node and targetPVCName.
 	// Deny deletion if any FinBackup has a snapID smaller than target.SnapID.
-	var list finv1.FinBackupList
-
 	targetPVCName := target.Spec.PVC
 	targetPVCNamespace := target.Spec.PVCNamespace
 	targetResourceName := fmt.Sprintf("FinBackup(name=%s, namespace=%s)", target.Name, target.Namespace)
@@ -94,7 +92,13 @@ func (v *FinBackupCustomValidator) ValidateDelete(ctx context.Context, obj runti
 		return nil, fmt.Errorf("deletion denied: %s has no valid snapID", targetResourceName)
 	}
 
-	// Use apiReader to retrieve the most up-to-date information
+	// Here we use apiReader instead of the cached client.
+	// The reason is to ensure that this FinBackup is truly the oldest one.
+	// Since apiReader sends requests directly to the API server,
+	// there is a risk of hitting the API server’s rate limit.
+	// However, such issues can usually be resolved by retries.
+	// Therefore, we intentionally use apiReader here with this risk in mind.
+	var list finv1.FinBackupList
 	if err := v.apiReader.List(ctx, &list, client.InNamespace(target.Namespace)); err != nil {
 		logger.Error(err, "failed to list FinBackups")
 		return nil, err
@@ -102,7 +106,6 @@ func (v *FinBackupCustomValidator) ValidateDelete(ctx context.Context, obj runti
 
 	relatedBackups := make([]finv1.FinBackup, 0, len(list.Items))
 	for _, b := range list.Items {
-
 		if b.Spec.Node != target.Spec.Node ||
 			b.Spec.PVC != targetPVCName ||
 			b.Spec.PVCNamespace != targetPVCNamespace {

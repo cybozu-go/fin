@@ -75,14 +75,16 @@ func controllerMain(args []string) error {
 		return fmt.Errorf("unable to parse flags: %w", err)
 	}
 
+	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
+	//+kubebuilder:scaffold:builder
+
 	enableWebhook := os.Getenv("ENABLE_WEBHOOKS") != "false"
+	setupLog.Info("ENABLE_WEBHOOKS evaluated", "env", os.Getenv("ENABLE_WEBHOOKS"), "enabled", enableWebhook)
 	if enableWebhook {
 		if webhookCertPath == "" || webhookKeyPath == "" {
 			return fmt.Errorf("--webhook-cert-path and --webhook-key-path must be provided when webhooks are enabled")
 		}
 	}
-
-	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
 
 	// if the enable-http2 flag is false (the default), http/2 should be disabled
 	// due to its vulnerabilities. More specifically, disabling http/2 will
@@ -201,7 +203,6 @@ func controllerMain(args []string) error {
 			return fmt.Errorf("unable to add webhook certificate watcher to manager: %w", err)
 		}
 	}
-	//+kubebuilder:scaffold:builder
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
 		return fmt.Errorf("unable to set up health check: %w", err)
