@@ -25,6 +25,10 @@ type FinRestoreSpec struct {
 	// 'pvcNamespace' specifies restore target PVC's namespace
 	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="pvcNamespace is immutable"
 	PVCNamespace string `json:"pvcNamespace"`
+
+	// 'allowUnverified' specifies whether to allow restore from an unverified backup
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="allowUnverified is immutable"
+	AllowUnverified bool `json:"allowUnverified,omitempty"`
 }
 
 // FinRestoreStatus defines the observed state of FinRestore
