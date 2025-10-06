@@ -77,7 +77,7 @@ func incrementalBackupTestSuite() {
 		finbackup1, err = GetFinBackup(rookNamespace, "fb-incremental-1", pvcNamespace, pvc.Name, "minikube-worker")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(CreateFinBackup(ctx, ctrlClient, finbackup1)).NotTo(HaveOccurred())
-		Expect(WaitForFinBackupStoredToNode(ctx, ctrlClient, rookNamespace, finbackup1.Name, 1*time.Minute)).
+		Expect(WaitForFinBackupStoredToNodeAndVerified(ctx, ctrlClient, rookNamespace, finbackup1.Name, 1*time.Minute)).
 			NotTo(HaveOccurred())
 
 		By("verifying the data in raw.img from the full backup")
@@ -114,7 +114,7 @@ func incrementalBackupTestSuite() {
 		finbackup2, err := GetFinBackup(rookNamespace, "fb-incremental-2", pvcNamespace, pvc.Name, "minikube-worker")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(CreateFinBackup(ctx, ctrlClient, finbackup2)).NotTo(HaveOccurred())
-		Expect(WaitForFinBackupStoredToNode(ctx, ctrlClient, rookNamespace, finbackup2.Name, 1*time.Minute)).
+		Expect(WaitForFinBackupStoredToNodeAndVerified(ctx, ctrlClient, rookNamespace, finbackup2.Name, 1*time.Minute)).
 			NotTo(HaveOccurred())
 
 		By("verifying the data in raw.img as full backup")
