@@ -321,7 +321,7 @@ func DeleteFinRestore(ctx context.Context, client client.Client, namespace, name
 	return client.Delete(ctx, finrestore)
 }
 
-func WaitForFinBackupStoredToNode(ctx context.Context, client client.Client, namespace, name string, timeout time.Duration) error {
+func WaitForFinBackupStoredToNodeAndVerified(ctx context.Context, client client.Client, namespace, name string, timeout time.Duration) error {
 	return wait.PollUntilContextTimeout(ctx, time.Second, timeout, true, func(ctx context.Context) (bool, error) {
 		finbackup := &finv1.FinBackup{}
 		err := client.Get(ctx, types.NamespacedName{Namespace: namespace, Name: name}, finbackup)
@@ -329,7 +329,7 @@ func WaitForFinBackupStoredToNode(ctx context.Context, client client.Client, nam
 			return false, err
 		}
 
-		return finbackup.IsStoredToNode(), nil
+		return finbackup.IsStoredToNode() && finbackup.IsVerifiedTrue(), nil
 	})
 }
 

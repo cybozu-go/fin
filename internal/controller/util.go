@@ -10,6 +10,8 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	storagehelpers "k8s.io/component-helpers/storage/volume"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -60,22 +62,23 @@ func enqueueOnJobEvent(resourceName, resourceNamespace string) handler.MapFunc {
 	}
 }
 
-func enqueueOnJobCompletion(e event.UpdateEvent) bool {
+func enqueueOnJobCompletionOrFailure(e event.UpdateEvent) bool {
 	newJob, ok := e.ObjectNew.(*batchv1.Job)
 	if !ok {
 		return false
 	}
-	newCompleted, _ := jobCompleted(newJob)
-	if !newCompleted {
-		return false
-	}
+	newCompleted, newErr := jobCompleted(newJob)
+	newJobFinished := newErr != nil /* failed */ || newCompleted
 
 	oldJob, ok := e.ObjectOld.(*batchv1.Job)
 	if !ok {
 		return false
 	}
-	oldCompleted, _ := jobCompleted(oldJob)
-	return !oldCompleted
+	oldCompleted, oldErr := jobCompleted(oldJob)
+	oldJobFinished := oldErr != nil /* failed */ || oldCompleted
+
+	// Enqueue when the job has just completed or failed.
+	return newJobFinished && !oldJobFinished
 }
 
 func finVolumePVCName(backup *finv1.FinBackup) string {
@@ -122,4 +125,18 @@ func checkCephCluster(
 		return false, nil
 	}
 	return true, nil
+}
+
+func patchFinBackupCondition(
+	ctx context.Context,
+	r client.Client,
+	backup *finv1.FinBackup,
+	condition metav1.Condition,
+) error {
+	updatedBackup := backup.DeepCopy()
+	meta.SetStatusCondition(&updatedBackup.Status.Conditions, condition)
+	if err := r.Status().Patch(ctx, updatedBackup, client.MergeFrom(backup)); err != nil {
+		return fmt.Errorf("failed to update FinBackup condition: %w", err)
+	}
+	return nil
 }

@@ -133,7 +133,7 @@ var _ = Describe("FinRestore Controller Reconcile Test", Ordered, func() {
 			Expect(k8sClient.Create(ctx, pv)).Should(Succeed())
 
 			By("creating FinBackup targeting the PVC")
-			finbackup = CreateFinBackupStored(ctx, k8sClient, namespace, "test-fin-backup-1560", pvc, 1, "test-node")
+			finbackup = CreateFinBackupStoredAndVerified(ctx, k8sClient, namespace, "test-fin-backup-1560", pvc, 1, "test-node")
 
 			By("Creating a FinRestore with a PVC of a different name and namespace.")
 			finrestore = NewFinRestore(namespace, "test-restore-1560", finbackup.Name, "restore-pvc", otherNamespace.Name)
@@ -187,7 +187,7 @@ var _ = Describe("FinRestore Controller Reconcile Test", Ordered, func() {
 			Expect(k8sClient.Create(ctx, pv)).Should(Succeed())
 
 			By("creating FinBackup targeting the PVC")
-			finbackup = CreateFinBackupStored(ctx, k8sClient, namespace, "test-fin-backup-1623", pvc, 1, "test-node")
+			finbackup = CreateFinBackupStoredAndVerified(ctx, k8sClient, namespace, "test-fin-backup-1623", pvc, 1, "test-node")
 
 			By("creating FinRestore without specifying PVC name and namespace")
 			finrestore = NewFinRestore(namespace, "test-restore-1623", finbackup.Name, "", "")
@@ -331,7 +331,7 @@ var _ = Describe("FinRestore Controller Reconcile Test", Ordered, func() {
 			Expect(k8sClient.Create(ctx, pv2)).Should(Succeed())
 
 			By("creating FinBackup targeting the PVC1")
-			finbackup = CreateFinBackupStored(ctx, k8sClient, namespace, "test-fin-backup-1558", pvc1, 1, "test-node")
+			finbackup = CreateFinBackupStoredAndVerified(ctx, k8sClient, namespace, "test-fin-backup-1558", pvc1, 1, "test-node")
 
 			By("creating FinRestore targeting the FinBackup with conflicting PVC name")
 			finrestore = NewFinRestore(namespace, "test-restore-1558-1", finbackup.Name, pvc2.Name, pvc2.Namespace)
