@@ -3,7 +3,9 @@ package cmd
 import (
 	"crypto/tls"
 	"flag"
+	"fmt"
 	"os"
+	"slices"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
@@ -14,6 +16,7 @@ import (
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/certwatcher"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
@@ -22,6 +25,7 @@ import (
 	finv1 "github.com/cybozu-go/fin/api/v1"
 	"github.com/cybozu-go/fin/internal/controller"
 	"github.com/cybozu-go/fin/internal/infrastructure/ceph"
+	webhookv1 "github.com/cybozu-go/fin/internal/webhook/v1"
 	//+kubebuilder:scaffold:imports
 )
 
@@ -37,13 +41,15 @@ func init() {
 	//+kubebuilder:scaffold:scheme
 }
 
-func controllerMain(args []string) {
+func controllerMain(args []string) error {
 	var metricsAddr string
 	var enableLeaderElection bool
 	var probeAddr string
 	var secureMetrics bool
 	var enableHTTP2 bool
 	var rawImgExpansionUnitSize uint64
+	var webhookCertPath string
+	var webhookKeyPath string
 
 	fs := flag.NewFlagSet("", flag.ExitOnError)
 	fs.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "The address the metric endpoint binds to.")
@@ -57,17 +63,28 @@ func controllerMain(args []string) {
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
 	fs.Uint64Var(&rawImgExpansionUnitSize, "raw-img-expansion-unit-size", 0,
 		"Set FIN_RAW_IMG_EXPANSION_UNIT_SIZE in backup job.")
+	fs.StringVar(&webhookCertPath, "webhook-cert-path", "",
+		"The file path of the webhook certificate file.")
+	fs.StringVar(&webhookKeyPath, "webhook-key-path", "",
+		"The file path of the webhook key file.")
 	opts := zap.Options{
 		Development: true,
 	}
 	opts.BindFlags(fs)
 	err := fs.Parse(args)
 	if err != nil {
-		setupLog.Error(err, "unable to parse flags")
-		os.Exit(1)
+		return fmt.Errorf("unable to parse flags: %w", err)
 	}
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
+
+	enableWebhook := os.Getenv("ENABLE_WEBHOOKS") != "false"
+	setupLog.Info("ENABLE_WEBHOOKS evaluated", "env", os.Getenv("ENABLE_WEBHOOKS"), "enabled", enableWebhook)
+	if enableWebhook {
+		if webhookCertPath == "" || webhookKeyPath == "" {
+			return fmt.Errorf("--webhook-cert-path and --webhook-key-path must be provided when webhooks are enabled")
+		}
+	}
 
 	// if the enable-http2 flag is false (the default), http/2 should be disabled
 	// due to its vulnerabilities. More specifically, disabling http/2 will
@@ -85,18 +102,13 @@ func controllerMain(args []string) {
 		tlsOpts = append(tlsOpts, disableHTTP2)
 	}
 
-	webhookServer := webhook.NewServer(webhook.Options{
-		TLSOpts: tlsOpts,
-	})
-
-	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
+	mgrOptions := ctrl.Options{
 		Scheme: scheme,
 		Metrics: metricsserver.Options{
 			BindAddress:   metricsAddr,
 			SecureServing: secureMetrics,
 			TLSOpts:       tlsOpts,
 		},
-		WebhookServer:          webhookServer,
 		HealthProbeBindAddress: probeAddr,
 		LeaderElection:         enableLeaderElection,
 		LeaderElectionID:       "07c0f9a3.cybozu.io",
@@ -111,17 +123,38 @@ func controllerMain(args []string) {
 		// if you are doing or is intended to do any operation such as perform cleanups
 		// after the manager stops then its usage might be unsafe.
 		// LeaderElectionReleaseOnCancel: true,
-	})
+	}
+
+	var webhookCertWatcher *certwatcher.CertWatcher
+
+	if enableWebhook {
+		webhookTLSOpts := slices.Clone(tlsOpts)
+		setupLog.Info("Initializing webhook certificate watcher using provided certificates",
+			"webhook-cert-path", webhookCertPath, "webhook-key-path", webhookKeyPath)
+
+		webhookCertWatcher, err = certwatcher.New(webhookCertPath, webhookKeyPath)
+		if err != nil {
+			return fmt.Errorf("failed to initialize webhook certificate watcher: %w", err)
+		}
+
+		webhookTLSOpts = append(webhookTLSOpts, func(config *tls.Config) {
+			config.GetCertificate = webhookCertWatcher.GetCertificate
+		})
+
+		mgrOptions.WebhookServer = webhook.NewServer(webhook.Options{
+			TLSOpts: webhookTLSOpts,
+		})
+	}
+
+	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), mgrOptions)
 	if err != nil {
-		setupLog.Error(err, "unable to start manager")
-		os.Exit(1)
+		return fmt.Errorf("unable to start manager: %w", err)
 	}
 
 	snapRepo := ceph.NewRBDRepository()
 	maxPartSize, err := resource.ParseQuantity(os.Getenv("MAX_PART_SIZE"))
 	if err != nil {
-		setupLog.Error(err, "failed to parse MAX_PART_SIZE environment variable")
-		os.Exit(1)
+		return fmt.Errorf("failed to parse MAX_PART_SIZE environment variable: %w", err)
 	}
 	finBackupReconciler := controller.NewFinBackupReconciler(
 		mgr.GetClient(),
@@ -133,14 +166,12 @@ func controllerMain(args []string) {
 		rawImgExpansionUnitSize,
 	)
 	if err = finBackupReconciler.SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "FinBackup")
-		os.Exit(1)
+		return fmt.Errorf("unable to create controller FinBackup: %w", err)
 	}
 
 	rawImageChunkSize, err := resource.ParseQuantity(os.Getenv("RAW_IMAGE_CHUNK_SIZE"))
 	if err != nil {
-		setupLog.Error(err, "failed to parse RAW_IMAGE_CHUNK_SIZE environment variable")
-		os.Exit(1)
+		return fmt.Errorf("failed to parse RAW_IMAGE_CHUNK_SIZE environment variable: %w", err)
 	}
 	finRestoreReconciler := controller.NewFinRestoreReconciler(
 		mgr.GetClient(),
@@ -150,8 +181,7 @@ func controllerMain(args []string) {
 		&rawImageChunkSize,
 	)
 	if err = finRestoreReconciler.SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "FinRestore")
-		os.Exit(1)
+		return fmt.Errorf("unable to create controller FinRestore: %w", err)
 	}
 
 	finBackupConfigReconciler := controller.NewFinBackupConfigReconciler(
@@ -159,24 +189,33 @@ func controllerMain(args []string) {
 		mgr.GetScheme(),
 	)
 	if err := finBackupConfigReconciler.SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "FinBackupConfig")
-		os.Exit(1)
+		return fmt.Errorf("unable to create controller FinBackupConfig: %w", err)
 	}
 
+	if enableWebhook {
+		if err := webhookv1.SetupFinBackupWebhookWithManager(mgr); err != nil {
+			return fmt.Errorf("unable to create webhook FinBackup: %w", err)
+		}
+		setupLog.Info("FinBackup validating webhook enabled")
+
+		setupLog.Info("Adding webhook certificate watcher to manager")
+		if err := mgr.Add(webhookCertWatcher); err != nil {
+			return fmt.Errorf("unable to add webhook certificate watcher to manager: %w", err)
+		}
+	}
 	//+kubebuilder:scaffold:builder
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
-		setupLog.Error(err, "unable to set up health check")
-		os.Exit(1)
+		return fmt.Errorf("unable to set up health check: %w", err)
 	}
 	if err := mgr.AddReadyzCheck("readyz", healthz.Ping); err != nil {
-		setupLog.Error(err, "unable to set up ready check")
-		os.Exit(1)
+		return fmt.Errorf("unable to set up ready check: %w", err)
 	}
 
 	setupLog.Info("starting manager")
 	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
-		setupLog.Error(err, "problem running manager")
-		os.Exit(1)
+		return fmt.Errorf("problem running manager: %w", err)
 	}
+
+	return nil
 }

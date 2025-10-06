@@ -136,8 +136,9 @@ image-tar-load:
 setup-components:
 	$(MAKE) -C ../.. install
 	$(MAKE) -C ../.. deploy
+	# Disable webhooks for e2e tests
+	$(KUBECTL) -n $(NS) set env deployment/fin-controller-manager ENABLE_WEBHOOKS=false
 	$(KUBECTL) patch deploy -n $(NS) fin-controller-manager --type='json' -p='[{"op": "add", "path": "/spec/template/spec/containers/0/args/-", "value":"--raw-img-expansion-unit-size=10485760"}]'
-
 
 .PHONY: do-test
 do-test: $(GINKGO) $(KUBECTL) $(MINIKUBE)
