@@ -1,12 +1,16 @@
 package controller
 
 import (
+	"os"
+
 	finv1 "github.com/cybozu-go/fin/api/v1"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -29,12 +33,17 @@ var _ = Describe("FinRestore Controller Reconcile Test", Ordered, func() {
 	})
 
 	BeforeEach(func(ctx SpecContext) {
-		reconciler = &FinRestoreReconciler{
-			Client:               k8sClient,
-			Scheme:               scheme.Scheme,
-			cephClusterNamespace: namespace,
-			podImage:             podImage,
+		expansionUnitSize, ok := os.LookupEnv("FIN_RAW_IMG_EXPANSION_UNIT_SIZE")
+		if !ok {
+			expansionUnitSize = "4096" // 4KiB
 		}
+		reconciler = NewFinRestoreReconciler(
+			k8sClient,
+			scheme.Scheme,
+			namespace,
+			podImage,
+			ptr.To(resource.MustParse(expansionUnitSize)),
+		)
 	})
 
 	// CSATEST-1607
