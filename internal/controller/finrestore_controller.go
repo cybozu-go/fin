@@ -172,7 +172,6 @@ func (r *FinRestoreReconciler) reconcileCreateOrUpdate(
 
 	if !backup.IsStoredToNode() {
 		logger.Info("backup is not yet stored to node", "backup", backup.Name, "namespace", backup.Namespace)
-
 		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 	}
 
