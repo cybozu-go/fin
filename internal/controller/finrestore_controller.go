@@ -195,6 +195,13 @@ func (r *FinRestoreReconciler) reconcileCreateOrUpdate(
 		logger.Error(err, "failed to get restore PVC")
 		return ctrl.Result{}, err
 	}
+
+	if restorePVC.Status.Phase != corev1.ClaimBound {
+		logger.Info("restore PVC is not yet bound",
+			"pvcNamespace", restorePVC.Namespace, "pvcName", restorePVC.Name, "phase", restorePVC.Status.Phase)
+		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+	}
+
 	var restorePV corev1.PersistentVolume
 	if err := r.Get(ctx, client.ObjectKey{
 		Name: restorePVC.Spec.VolumeName,
