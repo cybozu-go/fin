@@ -83,7 +83,7 @@ var _ = Describe("FinRestore Controller Reconcile Test", Ordered, func() {
 			Expect(k8sClient.Create(ctx, finbackup)).Should(Succeed())
 
 			By("creating a FinRestore targeting the FinBackup")
-			finrestore = NewFinRestore(namespace, "test-restore-1", finbackup)
+			finrestore = NewFinRestore(namespace, "test-restore-1", finbackup.Name, "restore-pvc", pvc2.Namespace)
 			Expect(k8sClient.Create(ctx, finrestore)).Should(Succeed())
 		})
 
