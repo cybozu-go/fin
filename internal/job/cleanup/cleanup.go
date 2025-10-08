@@ -29,7 +29,7 @@ func NewCleanup(in *input.Cleanup) *Cleanup {
 
 // Perform executes the cleanup process. If it can't get lock, it returns ErrCantLock.
 func (b *Cleanup) Perform() error {
-	err := b.repo.StartOrRestartAction(b.actionUID, model.Backup)
+	err := b.repo.StartOrRestartAction(b.actionUID, model.Cleanup)
 	if err != nil {
 		if errors.Is(err, model.ErrBusy) {
 			return job.ErrCantLock
