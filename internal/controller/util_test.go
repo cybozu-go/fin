@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -152,6 +154,9 @@ func DeletePVCAndPV(ctx context.Context, namespace, pvcName string) {
 		Expect(k8sClient.Delete(ctx, &pvc)).Should(Succeed())
 	}
 
+	if pvc.Spec.VolumeName == "" {
+		return
+	}
 	var pv corev1.PersistentVolume
 	err = k8sClient.Get(ctx, client.ObjectKey{Name: pvc.Spec.VolumeName}, &pv)
 	if k8serrors.IsNotFound(err) {
@@ -201,16 +206,16 @@ func NewFinBackup(namespace, name, pvc, pvcNS, node string) *finv1.FinBackup {
 	}
 }
 
-func NewFinRestore(namespace, name string, fb *finv1.FinBackup) *finv1.FinRestore {
+func NewFinRestore(namespace, name string, fbName, pvc, pvcNamespace string) *finv1.FinRestore {
 	return &finv1.FinRestore{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: namespace,
 		},
 		Spec: finv1.FinRestoreSpec{
-			PVC:          fb.Spec.PVC,
-			PVCNamespace: fb.Spec.PVCNamespace,
-			Backup:       fb.Name,
+			PVC:          pvc,
+			PVCNamespace: pvcNamespace,
+			Backup:       fbName,
 		},
 	}
 }
@@ -239,4 +244,30 @@ func createTwoBackupsOrdered(
 		}
 	}, "5s", "1s").Should(Succeed())
 	return smaller, larger
+}
+
+func CreateFinBackupStored(
+	ctx context.Context,
+	c client.Client,
+	namespace, name string,
+	pvc *corev1.PersistentVolumeClaim,
+	snapID int,
+	testNode string,
+) *finv1.FinBackup {
+	GinkgoHelper()
+
+	finbackup := NewFinBackup(namespace, name, pvc.Name, pvc.Namespace, testNode)
+	Expect(c.Create(ctx, finbackup)).Should(Succeed())
+	pvcManifest, err := json.Marshal(pvc)
+	Expect(err).ShouldNot(HaveOccurred())
+	finbackup.Status.SnapSize = ptr.To(pvc.Spec.Resources.Requests.Storage().Value())
+	finbackup.Status.SnapID = ptr.To(snapID)
+	finbackup.Status.PVCManifest = string(pvcManifest)
+	meta.SetStatusCondition(&finbackup.Status.Conditions, metav1.Condition{
+		Type:   finv1.BackupConditionStoredToNode,
+		Status: metav1.ConditionTrue,
+		Reason: "BackupCompleted",
+	})
+	Expect(c.Status().Update(ctx, finbackup)).Should(Succeed())
+	return finbackup
 }
