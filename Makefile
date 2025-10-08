@@ -62,13 +62,22 @@ vet: ## Run go vet against code.
 
 TEST_RAW_IMG=_test/test-raw.img
 TEST_BLOCK_DEV=$$(losetup -j $(TEST_RAW_IMG) | cut -d: -f1)
+TEST_XFS_IMG=_test/test-xfs.img
+TEST_XFS_MOUNT=_test/test-xfs-mnt
 .PHONY: prepare-test
 prepare-test: 
+	mkdir -p _test && \
 	if [ "$(TEST_BLOCK_DEV)" = "" ]; then \
-		mkdir -p _test && \
 		fallocate -l 100M $(TEST_RAW_IMG) && \
 		sudo losetup -f $(TEST_RAW_IMG) && \
 		sudo chmod 666 $$(losetup -j $(TEST_RAW_IMG) | cut -d: -f1); \
+	fi
+	if [ ! -f "$(TEST_XFS_IMG)" ]; then \
+		fallocate -l 100M $(TEST_XFS_IMG) && \
+		mkfs.xfs $(TEST_XFS_IMG) && \
+		mkdir -p $(TEST_XFS_MOUNT) && \
+		sudo mount $(TEST_XFS_IMG) $(TEST_XFS_MOUNT) && \
+		sudo chmod 777 $(TEST_XFS_MOUNT); \
 	fi
 
 .PHONY: clean-test
@@ -77,6 +86,10 @@ clean-test:
 		sudo chmod 660 $(TEST_BLOCK_DEV) && \
 		sudo losetup -d $(TEST_BLOCK_DEV) && \
 		rm -f $(TEST_RAW_IMG); \
+	fi
+	if [ -f "$(TEST_XFS_IMG)" ]; then \
+		sudo umount $(TEST_XFS_MOUNT) || true; \
+		rm -f $(TEST_XFS_IMG); \
 	fi
 
 .PHONY: test
