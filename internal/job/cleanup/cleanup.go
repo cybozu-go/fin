@@ -62,6 +62,10 @@ func (b *Cleanup) doCleanup() error {
 			b.targetPVCUID, metadata.PVCUID)
 	}
 
+	if err := b.nodeLocalVolumeRepo.RemoveInstantVerifyImage(); err != nil {
+		return fmt.Errorf("failed to remove instant verify image: %w", err)
+	}
+
 	raw := metadata.Raw
 	var diff *job.BackupMetadataEntry
 	if len(metadata.Diff) > 0 {

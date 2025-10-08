@@ -371,6 +371,48 @@ func TestCleanup_BothFullBackupAndIncrementalBackupExist_Success(t *testing.T) {
 	require.NoError(t, finRepo.StartOrRestartAction(anotherActionUID, model.Backup))
 }
 
+func TestCleanup_InstantVerifyImageExists_Success(t *testing.T) {
+	// Arrange
+	backupActionUID := uuid.New().String()
+	pvcUID := uuid.New().String()
+	nlvRepo, finRepo, nlvRoot := testutil.CreateNLVAndFinRepoForTest(t)
+	require.NoError(t, finRepo.StartOrRestartAction(backupActionUID, model.Verification))
+
+	snapID := 1
+	putFakePVCAndPV(t, nlvRoot)
+	putFakeRawImage(t, nlvRoot)
+	setFakeBackupMetadata(t, finRepo, pvcUID, snapID, -1)
+
+	// Create instant verify image
+	img, err := os.Create(nlvRepo.GetInstantVerifyImagePath())
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_ = img.Close()
+		_ = os.Remove(nlvRepo.GetInstantVerifyImagePath())
+	})
+
+	input := input.Cleanup{
+		Repo:                finRepo,
+		NodeLocalVolumeRepo: nlvRepo,
+		ActionUID:           backupActionUID,
+		TargetSnapshotID:    snapID,
+		TargetPVCUID:        pvcUID,
+	}
+
+	// Act
+	cleanupJob := NewCleanup(&input)
+	require.NoError(t, cleanupJob.Perform())
+
+	// Assert
+	_, err = job.GetBackupMetadata(finRepo)
+	require.NoError(t, err)
+	anotherActionUID := uuid.New().String()
+	require.NoError(t, finRepo.StartOrRestartAction(anotherActionUID, model.Backup))
+
+	assertAllFullBackupFilesExist(t, nlvRoot)
+	assert.NoFileExists(t, nlvRepo.GetInstantVerifyImagePath())
+}
+
 func TestCleanup_PVCUIDMismatch_Failure(t *testing.T) {
 	// CSATEST-1598
 	// Description:
