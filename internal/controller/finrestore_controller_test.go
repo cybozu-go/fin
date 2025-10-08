@@ -1,15 +1,18 @@
 package controller
 
 import (
+	"encoding/json"
 	"os"
 
 	finv1 "github.com/cybozu-go/fin/api/v1"
+	"github.com/cybozu-go/fin/test/utils"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/scheme"
@@ -485,6 +488,200 @@ var _ = Describe("FinRestore Controller Reconcile Test", Ordered, func() {
 
 			By("verifying that the restore job is not recreated")
 			ExpectNoJob(ctx, k8sClient, restoreJobName(finrestore), finrestore.Namespace)
+		})
+	})
+
+	Context("Behavior of allowUnverified field", func() {
+		var pvc *corev1.PersistentVolumeClaim
+
+		BeforeEach(func(ctx SpecContext) {
+			By("creating PVC and PV")
+			var pv *corev1.PersistentVolume
+			pvc, pv = NewPVCAndPV(sc, namespace, utils.GetUniqueName("test-pvc"), utils.GetUniqueName("test-pv"), rbdImageName)
+			Expect(k8sClient.Create(ctx, pvc)).Should(Succeed())
+			Expect(k8sClient.Create(ctx, pv)).Should(Succeed())
+		})
+
+		It("should fail to restore unverified backup if allowUnverified is false", func(ctx SpecContext) {
+			// Description:
+			//   Ensure that restoration is blocked when FinBackup has
+			//   Verified=False condition and FinRestore has
+			//   allowUnverified=false.
+			//
+			// Arrange:
+			//   - Create a pair of PVC and PV, which is done in BeforeEach.
+			//   - Create an unverified FinBackup targeting the PVC.
+			//   - Create a FinRestore referencing the FinBackup with allowUnverified=false.
+			//
+			// Act:
+			//   Run reconciliation of the FinRestore.
+			//
+			// Assert:
+			//   - Reconciliation does not return an error.
+			//   - Restore PVC is not created.
+
+			// Arrange
+			By("creating unverified FinBackup targeting the PVC")
+			finbackup := CreateFinBackupStoredAndVerified(
+				ctx, k8sClient, namespace, utils.GetUniqueName("test-fin-backup"), pvc, 1, utils.GetUniqueName("test-node"))
+			finbackup.Status.Conditions = []metav1.Condition{}
+			meta.SetStatusCondition(&finbackup.Status.Conditions, metav1.Condition{
+				Type:   finv1.BackupConditionStoredToNode,
+				Status: metav1.ConditionTrue,
+				Reason: "BackupCompleted",
+			})
+			meta.SetStatusCondition(&finbackup.Status.Conditions, metav1.Condition{
+				Type:   finv1.BackupConditionVerified,
+				Status: metav1.ConditionFalse,
+				Reason: "FsckFailed",
+			})
+			Expect(k8sClient.Status().Update(ctx, finbackup)).Should(Succeed())
+
+			By("creating FinRestore with allowUnverified false")
+			finrestore := NewFinRestore(
+				namespace,
+				utils.GetUniqueName("test-restore"),
+				finbackup.Name,
+				utils.GetUniqueName("restore-pvc"),
+				otherNamespace.Name,
+			)
+			finrestore.Spec.AllowUnverified = false
+			Expect(k8sClient.Create(ctx, finrestore)).Should(Succeed())
+
+			// Act
+			By("reconciling the FinRestore")
+			_, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(finrestore)})
+
+			// Assert
+			Expect(err).NotTo(HaveOccurred())
+
+			By("checking that no restore PVC is created")
+			var restorePVC corev1.PersistentVolumeClaim
+			key := client.ObjectKey{Namespace: finrestore.Spec.PVCNamespace, Name: finrestore.Spec.PVC}
+			Expect(k8sClient.Get(ctx, key, &restorePVC)).To(MatchError(k8serrors.IsNotFound, "restore-pvc should not be found"))
+		})
+
+		It("should fail to restore not yet verified backup if allowUnverified is false", func(ctx SpecContext) {
+			// Description:
+			//   Ensure that restoration is blocked when FinBackup has neither
+			//   Verified=True nor Verified=False condition and FinRestore has
+			//   allowUnverified=false.
+			//
+			// Arrange:
+			//   - Create a pair of PVC and PV, which is done in BeforeEach.
+			//   - Create an unverified FinBackup targeting the PVC.
+			//   - Create a FinRestore referencing the FinBackup with allowUnverified=false.
+			//
+			// Act:
+			//   Run reconciliation of the FinRestore.
+			//
+			// Assert:
+			//   - Reconciliation does not return an error.
+			//   - Restore PVC is not created.
+
+			// Arrange
+			By("creating unverified FinBackup targeting the PVC")
+			finbackup := CreateFinBackupStoredAndVerified(
+				ctx, k8sClient, namespace, utils.GetUniqueName("test-fin-backup"), pvc, 1, utils.GetUniqueName("test-node"))
+			finbackup.Status.Conditions = []metav1.Condition{}
+			meta.SetStatusCondition(&finbackup.Status.Conditions, metav1.Condition{
+				Type:   finv1.BackupConditionStoredToNode,
+				Status: metav1.ConditionTrue,
+				Reason: "BackupCompleted",
+			})
+			Expect(k8sClient.Status().Update(ctx, finbackup)).Should(Succeed())
+
+			By("creating FinRestore with allowUnverified false")
+			finrestore := NewFinRestore(
+				namespace,
+				utils.GetUniqueName("test-restore"),
+				finbackup.Name,
+				utils.GetUniqueName("restore-pvc"),
+				otherNamespace.Name,
+			)
+			finrestore.Spec.AllowUnverified = false
+			Expect(k8sClient.Create(ctx, finrestore)).Should(Succeed())
+
+			// Act
+			By("reconciling the FinRestore")
+			_, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(finrestore)})
+
+			// Assert
+			Expect(err).NotTo(HaveOccurred())
+
+			By("checking that no restore PVC is created")
+			var restorePVC corev1.PersistentVolumeClaim
+			key := client.ObjectKey{Namespace: finrestore.Spec.PVCNamespace, Name: finrestore.Spec.PVC}
+			Expect(k8sClient.Get(ctx, key, &restorePVC)).To(MatchError(k8serrors.IsNotFound, "restore-pvc should not be found"))
+		})
+
+		It("should restore unverified backup if the verification skipped and allowUnverified is true", func(ctx SpecContext) {
+			// Description:
+			//   Ensure that restoration is allowed when FinBackup has
+			//   VerificationSkipped=True condition and FinRestore has
+			//   allowUnverified=true.
+			//
+			// Arrange:
+			//   - Create a pair of PVC and PV, which is done in BeforeEach.
+			//   - Create a verification-skipped FinBackup targeting the PVC.
+			//   - Create a FinRestore referencing the FinBackup with allowUnverified=true.
+			//
+			// Act:
+			//   Run reconciliation of the FinRestore.
+			//
+			// Assert:
+			//   - Reconciliation does not return an error.
+			//   - Restore PVC is created.
+
+			// Arrange
+			By("creating unverified FinBackup targeting the PVC")
+			finbackup := NewFinBackup(
+				namespace,
+				utils.GetUniqueName("test-fin-backup"),
+				pvc.Name,
+				pvc.Namespace,
+				utils.GetUniqueName("test-node"),
+			)
+			Expect(k8sClient.Create(ctx, finbackup)).Should(Succeed())
+			pvcManifest, err := json.Marshal(pvc)
+			Expect(err).ShouldNot(HaveOccurred())
+			finbackup.Status.SnapSize = ptr.To(pvc.Spec.Resources.Requests.Storage().Value())
+			finbackup.Status.SnapID = ptr.To(1)
+			finbackup.Status.PVCManifest = string(pvcManifest)
+			meta.SetStatusCondition(&finbackup.Status.Conditions, metav1.Condition{
+				Type:   finv1.BackupConditionStoredToNode,
+				Status: metav1.ConditionTrue,
+				Reason: "BackupCompleted",
+			})
+			meta.SetStatusCondition(&finbackup.Status.Conditions, metav1.Condition{
+				Type:   finv1.BackupConditionVerificationSkipped,
+				Status: metav1.ConditionTrue,
+				Reason: "VerificationSkipped",
+			})
+			Expect(k8sClient.Status().Update(ctx, finbackup)).Should(Succeed())
+
+			By("creating FinRestore with allowUnverified true")
+			finrestore := NewFinRestore(
+				namespace,
+				utils.GetUniqueName("test-restore"),
+				finbackup.Name,
+				utils.GetUniqueName("restore-pvc"),
+				otherNamespace.Name,
+			)
+			finrestore.Spec.AllowUnverified = true
+			Expect(k8sClient.Create(ctx, finrestore)).Should(Succeed())
+
+			// Act
+			By("reconciling the FinRestore")
+			_, err = reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(finrestore)})
+
+			// Assert
+			Expect(err).ShouldNot(HaveOccurred())
+
+			By("checking that restore PVC is created with specified name")
+			var restorePVC corev1.PersistentVolumeClaim
+			key := client.ObjectKey{Namespace: finrestore.Spec.PVCNamespace, Name: finrestore.Spec.PVC}
+			Expect(k8sClient.Get(ctx, key, &restorePVC)).Should(Succeed())
 		})
 	})
 })
