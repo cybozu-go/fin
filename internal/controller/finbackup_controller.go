@@ -43,11 +43,21 @@ const (
 
 	// Annotations
 	annotationBackupTargetRBDImage = "fin.cybozu.io/backup-target-rbd-image"
-	annotationRBDPool              = "fin.cybozu.io/rbd-pool"
 	annotationDiffFrom             = "fin.cybozu.io/diff-from"
 	annotationFinBackupName        = "fin.cybozu.io/finbackup-name"
 	annotationFinBackupNamespace   = "fin.cybozu.io/finbackup-namespace"
+	annotationRBDPool              = "fin.cybozu.io/rbd-pool"
+	annotationSkipVerify           = "fin.cybozu.io/skip-verify"
 	AnnotationFullBackup           = "fin.cybozu.io/full-backup"
+)
+
+type verificationJobStatus int
+
+const (
+	verificationJobStatusComplete verificationJobStatus = iota
+	verificationJobStatusInProgress
+	verificationJobStatusFailedWithExitCode2
+	verificationJobStatusUnknown
 )
 
 var (
@@ -94,6 +104,7 @@ func NewFinBackupReconciler(
 //+kubebuilder:rbac:groups=fin.cybozu.io,resources=finbackups/finalizers,verbs=update
 //+kubebuilder:rbac:groups=core,resources=persistentvolumeclaims,verbs=get;list;watch
 //+kubebuilder:rbac:groups=core,resources=persistentvolumes,verbs=get;list;watch
+//+kubebuilder:rbac:groups=core,resources=pods,verbs=get;list;watch
 //+kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;update;patch;delete
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
@@ -140,18 +151,20 @@ func (r *FinBackupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 
 	if backup.IsStoredToNode() {
-		return ctrl.Result{}, nil
+		if backup.DoesVerifiedExist() {
+			return ctrl.Result{}, nil
+		}
+	} else {
+		result, err := r.reconcileBackup(ctx, backup, pvc)
+		if errors.Is(err, errNonRetryableReconcile) {
+			return ctrl.Result{}, nil
+		}
+		if err != nil || !result.IsZero() {
+			return result, err
+		}
 	}
 
-	result, err := r.reconcileBackup(ctx, backup, pvc)
-	if errors.Is(err, errNonRetryableReconcile) {
-		return ctrl.Result{}, nil
-	}
-	if err != nil || !result.IsZero() {
-		return result, err
-	}
-
-	return ctrl.Result{}, nil
+	return r.reconcileVerification(ctx, backup, pvc)
 }
 
 func (r *FinBackupReconciler) reconcileBackup(
@@ -328,6 +341,8 @@ func (r *FinBackupReconciler) createSnapshot(ctx context.Context, backup *finv1.
 
 func (r *FinBackupReconciler) reconcileDelete(ctx context.Context, backup *finv1.FinBackup) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
+
+	// Delete the backup job if it exists
 	backupJob := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      backupJobName(backup),
@@ -346,6 +361,11 @@ func (r *FinBackupReconciler) reconcileDelete(ctx context.Context, backup *finv1
 		}
 	} else {
 		return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+	}
+
+	// delete the verification job if it exists
+	if err := r.deleteVerificationJob(ctx, backup); err != nil {
+		return ctrl.Result{}, err
 	}
 
 	// If backup job does not exist, proceed to next step
@@ -528,8 +548,8 @@ func snapIDPreconditionSatisfied(backup *finv1.FinBackup, otherFinBackups []finv
 		if snapID > targetSnapID {
 			continue
 		}
-		if !fb.IsStoredToNode() && fb.DeletionTimestamp.IsZero() {
-			return fmt.Errorf("found FinBackup not yet stored to node: %s/%d", fb.Name, snapID)
+		if (!fb.IsStoredToNode() || !fb.IsVerifiedTrue()) && fb.DeletionTimestamp.IsZero() {
+			return fmt.Errorf("found FinBackup not yet stored to node or verified: %s/%d", fb.Name, snapID)
 		}
 		smallerIDs++
 		if smallerIDs >= 2 {
@@ -569,6 +589,10 @@ func snapshotName(backup *finv1.FinBackup) string {
 
 func backupJobName(backup *finv1.FinBackup) string {
 	return "fin-backup-" + string(backup.GetUID())
+}
+
+func verificationJobName(backup *finv1.FinBackup) string {
+	return "fin-verify-" + string(backup.GetUID())
 }
 
 func deletionJobName(backup *finv1.FinBackup) string {
@@ -952,6 +976,267 @@ func (r *FinBackupReconciler) createOrUpdateCleanupJob(ctx context.Context, back
 	return err
 }
 
+func (r *FinBackupReconciler) reconcileVerification(
+	ctx context.Context,
+	backup finv1.FinBackup,
+	pvc corev1.PersistentVolumeClaim,
+) (ctrl.Result, error) {
+	if r.checkSkipVerificationCondition(&backup) {
+		return r.skipVerification(ctx, &backup)
+	}
+
+	if err := r.createOrUpdateVerificationJob(ctx, &backup, &pvc); err != nil {
+		return ctrl.Result{}, err
+	}
+
+	jobStatus, err := r.checkVerificationJobStatus(ctx, &backup)
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf("failed to check verification job status: %w", err)
+	}
+	switch jobStatus {
+	case verificationJobStatusComplete:
+		// do nothing
+	case verificationJobStatusInProgress:
+		return ctrl.Result{}, nil
+	case verificationJobStatusFailedWithExitCode2:
+		if err := patchFinBackupCondition(ctx, r.Client, &backup, metav1.Condition{
+			Type:    finv1.BackupConditionVerified,
+			Status:  metav1.ConditionFalse,
+			Reason:  "VerificationFailed",
+			Message: "Backup verification failed: fsck error",
+		}); err != nil {
+			return ctrl.Result{}, fmt.Errorf("failed to set FinBackup Verified condition to false: %w", err)
+		}
+		return ctrl.Result{}, nil
+	default:
+		return ctrl.Result{}, fmt.Errorf("unknown verification job status: %d", jobStatus)
+	}
+
+	if err := patchFinBackupCondition(ctx, r.Client, &backup, metav1.Condition{
+		Type:    finv1.BackupConditionVerified,
+		Status:  metav1.ConditionTrue,
+		Reason:  "VerificationComplete",
+		Message: "Backup verification completed successfully: fsck passed",
+	}); err != nil {
+		return ctrl.Result{}, fmt.Errorf("failed to set FinBackup Verified condition to true: %w", err)
+	}
+
+	return ctrl.Result{}, nil
+}
+
+func (r *FinBackupReconciler) checkSkipVerificationCondition(backup *finv1.FinBackup) bool {
+	hasSkipVerifyAnnot := false
+	if annots := backup.GetAnnotations(); annots != nil {
+		hasSkipVerifyAnnot = annots[annotationSkipVerify] == "true"
+	}
+	return !backup.DoesVerifiedExist() && (hasSkipVerifyAnnot || backup.IsVerificationSkipped())
+}
+
+func (r *FinBackupReconciler) skipVerification(
+	ctx context.Context,
+	backup *finv1.FinBackup,
+) (ctrl.Result, error) {
+	// set the VerificationSkipped condition to True
+	if err := patchFinBackupCondition(ctx, r.Client, backup, metav1.Condition{
+		Type:   finv1.BackupConditionVerificationSkipped,
+		Status: metav1.ConditionTrue,
+		Reason: "AnnotationSet",
+	}); err != nil {
+		return ctrl.Result{}, fmt.Errorf("failed to set FinBackup VerificationSkipped condition: %w", err)
+	}
+
+	// delete the verification job if it exists
+	if err := r.deleteVerificationJob(ctx, backup); err != nil {
+		return ctrl.Result{}, fmt.Errorf("failed to delete verification Job: %w", err)
+	}
+
+	// create or update the cleanup job
+	if err := r.createOrUpdateCleanupJob(ctx, backup); err != nil {
+		return ctrl.Result{}, fmt.Errorf("failed to create or update cleanup Job: %w", err)
+	}
+
+	return ctrl.Result{}, nil
+}
+
+func (r *FinBackupReconciler) deleteVerificationJob(ctx context.Context, backup *finv1.FinBackup) error {
+	// delete the verification job if it exists
+	verificationJob := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      verificationJobName(backup),
+			Namespace: r.cephClusterNamespace,
+		},
+	}
+	if err := r.Delete(ctx, verificationJob,
+		&client.DeleteOptions{
+			PropagationPolicy: ptr.To(metav1.DeletePropagationBackground),
+		},
+	); err != nil {
+		if !k8serrors.IsNotFound(err) {
+			return fmt.Errorf("failed to delete verification Job: %w", err)
+		}
+	}
+	return nil
+}
+
+func (r *FinBackupReconciler) createOrUpdateVerificationJob(
+	ctx context.Context,
+	backup *finv1.FinBackup,
+	pvc *corev1.PersistentVolumeClaim,
+) error {
+	var job batchv1.Job
+	job.SetName(verificationJobName(backup))
+	job.SetNamespace(r.cephClusterNamespace)
+	_, err := ctrl.CreateOrUpdate(ctx, r.Client, &job, func() error {
+		annotations := job.GetAnnotations()
+		if annotations == nil {
+			annotations = map[string]string{}
+		}
+		annotations[annotationFinBackupName] = backup.GetName()
+		annotations[annotationFinBackupNamespace] = backup.GetNamespace()
+		job.SetAnnotations(annotations)
+
+		// Up to this point, we modify the mutable fields. From here on, we
+		// modify the immutable fields, which cannot be changed after creation.
+		if !job.CreationTimestamp.IsZero() {
+			return nil
+		}
+
+		job.Spec.BackoffLimit = ptr.To(int32(maxJobBackoffLimit))
+
+		job.Spec.Template.Spec.NodeName = backup.Spec.Node
+
+		job.Spec.Template.Spec.SecurityContext = &corev1.PodSecurityContext{
+			FSGroup:      ptr.To(int64(10000)),
+			RunAsGroup:   ptr.To(int64(10000)),
+			RunAsNonRoot: ptr.To(true),
+			RunAsUser:    ptr.To(int64(10000)),
+		}
+
+		job.Spec.Template.Spec.ServiceAccountName = "fin-backup-job"
+
+		job.Spec.Template.Spec.RestartPolicy = corev1.RestartPolicyNever
+
+		job.Spec.PodFailurePolicy = &batchv1.PodFailurePolicy{
+			Rules: []batchv1.PodFailurePolicyRule{
+				{
+					Action: batchv1.PodFailurePolicyActionFailJob,
+					OnExitCodes: &batchv1.PodFailurePolicyOnExitCodesRequirement{
+						ContainerName: ptr.To("verification"),
+						Operator:      batchv1.PodFailurePolicyOnExitCodesOpIn,
+						Values:        []int32{2},
+					},
+				},
+			},
+		}
+
+		job.Spec.Template.Spec.Containers = []corev1.Container{
+			{
+				Name:    "verification",
+				Command: []string{"/manager"},
+				Args:    []string{"verification"},
+				Env: []corev1.EnvVar{
+					{
+						Name:  "ACTION_UID",
+						Value: string(backup.GetUID()),
+					},
+					{
+						Name:  "BACKUP_SNAPSHOT_ID",
+						Value: strconv.Itoa(*backup.Status.SnapID),
+					},
+					{
+						Name:  "BACKUP_TARGET_PVC_NAME",
+						Value: backup.Spec.PVC,
+					},
+					{
+						Name:  "BACKUP_TARGET_PVC_NAMESPACE",
+						Value: backup.Spec.PVCNamespace,
+					},
+					{
+						Name:  "BACKUP_TARGET_PVC_UID",
+						Value: string(pvc.GetUID()),
+					},
+				},
+				Image:           r.podImage,
+				ImagePullPolicy: corev1.PullIfNotPresent,
+				VolumeMounts: []corev1.VolumeMount{
+					{
+						MountPath: nlv.VolumePath,
+						Name:      "fin-volume",
+					},
+				},
+			},
+		}
+
+		job.Spec.Template.Spec.Volumes = []corev1.Volume{
+			{
+				Name: "fin-volume",
+				VolumeSource: corev1.VolumeSource{
+					PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+						ClaimName: finVolumePVCName(backup),
+					},
+				},
+			},
+		}
+
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create or update verification Job: %w", err)
+	}
+
+	return nil
+}
+
+func (r *FinBackupReconciler) checkVerificationJobStatus(
+	ctx context.Context,
+	backup *finv1.FinBackup,
+) (verificationJobStatus, error) {
+	var job batchv1.Job
+	err := r.Get(ctx, client.ObjectKey{Namespace: r.cephClusterNamespace, Name: verificationJobName(backup)}, &job)
+	if err != nil {
+		return verificationJobStatusUnknown, fmt.Errorf("failed to get verification Job: %w", err)
+	}
+
+	done, err := jobCompleted(&job)
+	if done { // Complete=True
+		return verificationJobStatusComplete, nil
+	} else if err == nil { // not Complete=True nor Failed=True
+		return verificationJobStatusInProgress, nil
+	}
+
+	// Failed=True, so check the exit code
+	pods := corev1.PodList{}
+	if err := r.List(ctx, &pods, &client.ListOptions{
+		Namespace: r.cephClusterNamespace,
+		LabelSelector: labels.SelectorFromSet(map[string]string{
+			"batch.kubernetes.io/job-name": verificationJobName(backup),
+		}),
+	},
+	); err != nil {
+		return verificationJobStatusUnknown, fmt.Errorf("failed to list pods of verification Job: %w", err)
+	}
+	if len(pods.Items) != 1 {
+		return verificationJobStatusUnknown, fmt.Errorf("expected 1 pod for verification Job, got %d", len(pods.Items))
+	}
+
+	containerStatuses := pods.Items[0].Status.ContainerStatuses
+	if len(containerStatuses) != 1 {
+		return verificationJobStatusUnknown,
+			fmt.Errorf("expected 1 container in verification pod, got %d", len(containerStatuses))
+	}
+
+	state := containerStatuses[0].State
+	if state.Terminated == nil {
+		return verificationJobStatusUnknown, errors.New("verification container is not terminated")
+	}
+
+	if state.Terminated.ExitCode == 2 {
+		return verificationJobStatusFailedWithExitCode2, nil
+	}
+
+	return verificationJobStatusUnknown, fmt.Errorf("verification job failed with exit code %d", state.Terminated.ExitCode)
+}
+
 // SetupWithManager sets up the controller with the Manager.
 func (r *FinBackupReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
@@ -960,7 +1245,7 @@ func (r *FinBackupReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			handler.EnqueueRequestsFromMapFunc(enqueueOnJobEvent(
 				annotationFinBackupName, annotationFinBackupNamespace)),
 			builder.WithPredicates(predicate.Funcs{
-				UpdateFunc: enqueueOnJobCompletion,
+				UpdateFunc: enqueueOnJobCompletionOrFailure,
 			})).
 		Complete(r)
 }

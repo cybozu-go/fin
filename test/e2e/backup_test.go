@@ -70,7 +70,7 @@ func backupTestSuite() {
 		Expect(err).NotTo(HaveOccurred())
 		err = CreateFinBackup(ctx, ctrlClient, finbackup)
 		Expect(err).NotTo(HaveOccurred())
-		err = WaitForFinBackupStoredToNode(ctx, ctrlClient, rookNamespace, finbackup.GetName(), 1*time.Minute)
+		err = WaitForFinBackupStoredToNodeAndVerified(ctx, ctrlClient, rookNamespace, finbackup.GetName(), 1*time.Minute)
 		Expect(err).NotTo(HaveOccurred())
 
 		By("verifying the data in raw.img")
