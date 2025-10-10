@@ -53,6 +53,9 @@ const (
 var (
 	cleanupJobRequeueAfter  = 5 * time.Second
 	deletionJobRequeueAfter = 1 * time.Minute
+
+	errNonRetryableReconcile = errors.New("non retryable reconciliation error; " +
+		"reconciliation must not keep going nor be retried")
 )
 
 // FinBackupReconciler reconciles a FinBackup object
@@ -140,6 +143,24 @@ func (r *FinBackupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, nil
 	}
 
+	result, err := r.reconcileBackup(ctx, backup, pvc)
+	if errors.Is(err, errNonRetryableReconcile) {
+		return ctrl.Result{}, nil
+	}
+	if err != nil || !result.IsZero() {
+		return result, err
+	}
+
+	return ctrl.Result{}, nil
+}
+
+func (r *FinBackupReconciler) reconcileBackup(
+	ctx context.Context,
+	backup finv1.FinBackup,
+	pvc corev1.PersistentVolumeClaim,
+) (ctrl.Result, error) {
+	logger := log.FromContext(ctx)
+
 	finalizersUpdated := controllerutil.AddFinalizer(&backup, FinBackupFinalizerName)
 	if finalizersUpdated {
 		err := r.Update(ctx, &backup)
@@ -208,7 +229,7 @@ func (r *FinBackupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	err = r.Get(ctx, client.ObjectKey{Namespace: r.cephClusterNamespace, Name: backupJobName(&backup)}, &job)
 	if err != nil {
 		if k8serrors.IsNotFound(err) {
-			return ctrl.Result{}, nil
+			return ctrl.Result{}, errNonRetryableReconcile
 		}
 		return ctrl.Result{}, err
 	}
@@ -219,7 +240,7 @@ func (r *FinBackupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, err
 	}
 	if !done {
-		return ctrl.Result{}, nil
+		return ctrl.Result{}, errNonRetryableReconcile
 	}
 
 	updatedBackup := backup.DeepCopy()
