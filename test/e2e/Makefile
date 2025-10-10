@@ -133,10 +133,16 @@ image-build:
 
 .PHONY: image-tar-load
 image-tar-load:
+	df -h /
 	$(MAKE) -C ../.. docker-save
+	df -h /
 	$(MINIKUBE) image load ../../${IMG_TAR}
+	df -h /
 	$(MINIKUBE) ssh -- docker images || true
+	df -h /
 	rm ../../${IMG_TAR} || true
+	ls -l ../../${IMG_TAR} || true
+	df -h /
 
 .PHONY: setup-components
 setup-components:
