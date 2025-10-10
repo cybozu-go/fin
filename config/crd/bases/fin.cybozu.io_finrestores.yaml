@@ -49,6 +49,13 @@ spec:
           spec:
             description: FinRestoreSpec defines the desired state of FinRestore
             properties:
+              allowUnverified:
+                description: '''allowUnverified'' specifies whether to allow restore
+                  from an unverified backup'
+                type: boolean
+                x-kubernetes-validations:
+                - message: allowUnverified is immutable
+                  rule: self == oldSelf
               backup:
                 description: '''backup'' specifies the name of FinBackup resource'
                 type: string
