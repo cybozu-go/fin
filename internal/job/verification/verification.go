@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"math"
 	"os"
 	"os/exec"
@@ -59,6 +60,7 @@ func (v *Verification) Perform() error {
 }
 
 func (v *Verification) doVerify() error {
+	slog.Info("getting backup metadata")
 	raw, diff0, pvcUID, err := v.getBackupMetadata()
 	if err != nil {
 		return fmt.Errorf("failed to check backup metadata: %w", err)
@@ -70,14 +72,17 @@ func (v *Verification) doVerify() error {
 		return fmt.Errorf("no raw found in backup metadata")
 	}
 
+	slog.Info("checking PVC volume mode")
 	isBlock, err := v.checkPVCVolumeModeIsBlock()
 	if err != nil {
 		return fmt.Errorf("failed to check PVC volume mode: %w", err)
 	}
 	if isBlock {
+		slog.Info("skipping verification for Block volume")
 		return nil
 	}
 
+	slog.Info("getting private data")
 	privateData, err := v.getPrivateData()
 	if err != nil {
 		return fmt.Errorf("failed to get private data: %w", err)
@@ -85,11 +90,13 @@ func (v *Verification) doVerify() error {
 
 	nextDiffPart := 0
 	if privateData.NextDiffPart == nil {
+		slog.Info("creating instant_verify.img by reflink")
 		if err := v.nlvRepo.ReflinkRawImageToInstantVerifyImage(); err != nil {
 			return fmt.Errorf("failed to copy reflink: %w", err)
 		}
 	} else {
 		nextDiffPart = *privateData.NextDiffPart
+		slog.Info("resuming verification from private data", slog.Int("nextDiffPart", nextDiffPart))
 
 		instantVerifyImageExists, err := v.doesInstantVerifyImageExist()
 		if err != nil {
@@ -105,20 +112,24 @@ func (v *Verification) doVerify() error {
 			}
 			// already applied all diffs and cleaned up instant_verify.img, so
 			// let's skip fsck.
+			slog.Info("skipping fsck because instant_verify.img is missing but all diffs are already applied")
 			return nil
 		}
 	}
 
 	if diff0 != nil {
+		slog.Info("applying diffs", slog.Int("nextDiffPart", nextDiffPart))
 		if err := v.loopApplyDiff(nextDiffPart, raw, diff0); err != nil {
 			return fmt.Errorf("failed to apply diff: %w", err)
 		}
 	}
 
+	slog.Info("running fsck")
 	if err := runFsck(v.nlvRepo.GetInstantVerifyImagePath()); err != nil {
 		return fmt.Errorf("failed to run fsck: %w", err)
 	}
 
+	slog.Info("removing instant_verify.img")
 	if err := v.nlvRepo.RemoveInstantVerifyImage(); err != nil {
 		return fmt.Errorf("failed to clean up: %w", err)
 	}
