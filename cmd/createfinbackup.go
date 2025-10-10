@@ -14,7 +14,7 @@ import (
 var createFinBackupCmd = &cobra.Command{
 	Use: "createfinbackup",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return createFinBackupJobMain(cmd)
+		return createFinBackupJobMain()
 	},
 }
 
@@ -26,12 +26,17 @@ var (
 func init() {
 	createFinBackupCmd.Flags().StringVar(&fbcName, "fin-backup-config-name", "", "FinBackupConfig name")
 	createFinBackupCmd.Flags().StringVar(&fbcNamespace, "fin-backup-config-namespace", "", "FinBackupConfig namespace")
-	createFinBackupCmd.MarkFlagRequired("fin-backup-config-name")
-	createFinBackupCmd.MarkFlagRequired("fin-backup-config-namespace")
+	if err := createFinBackupCmd.MarkFlagRequired("fin-backup-config-name"); err != nil {
+		// Should not happen, but check for linter
+		panic(err)
+	}
+	if err := createFinBackupCmd.MarkFlagRequired("fin-backup-config-namespace"); err != nil {
+		panic(err)
+	}
 	rootCmd.AddCommand(createFinBackupCmd)
 }
 
-func createFinBackupJobMain(cmd *cobra.Command) error {
+func createFinBackupJobMain() error {
 	if fbcName == "" {
 		return fmt.Errorf("--fin-backup-config-name is required")
 	}
