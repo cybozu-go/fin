@@ -29,7 +29,7 @@ func NewCleanup(in *input.Cleanup) *Cleanup {
 
 // Perform executes the cleanup process. If it can't get lock, it returns ErrCantLock.
 func (b *Cleanup) Perform() error {
-	err := b.repo.StartOrRestartAction(b.actionUID, model.Backup)
+	err := b.repo.StartOrRestartAction(b.actionUID, model.Cleanup)
 	if err != nil {
 		if errors.Is(err, model.ErrBusy) {
 			return job.ErrCantLock
@@ -60,6 +60,10 @@ func (b *Cleanup) doCleanup() error {
 	if b.targetPVCUID != metadata.PVCUID {
 		return fmt.Errorf("target PVC UID (%s) does not match the expected one (%s)",
 			b.targetPVCUID, metadata.PVCUID)
+	}
+
+	if err := b.nodeLocalVolumeRepo.RemoveInstantVerifyImage(); err != nil {
+		return fmt.Errorf("failed to remove instant verify image: %w", err)
 	}
 
 	raw := metadata.Raw
