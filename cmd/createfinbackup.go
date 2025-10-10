@@ -9,59 +9,52 @@ import (
 	"github.com/cybozu-go/fin/internal/job/createfinbackup"
 	"github.com/cybozu-go/fin/internal/job/input"
 	"github.com/spf13/cobra"
-	"k8s.io/apimachinery/pkg/runtime"
-	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
-	"k8s.io/client-go/rest"
-	"sigs.k8s.io/controller-runtime/pkg/client"
-
-	finv1 "github.com/cybozu-go/fin/api/v1"
 )
 
 var createFinBackupCmd = &cobra.Command{
 	Use: "createfinbackup",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return createFinBackupJobMain()
+		return createFinBackupJobMain(cmd)
 	},
 }
 
+var (
+	fbcName      string
+	fbcNamespace string
+)
+
 func init() {
+	createFinBackupCmd.Flags().StringVar(&fbcName, "fin-backup-config-name", "", "FinBackupConfig name")
+	createFinBackupCmd.Flags().StringVar(&fbcNamespace, "fin-backup-config-namespace", "", "FinBackupConfig namespace")
+	createFinBackupCmd.MarkFlagRequired("fin-backup-config-name")
+	createFinBackupCmd.MarkFlagRequired("fin-backup-config-namespace")
 	rootCmd.AddCommand(createFinBackupCmd)
 }
 
-func createFinBackupJobMain() error {
-	fbcName := os.Getenv("FINBACKUPCONFIG_NAME")
+func createFinBackupJobMain(cmd *cobra.Command) error {
 	if fbcName == "" {
-		return fmt.Errorf("FINBACKUPCONFIG_NAME environment variable is not set")
+		return fmt.Errorf("--fin-backup-config-name is required")
 	}
-	fbcNamespace := os.Getenv("FINBACKUPCONFIG_NAMESPACE")
 	if fbcNamespace == "" {
-		return fmt.Errorf("FINBACKUPCONFIG_NAMESPACE environment variable is not set")
+		return fmt.Errorf("--fin-backup-config-namespace is required")
 	}
-	jobName := os.Getenv("CURRENT_JOB_NAME")
+
+	jobName := os.Getenv("JobName")
 	if jobName == "" {
-		return fmt.Errorf("CURRENT_JOB_NAME environment variable is not set")
+		return fmt.Errorf("JobName environment variable is not set")
 	}
-	jobCreatedAtStr := os.Getenv("CURRENT_JOB_CREATION_TIMESTAMP")
+	jobCreatedAtStr := os.Getenv("JobCreationTimestamp")
 	if jobCreatedAtStr == "" {
-		return fmt.Errorf("CURRENT_JOB_CREATION_TIMESTAMP environment variable is not set")
+		return fmt.Errorf("JobCreationTimestamp environment variable is not set")
 	}
 	jobCreatedAt, err := time.Parse(time.RFC3339, jobCreatedAtStr)
 	if err != nil {
-		return fmt.Errorf("invalid CURRENT_JOB_CREATION_TIMESTAMP: %w", err)
+		return fmt.Errorf("invalid JobCreationTimestamp: %w", err)
 	}
 
-	config, err := rest.InClusterConfig()
+	k8sClient, err := getControllerClient()
 	if err != nil {
-		return fmt.Errorf("failed to get in-cluster config: %w", err)
-	}
-
-	scheme := runtime.NewScheme()
-	_ = clientgoscheme.AddToScheme(scheme)
-	_ = finv1.AddToScheme(scheme)
-
-	k8sClient, err := client.New(config, client.Options{Scheme: scheme})
-	if err != nil {
-		return fmt.Errorf("failed to create controller-runtime client: %w", err)
+		return fmt.Errorf("failed to create controller client: %w", err)
 	}
 
 	in := &input.CreateFinBackup{
