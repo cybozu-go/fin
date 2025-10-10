@@ -50,6 +50,7 @@ func controllerMain(args []string) error {
 	var rawImgExpansionUnitSize uint64
 	var webhookCertPath string
 	var webhookKeyPath string
+	var overwriteFBCSchedule string
 
 	fs := flag.NewFlagSet("", flag.ExitOnError)
 	fs.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "The address the metric endpoint binds to.")
@@ -67,6 +68,9 @@ func controllerMain(args []string) error {
 		"The file path of the webhook certificate file.")
 	fs.StringVar(&webhookKeyPath, "webhook-key-path", "",
 		"The file path of the webhook key file.")
+	fs.StringVar(&overwriteFBCSchedule, "overwrite-fbc-schedule", "",
+		"By setting this option, every CronJob created by this controller for every FinBackupConfig "+
+			"will use its value as .spec.schedule. This option is intended for testing purposes only.")
 	opts := zap.Options{
 		Development: true,
 	}
@@ -187,10 +191,12 @@ func controllerMain(args []string) error {
 	finBackupConfigReconciler := controller.NewFinBackupConfigReconciler(
 		mgr.GetClient(),
 		mgr.GetScheme(),
+		overwriteFBCSchedule,
 	)
 	if err := finBackupConfigReconciler.SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("unable to create controller FinBackupConfig: %w", err)
 	}
+	setupLog.Info("FinBackupConfig controller enabled")
 
 	if enableWebhook {
 		if err := webhookv1.SetupFinBackupWebhookWithManager(mgr); err != nil {
