@@ -128,6 +128,40 @@ func DeletePVC(ctx context.Context, client kubernetes.Interface, namespace, name
 	return client.CoreV1().PersistentVolumeClaims(namespace).Delete(ctx, name, metav1.DeleteOptions{PropagationPolicy: &policy})
 }
 
+func GetPodMoutingFilesystem(namespace, name, pvcName, image, mountPath string) *corev1.Pod {
+	return &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+		},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{
+					Name:    name,
+					Image:   image,
+					Command: []string{"pause"},
+					VolumeMounts: []corev1.VolumeMount{
+						{
+							Name:      "data",
+							MountPath: mountPath,
+						},
+					},
+				},
+			},
+			Volumes: []corev1.Volume{
+				{
+					Name: "data",
+					VolumeSource: corev1.VolumeSource{
+						PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+							ClaimName: pvcName,
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
 func GetPod(namespace, name, pvcName, image, devicePath string) (*corev1.Pod, error) {
 	tmpl := `apiVersion: v1
 kind: Pod
@@ -321,7 +355,7 @@ func DeleteFinRestore(ctx context.Context, client client.Client, namespace, name
 	return client.Delete(ctx, finrestore)
 }
 
-func WaitForFinBackupStoredToNode(ctx context.Context, client client.Client, namespace, name string, timeout time.Duration) error {
+func WaitForFinBackupStoredToNodeAndVerified(ctx context.Context, client client.Client, namespace, name string, timeout time.Duration) error {
 	return wait.PollUntilContextTimeout(ctx, time.Second, timeout, true, func(ctx context.Context) (bool, error) {
 		finbackup := &finv1.FinBackup{}
 		err := client.Get(ctx, types.NamespacedName{Namespace: namespace, Name: name}, finbackup)
@@ -329,7 +363,7 @@ func WaitForFinBackupStoredToNode(ctx context.Context, client client.Client, nam
 			return false, err
 		}
 
-		return finbackup.IsStoredToNode(), nil
+		return finbackup.IsStoredToNode() && finbackup.IsVerifiedTrue(), nil
 	})
 }
 

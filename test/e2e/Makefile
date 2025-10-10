@@ -13,6 +13,7 @@ NS := rook-ceph
 NODE_NAME := minikube-worker
 LOOP_FILE := loop.img
 LOOP_DEV := /dev/loop0
+FIN_VOLUME_LOOP_DEV := /dev/loop1
 POLLING_INTERVAL := 2
 TIMEOUT_SECS := 600
 
@@ -82,7 +83,12 @@ create-loop-dev:
 
 .PHONY: setup-fin-volume
 setup-fin-volume: $(MINIKUBE) $(KUBECTL)
+	$(MINIKUBE) ssh -- sudo dd if=/dev/zero of=fin-volume.img bs=1G seek=1 count=0
+	$(MINIKUBE) ssh -- sudo losetup $(FIN_VOLUME_LOOP_DEV) fin-volume.img || :
+	$(MINIKUBE) ssh -- sudo mkfs.xfs $(FIN_VOLUME_LOOP_DEV) || :
 	$(MINIKUBE) ssh -- sudo mkdir -p /fin
+	$(MINIKUBE) ssh -- sudo umount $(FIN_VOLUME_LOOP_DEV) || :
+	$(MINIKUBE) ssh -- sudo mount $(FIN_VOLUME_LOOP_DEV) /fin
 	$(MINIKUBE) ssh -- sudo chown -R 10000:10000 /fin
 	$(MINIKUBE) ssh -- ls -ld /fin
 	$(KUBECTL) apply -f testdata/fin-volume.yaml
