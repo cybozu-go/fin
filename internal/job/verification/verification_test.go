@@ -430,8 +430,8 @@ func TestVerification_Error_FsckFailure(t *testing.T) {
 	// Arrange
 	cfg := setup(t, &setupInput{})
 
-	backup := backup.NewBackup(cfg.fullBackupInput)
-	err := backup.Perform()
+	backup1 := backup.NewBackup(cfg.fullBackupInput)
+	err := backup1.Perform()
 	require.NoError(t, err)
 
 	createFakeE2fsck(t, []byte("") /* wrong data */)
