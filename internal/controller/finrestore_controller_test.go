@@ -6,10 +6,12 @@ import (
 	finv1 "github.com/cybozu-go/fin/api/v1"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -350,6 +352,139 @@ var _ = Describe("FinRestore Controller Reconcile Test", Ordered, func() {
 			_, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(finrestore)})
 			Expect(err).Should(HaveOccurred())
 			Expect(err).Should(MatchError(ContainSubstring("failed to manage restore pvc due to uid mismatch")))
+		})
+	})
+
+	// CSATEST-1553
+	// Description:
+	//   Do nothing when FinRestore is ReadyToUse.
+	//
+	// Arrange:
+	//   - A backup-target PVC exists.
+	//   - FinBackup referring to the PVC exists and is StoredToNode.
+	//
+	// Act:
+	//   1. Create a FinRestore and make it ReadyToUse and run reconciliation.
+	//   2. Create a restore PV referring to the restore PVC and run reconciliation.
+	//   3. Make the FinRestore ready by getting the restore job complete and run reconciliation again.
+	//   4. Delete the restore job and run reconciliation.
+	//
+	// Assert:
+	//   - Restore PVC exists.
+	//   - Restore job PVC exists.
+	//   - Restore job PV exists.
+	//   - Restore Job is not created.
+	Context("Do nothing when FinRestore is ReadyToUse", func() {
+		var pvc *corev1.PersistentVolumeClaim
+		var pv *corev1.PersistentVolume
+		var finbackup *finv1.FinBackup
+		var finrestore *finv1.FinRestore
+		var restorePVC corev1.PersistentVolumeClaim
+		var restoreJobPVC corev1.PersistentVolumeClaim
+		var restoreJobPV corev1.PersistentVolume
+
+		BeforeEach(func(ctx SpecContext) {
+			By("creating backup-target PVC and PV")
+			pvc, pv = NewPVCAndPV(sc, namespace, "test-pvc-1553", "test-pv-1553", rbdImageName)
+			Expect(k8sClient.Create(ctx, pvc)).Should(Succeed())
+			Expect(k8sClient.Create(ctx, pv)).Should(Succeed())
+
+			By("creating FinBackup and making it StoredToNode")
+			finbackup = CreateFinBackupStored(ctx, k8sClient, namespace, "test-fin-backup-1553", pvc, 1, "test-node")
+
+			By("creating FinRestore targeting the FinBackup")
+			finrestore = NewFinRestore(namespace, "test-restore-1553", finbackup.Name, "restore-pvc-1553", namespace)
+			Expect(k8sClient.Create(ctx, finrestore)).Should(Succeed())
+
+			By("running reconciliation once")
+			_, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(finrestore)})
+			Expect(err).ShouldNot(HaveOccurred())
+
+			By("creating restore PV and binding restore PVC (simulate external-provisioner)")
+			restorePVCKey := client.ObjectKey{Namespace: finrestore.Spec.PVCNamespace, Name: finrestore.Spec.PVC}
+			Expect(k8sClient.Get(ctx, restorePVCKey, &restorePVC)).Should(Succeed())
+			restorePV := &corev1.PersistentVolume{
+				ObjectMeta: metav1.ObjectMeta{Name: "restore-pv-1553"},
+				Spec: corev1.PersistentVolumeSpec{
+					AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
+					Capacity: corev1.ResourceList{
+						corev1.ResourceStorage: restorePVC.Spec.Resources.Requests[corev1.ResourceStorage],
+					},
+					ClaimRef: &corev1.ObjectReference{Namespace: restorePVC.Namespace, Name: restorePVC.Name, UID: restorePVC.UID},
+					PersistentVolumeSource: corev1.PersistentVolumeSource{
+						CSI: &corev1.CSIPersistentVolumeSource{
+							Driver: "rbd.csi.ceph.com",
+							VolumeAttributes: map[string]string{
+								"clusterID":     restorePVC.Namespace,
+								"pool":          "rook-ceph-block-pool",
+								"imageName":     "rook-ceph-block-pool-image",
+								"imageFeatures": "layering",
+								"imageFormat":   "2",
+							},
+							VolumeHandle: "rook-ceph-block-pool-volume",
+						},
+					},
+					PersistentVolumeReclaimPolicy: corev1.PersistentVolumeReclaimRetain,
+					StorageClassName:              *restorePVC.Spec.StorageClassName,
+					VolumeMode:                    restorePVC.Spec.VolumeMode,
+				},
+			}
+			Expect(k8sClient.Create(ctx, restorePV)).Should(Succeed())
+			// Bind PVC to PV
+			Expect(k8sClient.Get(ctx, restorePVCKey, &restorePVC)).Should(Succeed())
+			restorePVC.Spec.VolumeName = restorePV.Name
+			Expect(k8sClient.Update(ctx, &restorePVC)).Should(Succeed())
+			restorePVC.Status.Phase = corev1.ClaimBound
+			Expect(k8sClient.Status().Update(ctx, &restorePVC)).Should(Succeed())
+
+			By("running reconciliation after restore PVC is Bound")
+			_, err = reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(finrestore)})
+			Expect(err).ShouldNot(HaveOccurred())
+
+			By("making the restore job complete")
+			var restoreJob batchv1.Job
+			restoreJobKey := client.ObjectKey{Namespace: finrestore.Namespace, Name: restoreJobName(finrestore)}
+			Expect(k8sClient.Get(ctx, restoreJobKey, &restoreJob)).Should(Succeed())
+			makeJobSucceeded(&restoreJob)
+			Expect(k8sClient.Status().Update(ctx, &restoreJob)).ShouldNot(HaveOccurred())
+
+			By("making FinRestore ready")
+			_, err = reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(finrestore)})
+			Expect(err).ShouldNot(HaveOccurred())
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(finrestore), finrestore)).Should(Succeed())
+			Expect(finrestore.IsReady()).Should(BeTrue())
+		})
+
+		AfterEach(func(ctx SpecContext) {
+			Expect(k8sClient.Delete(ctx, finrestore)).Should(Succeed())
+			Expect(k8sClient.Delete(ctx, finbackup)).Should(Succeed())
+			DeletePVCAndPV(ctx, pvc.Namespace, pvc.Name)
+			DeletePVCAndPV(ctx, restorePVC.Namespace, restorePVC.Name)
+			DeletePVCAndPV(ctx, restoreJobPVC.Namespace, restoreJobPVC.Name)
+		})
+
+		It("should not recreate the restore job and keep existing resources intact", func(ctx SpecContext) {
+			By("deleting the restore job to confirm that it will not be recreated by the reconciler")
+			var restoreJob batchv1.Job
+			restoreJobKey := client.ObjectKey{Namespace: finrestore.Namespace, Name: restoreJobName(finrestore)}
+			Expect(k8sClient.Get(ctx, restoreJobKey, &restoreJob)).Should(Succeed())
+			options := &client.DeleteOptions{PropagationPolicy: ptr.To(metav1.DeletePropagationBackground)}
+			Expect(k8sClient.Delete(ctx, &restoreJob, options)).Should(Succeed())
+
+			By("running reconciliation after FinRestore is ReadyToUse")
+			_, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(finrestore)})
+			Expect(err).ShouldNot(HaveOccurred())
+
+			By("verifying restore PVC exists")
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(&restorePVC), &restorePVC)).Should(Succeed())
+
+			By("verifying both restore job PVC and PV exist")
+			jobPVCKey := client.ObjectKey{Namespace: finrestore.Namespace, Name: restoreJobPVCName(finrestore)}
+			Expect(k8sClient.Get(ctx, jobPVCKey, &restoreJobPVC)).Should(Succeed())
+			Expect(k8sClient.Get(ctx, client.ObjectKey{Name: restoreJobPVName(finrestore)}, &restoreJobPV)).Should(Succeed())
+
+			By("verifying that the restore job is not recreated")
+			ExpectNoJob(ctx, k8sClient, restoreJobName(finrestore), finrestore.Namespace)
 		})
 	})
 })
