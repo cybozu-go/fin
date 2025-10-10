@@ -69,6 +69,6 @@ func createFinBackupJobMain(cmd *cobra.Command) error {
 		slog.Error("create-finbackup failed", "err", err)
 		return err
 	}
-	slog.Info("create-finbackup job completed successfully")
+	slog.Info("create-finbackup-job completed successfully")
 	return nil
 }
