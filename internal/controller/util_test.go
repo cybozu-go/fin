@@ -45,8 +45,12 @@ func makeJobSucceeded(job *batchv1.Job) {
 			Status: corev1.ConditionTrue,
 		},
 	}
-	job.Status.StartTime = &metav1.Time{Time: time.Now()}
-	job.Status.CompletionTime = job.Status.StartTime
+	if job.Status.StartTime == nil {
+		job.Status.StartTime = &metav1.Time{Time: time.Now()}
+	}
+	if job.Status.CompletionTime == nil {
+		job.Status.CompletionTime = job.Status.StartTime
+	}
 	job.Status.Succeeded = 1
 }
 
@@ -100,10 +104,16 @@ func NewPVCAndPV(
 	}
 	return pvc, pv
 }
-func MakeFinBackupStoredToNode(ctx context.Context, finbackup *finv1.FinBackup) {
+
+func makeFinBackupMeetConditionAfterJobCompletes(
+	ctx context.Context,
+	finbackup *finv1.FinBackup,
+	jobName string,
+	condition func(*finv1.FinBackup) bool,
+) {
 	GinkgoHelper()
 	Eventually(func(g Gomega) {
-		key := types.NamespacedName{Name: backupJobName(finbackup), Namespace: namespace}
+		key := types.NamespacedName{Name: jobName, Namespace: namespace}
 		var job batchv1.Job
 		g.Expect(k8sClient.Get(ctx, key, &job)).To(Succeed())
 		makeJobSucceeded(&job)
@@ -115,8 +125,32 @@ func MakeFinBackupStoredToNode(ctx context.Context, finbackup *finv1.FinBackup) 
 		var createdFinBackup finv1.FinBackup
 		err := k8sClient.Get(ctx, client.ObjectKeyFromObject(finbackup), &createdFinBackup)
 		g.Expect(err).ShouldNot(HaveOccurred())
-		g.Expect(createdFinBackup.IsStoredToNode()).Should(BeTrue(), "FinBackup should be ready")
+		g.Expect(condition(&createdFinBackup)).Should(BeTrue(), "FinBackup should meet the condition")
 	}, "5s", "1s").Should(Succeed())
+}
+
+func MakeFinBackupStoredToNode(ctx context.Context, finbackup *finv1.FinBackup) {
+	GinkgoHelper()
+	makeFinBackupMeetConditionAfterJobCompletes(
+		ctx,
+		finbackup,
+		backupJobName(finbackup),
+		func(fb *finv1.FinBackup) bool {
+			return fb.IsStoredToNode()
+		},
+	)
+}
+
+func MakeFinBackupVerified(ctx context.Context, finbackup *finv1.FinBackup) {
+	GinkgoHelper()
+	makeFinBackupMeetConditionAfterJobCompletes(
+		ctx,
+		finbackup,
+		verificationJobName(finbackup),
+		func(fb *finv1.FinBackup) bool {
+			return fb.IsVerifiedTrue()
+		},
+	)
 }
 
 func WaitForFinBackupRemoved(ctx context.Context, finbackup *finv1.FinBackup) {
@@ -246,7 +280,7 @@ func createTwoBackupsOrdered(
 	return smaller, larger
 }
 
-func CreateFinBackupStored(
+func CreateFinBackupStoredAndVerified(
 	ctx context.Context,
 	c client.Client,
 	namespace, name string,
@@ -267,6 +301,11 @@ func CreateFinBackupStored(
 		Type:   finv1.BackupConditionStoredToNode,
 		Status: metav1.ConditionTrue,
 		Reason: "BackupCompleted",
+	})
+	meta.SetStatusCondition(&finbackup.Status.Conditions, metav1.Condition{
+		Type:   finv1.BackupConditionVerified,
+		Status: metav1.ConditionTrue,
+		Reason: "Verified",
 	})
 	Expect(c.Status().Update(ctx, finbackup)).Should(Succeed())
 	return finbackup

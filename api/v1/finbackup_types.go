@@ -51,7 +51,9 @@ type FinBackupStatus struct {
 }
 
 const (
-	BackupConditionStoredToNode = "StoredToNode"
+	BackupConditionStoredToNode        = "StoredToNode"
+	BackupConditionVerified            = "Verified"
+	BackupConditionVerificationSkipped = "VerificationSkipped"
 )
 
 //+kubebuilder:object:root=true
@@ -79,6 +81,27 @@ type FinBackupList struct {
 
 func (fb *FinBackup) IsStoredToNode() bool {
 	return meta.IsStatusConditionTrue(fb.Status.Conditions, BackupConditionStoredToNode)
+}
+
+func (fb *FinBackup) DoesVerifiedExist() bool {
+	return meta.FindStatusCondition(fb.Status.Conditions, BackupConditionVerified) != nil
+}
+
+func (fb *FinBackup) IsVerifiedTrue() bool {
+	return meta.IsStatusConditionTrue(fb.Status.Conditions, BackupConditionVerified)
+}
+
+func (fb *FinBackup) IsVerifiedFalse() bool {
+	return meta.IsStatusConditionFalse(fb.Status.Conditions, BackupConditionVerified)
+}
+
+func (fb *FinBackup) IsVerificationSkipped() bool {
+	return meta.IsStatusConditionTrue(fb.Status.Conditions, BackupConditionVerificationSkipped)
+}
+
+func (fb *FinBackup) CanBeRestored(allowUnverified bool) bool {
+	return fb.IsStoredToNode() &&
+		(fb.IsVerifiedTrue() || (fb.IsVerificationSkipped() && allowUnverified))
 }
 
 func init() {

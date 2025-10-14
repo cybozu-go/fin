@@ -170,9 +170,12 @@ func (r *FinRestoreReconciler) reconcileCreateOrUpdate(
 		return ctrl.Result{}, nil
 	}
 
-	if !backup.IsStoredToNode() {
-		logger.Info("backup is not yet stored to node", "backup", backup.Name, "namespace", backup.Namespace)
-		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+	if !backup.CanBeRestored(restore.Spec.AllowUnverified) {
+		logger.Info("backup is not ready to be restored",
+			"backup", backup.Name,
+			"namespace", backup.Namespace,
+			"allowUnverified", restore.Spec.AllowUnverified)
+		return ctrl.Result{}, nil
 	}
 
 	src, err := r.getRestorePVCSource(&backup)
@@ -584,7 +587,7 @@ func (r *FinRestoreReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			handler.EnqueueRequestsFromMapFunc(enqueueOnJobEvent(
 				annotationFinRestoreName, annotationFinRestoreNamespace)),
 			builder.WithPredicates(predicate.Funcs{
-				UpdateFunc: enqueueOnJobCompletion,
+				UpdateFunc: enqueueOnJobCompletionOrFailure,
 			})).
 		Complete(r)
 }
