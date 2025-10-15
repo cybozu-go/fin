@@ -1,5 +1,6 @@
 name: "Release"
 on:
+  workflow_dispatch:
   push:
     tags:
       - "v*"
@@ -26,7 +27,7 @@ jobs:
           go-version-file: "go.mod"
 
       - run: echo ${{ secrets.GITHUB_TOKEN }} | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-      - run: make docker-build IMG=ghcr.io/cybozu-go/fin:${{ steps.check_version.outputs.version }}
+      - run: make docker-build IMG=ghcr.io/cybozu-go/fin TAG=${{ steps.check_version.outputs.version }}
       - run: docker push ghcr.io/cybozu-go/fin:${{ steps.check_version.outputs.version }}
 
       - name: "Push branch tag"
