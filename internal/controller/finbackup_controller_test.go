@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"strconv"
 	"testing"
@@ -33,6 +34,65 @@ var (
 func init() {
 	cleanupJobRequeueAfter = 1 * time.Second
 	deletionJobRequeueAfter = 1 * time.Second
+}
+
+func makeJobFailWithExitCode2(ctx SpecContext, jobName string) {
+	GinkgoHelper()
+	Eventually(func(g Gomega, ctx SpecContext) {
+		var pod corev1.Pod
+		pod.SetName(fmt.Sprintf("%s-pod", jobName))
+		pod.SetNamespace(namespace)
+		_, err := ctrl.CreateOrUpdate(ctx, k8sClient, &pod, func() error {
+			pod.Labels = map[string]string{
+				"batch.kubernetes.io/job-name": jobName,
+			}
+			pod.Spec = corev1.PodSpec{
+				Containers: []corev1.Container{
+					{
+						Name:  "container-name",
+						Image: "container-image",
+					},
+				},
+			}
+			return nil
+		})
+		g.Expect(err).NotTo(HaveOccurred())
+		pod.Status = corev1.PodStatus{
+			ContainerStatuses: []corev1.ContainerStatus{
+				{
+					State: corev1.ContainerState{
+						Terminated: &corev1.ContainerStateTerminated{
+							ExitCode: 2,
+						},
+					},
+				},
+			},
+		}
+		err = k8sClient.Status().Update(ctx, &pod)
+		g.Expect(err).NotTo(HaveOccurred())
+
+		jobKey := types.NamespacedName{Name: jobName, Namespace: namespace}
+		var job batchv1.Job
+		g.Expect(k8sClient.Get(ctx, jobKey, &job)).To(Succeed())
+		job.Status.Conditions = []batchv1.JobCondition{
+			{
+				Type:   batchv1.JobFailed,
+				Status: corev1.ConditionTrue,
+				Reason: "PodFailurePolicy",
+			},
+			{
+				Type:   batchv1.JobFailureTarget,
+				Status: corev1.ConditionTrue,
+				Reason: "PodFailurePolicy",
+			},
+		}
+		if job.Status.StartTime == nil {
+			job.Status.StartTime = &metav1.Time{Time: time.Now()}
+		}
+		job.Status.Failed = 1
+		err = k8sClient.Status().Update(ctx, &job)
+		g.Expect(err).ShouldNot(HaveOccurred())
+	}, "5s", "1s").WithContext(ctx).Should(Succeed())
 }
 
 var _ = Describe("FinBackup Controller integration test", Ordered, func() {
@@ -389,6 +449,249 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 			}, "5s", "1s").Should(Succeed())
 		})
 	})
+
+	Describe("verification process", func() {
+		var pvc *corev1.PersistentVolumeClaim
+
+		BeforeEach(func(ctx SpecContext) {
+			By("creating a pair of PVC and PV")
+			var pv *corev1.PersistentVolume
+			pvc, pv = NewPVCAndPV(sc1, namespace, "pvc-sample", "pv-sample", rbdImageName)
+			Expect(k8sClient.Create(ctx, pvc)).Should(Succeed())
+			Expect(k8sClient.Create(ctx, pv)).Should(Succeed())
+		})
+
+		AfterEach(func(ctx SpecContext) {
+			By("cleaning up PVC and PV")
+			DeletePVCAndPV(ctx, pvc.Namespace, pvc.Name)
+		})
+
+		It("should set the condition Verified to False when fsck failed", func(ctx SpecContext) {
+			// Description:
+			//   Ensure that the condition Verified is set to False when fsck fails.
+			//   In addition, when an incremental FinBackup is created after that,
+			//   a backup Job is not created for the incremental FinBackup.
+			//
+			// Arrange:
+			//   - Create a pair of PVC and PV, which is done in BeforeEach.
+			//   - Create a FinBackup resource and make it StoredToNode.
+			//
+			// Act (1):
+			//   Make the verification Job fail.
+			//
+			// Assert (1):
+			//   The FinBackup has the condition Verified=False.
+			//
+			// Act (2):
+			//   Create another FinBackup as an incremental backup.
+			//
+			// Assert (2):
+			//   A backup Job is not created for the incremental FinBackup.
+
+			// Arrange
+			By("creating a full FinBackup")
+			finbackup1 := NewFinBackup(namespace, "fb1-sample", pvc.Name, pvc.Namespace, "test-node")
+			Expect(k8sClient.Create(ctx, finbackup1)).Should(Succeed())
+			MakeFinBackupStoredToNode(ctx, finbackup1)
+
+			// Act (1)
+			By("making the verification Job fail with exit code 2")
+			makeJobFailWithExitCode2(ctx, verificationJobName(finbackup1))
+
+			// Assert (1)
+			By("checking the FinBackup has the condition Verified=False")
+			Eventually(func(g Gomega) {
+				var createdFinBackup finv1.FinBackup
+				err := k8sClient.Get(ctx, client.ObjectKeyFromObject(finbackup1), &createdFinBackup)
+				g.Expect(err).ShouldNot(HaveOccurred())
+				g.Expect(createdFinBackup.IsVerifiedFalse()).Should(BeTrue(), "FinBackup should meet the condition")
+			}, "5s", "1s").Should(Succeed())
+
+			// Act (2)
+			By("creating an incremental FinBackup")
+			finbackup2 := NewFinBackup(namespace, "fb2-sample", pvc.Name, pvc.Namespace, "test-node")
+			Expect(k8sClient.Create(ctx, finbackup2)).Should(Succeed())
+
+			// Assert (2)
+			By("checking a new backup Job is not created")
+			Consistently(func(g Gomega) {
+				key := types.NamespacedName{Name: backupJobName(finbackup2), Namespace: namespace}
+				var job batchv1.Job
+				err := k8sClient.Get(ctx, key, &job)
+				Expect(err).To(MatchError(k8serrors.IsNotFound, "should not find the Job"))
+			}, "3s", "1s").Should(Succeed())
+
+			By("cleaning up")
+			if err := k8sClient.Delete(ctx, finbackup1); err == nil {
+				WaitForFinBackupRemoved(ctx, finbackup1)
+			}
+			if err := k8sClient.Delete(ctx, finbackup2); err == nil {
+				WaitForFinBackupRemoved(ctx, finbackup2)
+			}
+		})
+
+		It("should skip verification when skip-verify annotation is set to true", func(ctx SpecContext) {
+			// Description:
+			//   Ensure that verification is skipped when the skip-verify annotation is set to true.
+			//   In addition, when the annotation is removed, a verification Job is not created.
+			//
+			// Arrange:
+			//   Create a pair of PVC and PV, which is done in BeforeEach.
+			//
+			// Act (1):
+			//   - Create a FinBackup resource with the skip-verify annotation set to true.
+			//   - Make the FinBackup StoredToNode.
+			//
+			// Assert (1):
+			//   - The FinBackup has the condition VerificationSkipped=True.
+			//   - A verification Job is not created.
+			//   - A cleanup Job is created.
+			//
+			// Act (2):
+			//   - Make the cleanup Job succeed.
+			//   - Remove the skip-verify annotation.
+			//
+			// Assert (2):
+			//   - A verification Job is not created.
+
+			// Act (1)
+			By("creating a full FinBackup")
+			finbackup1 := NewFinBackup(namespace, "fb1-sample", pvc.Name, pvc.Namespace, "test-node")
+			finbackup1.SetAnnotations(map[string]string{
+				annotationSkipVerify: "true", // Set skip-verify annotation to true
+			})
+			Expect(k8sClient.Create(ctx, finbackup1)).Should(Succeed())
+			MakeFinBackupStoredToNode(ctx, finbackup1)
+
+			// Assert (1)
+			By("checking the FinBackup has the condition VerificationSkipped=True")
+			Eventually(func(g Gomega) {
+				var createdFinBackup finv1.FinBackup
+				err := k8sClient.Get(ctx, client.ObjectKeyFromObject(finbackup1), &createdFinBackup)
+				g.Expect(err).ShouldNot(HaveOccurred())
+				g.Expect(createdFinBackup.IsVerificationSkipped()).Should(BeTrue(), "FinBackup should meet the condition")
+			}, "5s", "1s").Should(Succeed())
+
+			By("checking the verification Job is not found")
+			ExpectNoJob(ctx, k8sClient, verificationJobName(finbackup1), namespace)
+
+			By("checking the cleanup Job is created")
+			cleanupJobKey := client.ObjectKey{Namespace: namespace, Name: cleanupJobName(finbackup1)}
+			Eventually(func(g Gomega, ctx SpecContext) {
+				var job batchv1.Job
+				g.Expect(k8sClient.Get(ctx, cleanupJobKey, &job)).To(Succeed())
+			}, "5s", "1s").WithContext(ctx).Should(Succeed())
+
+			// Act (2)
+			By("making the cleanup Job succeed", func() {
+				var job batchv1.Job
+				Expect(k8sClient.Get(ctx, cleanupJobKey, &job)).To(Succeed())
+				makeJobSucceeded(&job)
+				err := k8sClient.Status().Update(ctx, &job)
+				Expect(err).ShouldNot(HaveOccurred())
+			})
+
+			By("removing the skip-verify annotation")
+			Eventually(func(g Gomega, ctx SpecContext) {
+				var fb finv1.FinBackup
+				fb.SetName(finbackup1.GetName())
+				fb.SetNamespace(finbackup1.GetNamespace())
+				_, err := ctrl.CreateOrUpdate(ctx, k8sClient, &fb, func() error {
+					fb.SetAnnotations(map[string]string{})
+					return nil
+				})
+				g.Expect(err).NotTo(HaveOccurred())
+			}, "5s", "1s").WithContext(ctx).Should(Succeed())
+
+			// Assert (2)
+			By("checking a verification Job is not created")
+			Consistently(func(g Gomega, ctx SpecContext) {
+				verifJobKey := client.ObjectKey{Namespace: namespace, Name: verificationJobName(finbackup1)}
+				var job batchv1.Job
+				err := k8sClient.Get(ctx, verifJobKey, &job)
+				g.Expect(err).To(MatchError(k8serrors.IsNotFound, "should not find the Job"))
+			}, "3s", "1s").WithContext(ctx).Should(Succeed())
+
+			By("deleting the FinBackup")
+			Expect(k8sClient.Delete(ctx, finbackup1)).Should(Succeed())
+			WaitForFinBackupRemoved(ctx, finbackup1)
+
+			By("checking the cleanup Job is deleted")
+			ExpectNoJob(ctx, k8sClient, cleanupJobName(finbackup1), namespace)
+		})
+
+		It("should not create verification Job before the FinBackup becomes StoredToNode", func(ctx SpecContext) {
+			// Description:
+			//   Ensure that a verification Job is not created before the FinBackup becomes StoredToNode.
+			//
+			// Arrange:
+			//   Create a pair of PVC and PV, which is done in BeforeEach.
+			//
+			// Act:
+			//   Create a FinBackup resource, but do not make it StoredToNode.
+			//
+			// Assert:
+			//   A verification Job is not created.
+
+			// Act
+			By("creating a full FinBackup")
+			finbackup1 := NewFinBackup(namespace, "fb1-sample", pvc.Name, pvc.Namespace, "test-node")
+			Expect(k8sClient.Create(ctx, finbackup1)).Should(Succeed())
+
+			// Assert
+			Consistently(func(g Gomega, ctx SpecContext) {
+				verifJobKey := client.ObjectKey{Namespace: namespace, Name: verificationJobName(finbackup1)}
+				var job batchv1.Job
+				err := k8sClient.Get(ctx, verifJobKey, &job)
+				g.Expect(err).To(MatchError(k8serrors.IsNotFound, "should not find the Job"))
+			}, "3s", "1s").WithContext(ctx).Should(Succeed())
+
+			By("cleaning up")
+			Expect(k8sClient.Delete(ctx, finbackup1)).Should(Succeed())
+			WaitForFinBackupRemoved(ctx, finbackup1)
+		})
+
+		It("should delete verification Job when the FinBackup is deleted", func(ctx SpecContext) {
+			// Description:
+			//   Ensure that a verification Job is deleted when the FinBackup is deleted.
+			//
+			// Arrange:
+			//   - Create a pair of PVC and PV, which is done in BeforeEach.
+			//   - Create a FinBackup resource and make it StoredToNode.
+			//
+			// Act:
+			//   Delete the FinBackup.
+			//
+			// Assert:
+			//   The verification Job is deleted.
+
+			// Arrange
+			By("creating a full FinBackup")
+			finbackup1 := NewFinBackup(namespace, "fb1-sample", pvc.Name, pvc.Namespace, "test-node")
+			Expect(k8sClient.Create(ctx, finbackup1)).Should(Succeed())
+			MakeFinBackupStoredToNode(ctx, finbackup1)
+
+			By("waiting for the verification Job to be created")
+			verifJobKey := client.ObjectKey{Namespace: namespace, Name: verificationJobName(finbackup1)}
+			Eventually(func(g Gomega, ctx SpecContext) {
+				var job batchv1.Job
+				g.Expect(k8sClient.Get(ctx, verifJobKey, &job)).To(Succeed())
+			}, "5s", "1s").WithContext(ctx).Should(Succeed())
+
+			// Act
+			By("deleting the FinBackup")
+			Expect(k8sClient.Delete(ctx, finbackup1)).Should(Succeed())
+			WaitForFinBackupRemoved(ctx, finbackup1)
+
+			// Assert
+			By("checking the verification Job is deleted")
+			Eventually(func(g Gomega, ctx SpecContext) {
+				var job batchv1.Job
+				err := k8sClient.Get(ctx, verifJobKey, &job)
+				g.Expect(err).To(MatchError(k8serrors.IsNotFound, "should not find the Job"))
+			}, "5s", "1s").WithContext(ctx).Should(Succeed())
+		})
+	})
 })
 
 var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
@@ -651,7 +954,7 @@ var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
 				By("checking that the FinBackup is deleted")
 				err = k8sClient.Get(ctx, client.ObjectKeyFromObject(finbackup), finbackup)
 				Expect(err).Should(HaveOccurred())
-				Expect(k8serrors.IsNotFound(err)).Should(BeTrue())
+				Expect(err).To(MatchError(k8serrors.IsNotFound, "should not find the FinBackup"))
 
 				By("checking that no cleanup or deletion jobs are created")
 				ExpectNoJob(ctx, k8sClient, cleanupJobName(finbackup), finbackup.Namespace)
