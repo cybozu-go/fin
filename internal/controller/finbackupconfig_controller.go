@@ -87,7 +87,7 @@ func (r *FinBackupConfigReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 
 	serviceAccountName := os.Getenv("CREATE_FINBACKUP_JOB_SERVICE_ACCOUNT")
 
-	if err := r.createOrUpdateCronJob(ctx, &fbc, r.managedCephClusterID, serviceAccountName, image); err != nil {
+	if err := r.createOrUpdateCronJob(ctx, &fbc, fbc.Namespace, serviceAccountName, image); err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to create or update CronJob: %w", err)
 	}
 

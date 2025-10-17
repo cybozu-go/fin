@@ -143,7 +143,7 @@ var _ = Describe("FinBackupConfig Controller", func() {
 			cronJobName := "fbc-" + string(fbc.UID)
 			cronJob := &batchv1.CronJob{}
 			Eventually(func() error {
-				return k8sClient.Get(ctx, types.NamespacedName{Name: cronJobName, Namespace: namespace}, cronJob)
+				return k8sClient.Get(ctx, types.NamespacedName{Name: cronJobName, Namespace: fbc.Namespace}, cronJob)
 			}, "5s", "1s").Should(Succeed())
 
 			Expect(cronJob.Spec.Schedule).To(Equal("0 2 * * *"))
@@ -253,7 +253,7 @@ var _ = Describe("FinBackupConfig Controller", func() {
 			cronJob := &batchv1.CronJob{}
 			cronJobName := "fbc-" + string(fbc.UID)
 			Consistently(func() error {
-				return k8sClient.Get(ctx, types.NamespacedName{Name: cronJobName, Namespace: namespace}, cronJob)
+				return k8sClient.Get(ctx, types.NamespacedName{Name: cronJobName, Namespace: fbc.Namespace}, cronJob)
 			}, 3*time.Second).ShouldNot(Succeed())
 		})
 
@@ -324,7 +324,7 @@ var _ = Describe("FinBackupConfig Controller", func() {
 			cronJob := &batchv1.CronJob{}
 			cronJobName := "fbc-" + string(fbc.UID)
 			Eventually(func() error {
-				return k8sClient.Get(ctx, types.NamespacedName{Name: cronJobName, Namespace: namespace}, cronJob)
+				return k8sClient.Get(ctx, types.NamespacedName{Name: cronJobName, Namespace: fbc.Namespace}, cronJob)
 			}, "5s", "1s").Should(Succeed())
 
 			Expect(cronJob.Spec.Schedule).To(Equal("15 3 * * *"))
