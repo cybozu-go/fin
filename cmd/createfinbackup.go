@@ -63,7 +63,11 @@ func createFinBackupJobMain() error {
 
 	tsStr, ok := job.Annotations["batch.kubernetes.io/cronjob-scheduled-timestamp"]
 	if !ok {
-		return fmt.Errorf("job %s/%s missing annotation batch.kubernetes.io/cronjob-scheduled-timestamp", podNamespace, jobName)
+		return fmt.Errorf(
+			"job %s/%s missing annotation batch.kubernetes.io/cronjob-scheduled-timestamp",
+			podNamespace,
+			jobName,
+		)
 	}
 	jobCreatedAt, err := time.Parse(time.RFC3339, tsStr)
 	if err != nil {

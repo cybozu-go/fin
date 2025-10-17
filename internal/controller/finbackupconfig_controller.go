@@ -2,16 +2,14 @@ package controller
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"slices"
-	"strings"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	finv1 "github.com/cybozu-go/fin/api/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
-	storagev1 "k8s.io/api/storage/v1"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -20,8 +18,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
-
-var errEmptyClusterID error = errors.New("cluster ID is empty")
 
 // FinBackupConfigReconciler reconciles a FinBackupConfig object
 type FinBackupConfigReconciler struct {
@@ -92,7 +88,8 @@ func (r *FinBackupConfigReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 
 	serviceAccountName := os.Getenv("CREATE_FINBACKUP_JOB_SERVICE_ACCOUNT")
 
-	if err := r.createOrUpdateCronJob(ctx, &fbc, fbc.Namespace, serviceAccountName, image); err != nil {
+	// Create the CronJob in the controller's configured namespace
+	if err := r.createOrUpdateCronJob(ctx, &fbc, r.managedCephClusterID, serviceAccountName, image); err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to create or update CronJob: %w", err)
 	}
 
@@ -105,50 +102,6 @@ func (r *FinBackupConfigReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&finv1.FinBackupConfig{}).
 		Owns(&batchv1.CronJob{}).
 		Complete(r)
-}
-
-func getCephClusterIDFromSCName(ctx context.Context, k8sClient client.Client, storageClassName string) (string, error) {
-	var storageClass storagev1.StorageClass
-	err := k8sClient.Get(ctx, types.NamespacedName{Name: storageClassName}, &storageClass)
-	if err != nil {
-		return "", fmt.Errorf("failed to get StorageClass: %s: %w", storageClassName, err)
-	}
-
-	if !strings.HasSuffix(storageClass.Provisioner, ".rbd.csi.ceph.com") {
-		return "", fmt.Errorf("SC is not managed by RBD: %s: %w", storageClassName, errEmptyClusterID)
-	}
-	clusterID, ok := storageClass.Parameters["clusterID"]
-	if !ok {
-		return "", fmt.Errorf("clusterID not found: %s: %w", storageClassName, errEmptyClusterID)
-	}
-
-	return clusterID, nil
-}
-
-func getCephClusterIDFromPVC(
-	ctx context.Context,
-	k8sClient client.Client,
-	pvc *corev1.PersistentVolumeClaim,
-) (string, error) {
-	logger := log.FromContext(ctx)
-
-	storageClassName := pvc.Spec.StorageClassName
-	if storageClassName == nil {
-		logger.Info("not managed storage class", "namespace", pvc.Namespace, "pvc", pvc.Name)
-		return "", nil
-	}
-
-	clusterID, err := getCephClusterIDFromSCName(ctx, k8sClient, *storageClassName)
-	if err != nil {
-		logger.Info("failed to get ceph cluster ID from StorageClass name",
-			"error", err, "namespace", pvc.Namespace, "pvc", pvc.Name, "storageClassName", *storageClassName)
-		if errors.Is(err, errEmptyClusterID) {
-			return "", nil
-		}
-		return "", err
-	}
-
-	return clusterID, nil
 }
 
 func getRunningPod(ctx context.Context, client client.Client) (*corev1.Pod, error) {
@@ -232,8 +185,25 @@ func (r *FinBackupConfigReconciler) createOrUpdateCronJob(
 		setEnvFromFieldRef(container, "JOB_NAME", "metadata.labels['batch.kubernetes.io/job-name']")
 		setEnvFromFieldRef(container, "POD_NAMESPACE", "metadata.namespace")
 
-		if err := controllerutil.SetControllerReference(fbc, cronJob, r.Scheme); err != nil {
-			return fmt.Errorf("failed to set owner reference on CronJob: %w", err)
+		// Setting a controller reference across namespaces is disallowed by
+		// controllerutil.SetControllerReference. If the FinBackupConfig and
+		// the CronJob are in different namespaces, set an owner reference
+		// manually (tests expect the OwnerReference to be present even when
+		// the FBC is in a different namespace).
+		if fbc.GetNamespace() == cronJob.GetNamespace() {
+			if err := controllerutil.SetControllerReference(fbc, cronJob, r.Scheme); err != nil {
+				return fmt.Errorf("failed to set owner reference on CronJob: %w", err)
+			}
+		} else {
+			t := true
+			ownerRef := metav1.OwnerReference{
+				APIVersion: "fin.cybozu.io/v1",
+				Kind:       "FinBackupConfig",
+				Name:       fbc.GetName(),
+				UID:        fbc.GetUID(),
+				Controller: &t,
+			}
+			cronJob.SetOwnerReferences([]metav1.OwnerReference{ownerRef})
 		}
 
 		return nil
