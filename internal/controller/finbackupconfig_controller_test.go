@@ -58,12 +58,6 @@ var _ = Describe("FinBackupConfig Controller", func() {
 		)
 	})
 
-	AfterEach(func() {
-		Expect(os.Unsetenv("POD_NAME")).To(Succeed())
-		Expect(os.Unsetenv("POD_NAMESPACE")).To(Succeed())
-		Expect(os.Unsetenv("CREATE_FINBACKUP_JOB_SERVICE_ACCOUNT")).To(Succeed())
-	})
-
 	Describe("CronJob creation", func() {
 		It("should create a CronJob when FBC is created", func() {
 			// Description:
@@ -104,8 +98,11 @@ var _ = Describe("FinBackupConfig Controller", func() {
 
 			By("setting up environment variables")
 			Expect(os.Setenv("POD_NAME", pod.Name)).To(Succeed())
+			DeferCleanup(func() { _ = os.Unsetenv("POD_NAME") })
 			Expect(os.Setenv("POD_NAMESPACE", pod.Namespace)).To(Succeed())
+			DeferCleanup(func() { _ = os.Unsetenv("POD_NAMESPACE") })
 			Expect(os.Setenv("CREATE_FINBACKUP_JOB_SERVICE_ACCOUNT", "test-sa")).To(Succeed())
+			DeferCleanup(func() { _ = os.Unsetenv("CREATE_FINBACKUP_JOB_SERVICE_ACCOUNT") })
 
 			By("creating FinBackupConfig")
 			fbc := &finv1.FinBackupConfig{
@@ -212,8 +209,11 @@ var _ = Describe("FinBackupConfig Controller", func() {
 			Expect(k8sClient.Create(ctx, pod)).NotTo(HaveOccurred())
 			defer func() { _ = k8sClient.Delete(ctx, pod) }()
 			Expect(os.Setenv("POD_NAME", pod.Name)).To(Succeed())
+			DeferCleanup(func() { _ = os.Unsetenv("POD_NAME") })
 			Expect(os.Setenv("POD_NAMESPACE", pod.Namespace)).To(Succeed())
+			DeferCleanup(func() { _ = os.Unsetenv("POD_NAMESPACE") })
 			Expect(os.Setenv("CREATE_FINBACKUP_JOB_SERVICE_ACCOUNT", "test-sa")).To(Succeed())
+			DeferCleanup(func() { _ = os.Unsetenv("CREATE_FINBACKUP_JOB_SERVICE_ACCOUNT") })
 
 			fbc := &finv1.FinBackupConfig{
 				ObjectMeta: metav1.ObjectMeta{Name: "fbc-mismatch", Namespace: namespace},
@@ -272,8 +272,11 @@ var _ = Describe("FinBackupConfig Controller", func() {
 			Expect(k8sClient.Create(ctx, pod)).NotTo(HaveOccurred())
 			defer func() { _ = k8sClient.Delete(ctx, pod) }()
 			Expect(os.Setenv("POD_NAME", pod.Name)).To(Succeed())
+			DeferCleanup(func() { _ = os.Unsetenv("POD_NAME") })
 			Expect(os.Setenv("POD_NAMESPACE", pod.Namespace)).To(Succeed())
+			DeferCleanup(func() { _ = os.Unsetenv("POD_NAMESPACE") })
 			Expect(os.Setenv("CREATE_FINBACKUP_JOB_SERVICE_ACCOUNT", "test-sa")).To(Succeed())
+			DeferCleanup(func() { _ = os.Unsetenv("CREATE_FINBACKUP_JOB_SERVICE_ACCOUNT") })
 
 			fbc := &finv1.FinBackupConfig{
 				ObjectMeta: metav1.ObjectMeta{Name: "fbc-overwrite", Namespace: namespace},
