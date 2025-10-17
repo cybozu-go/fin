@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"time"
 
@@ -46,10 +47,12 @@ func findEnvVar(envVars []corev1.EnvVar, name string) *corev1.EnvVar {
 var _ = Describe("FinBackupConfig Controller", func() {
 	var reconciler *FinBackupConfigReconciler
 	var ctx context.Context
-	const fbcNamespace = namespace + "-fbc"
+	var fbcNamespace string
 
 	BeforeEach(func() {
 		ctx = context.Background()
+
+		fbcNamespace = fmt.Sprintf("%s-fbc-%d", namespace, time.Now().UnixNano())
 
 		reconciler = NewFinBackupConfigReconciler(
 			k8sClient,
@@ -139,8 +142,9 @@ var _ = Describe("FinBackupConfig Controller", func() {
 			By("verifying CronJob was created with correct specifications")
 			cronJobName := "fbc-" + string(fbc.UID)
 			cronJob := &batchv1.CronJob{}
-			err = k8sClient.Get(ctx, types.NamespacedName{Name: cronJobName, Namespace: namespace}, cronJob)
-			Expect(err).NotTo(HaveOccurred())
+			Eventually(func() error {
+				return k8sClient.Get(ctx, types.NamespacedName{Name: cronJobName, Namespace: namespace}, cronJob)
+			}, "5s", "1s").Should(Succeed())
 
 			Expect(cronJob.Spec.Schedule).To(Equal("0 2 * * *"))
 			Expect(*cronJob.Spec.Suspend).To(Equal(false))
@@ -319,8 +323,9 @@ var _ = Describe("FinBackupConfig Controller", func() {
 			// Assert
 			cronJob := &batchv1.CronJob{}
 			cronJobName := "fbc-" + string(fbc.UID)
-			err = k8sClient.Get(ctx, types.NamespacedName{Name: cronJobName, Namespace: namespace}, cronJob)
-			Expect(err).NotTo(HaveOccurred())
+			Eventually(func() error {
+				return k8sClient.Get(ctx, types.NamespacedName{Name: cronJobName, Namespace: namespace}, cronJob)
+			}, "5s", "1s").Should(Succeed())
 
 			Expect(cronJob.Spec.Schedule).To(Equal("15 3 * * *"))
 		})
