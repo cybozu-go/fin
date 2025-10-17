@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"slices"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	finv1 "github.com/cybozu-go/fin/api/v1"
 	batchv1 "k8s.io/api/batch/v1"
@@ -88,8 +87,7 @@ func (r *FinBackupConfigReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 
 	serviceAccountName := os.Getenv("CREATE_FINBACKUP_JOB_SERVICE_ACCOUNT")
 
-	// Create the CronJob in the controller's configured namespace
-	if err := r.createOrUpdateCronJob(ctx, &fbc, r.managedCephClusterID, serviceAccountName, image); err != nil {
+	if err := r.createOrUpdateCronJob(ctx, &fbc, fbc.Namespace, serviceAccountName, image); err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to create or update CronJob: %w", err)
 	}
 
@@ -185,25 +183,8 @@ func (r *FinBackupConfigReconciler) createOrUpdateCronJob(
 		setEnvFromFieldRef(container, "JOB_NAME", "metadata.labels['batch.kubernetes.io/job-name']")
 		setEnvFromFieldRef(container, "POD_NAMESPACE", "metadata.namespace")
 
-		// Setting a controller reference across namespaces is disallowed by
-		// controllerutil.SetControllerReference. If the FinBackupConfig and
-		// the CronJob are in different namespaces, set an owner reference
-		// manually (tests expect the OwnerReference to be present even when
-		// the FBC is in a different namespace).
-		if fbc.GetNamespace() == cronJob.GetNamespace() {
-			if err := controllerutil.SetControllerReference(fbc, cronJob, r.Scheme); err != nil {
-				return fmt.Errorf("failed to set owner reference on CronJob: %w", err)
-			}
-		} else {
-			t := true
-			ownerRef := metav1.OwnerReference{
-				APIVersion: "fin.cybozu.io/v1",
-				Kind:       "FinBackupConfig",
-				Name:       fbc.GetName(),
-				UID:        fbc.GetUID(),
-				Controller: &t,
-			}
-			cronJob.SetOwnerReferences([]metav1.OwnerReference{ownerRef})
+		if err := controllerutil.SetControllerReference(fbc, cronJob, r.Scheme); err != nil {
+			return fmt.Errorf("failed to set owner reference on CronJob: %w", err)
 		}
 
 		return nil
