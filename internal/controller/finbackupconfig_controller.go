@@ -14,7 +14,6 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
@@ -183,14 +182,7 @@ func (r *FinBackupConfigReconciler) createOrUpdateCronJob(
 		setEnvFromFieldRef(container, "JOB_NAME", "metadata.labels['batch.kubernetes.io/job-name']")
 		setEnvFromFieldRef(container, "POD_NAMESPACE", "metadata.namespace")
 
-		// Set owner reference only when owner and object are in the same
-		// namespace. Do nothing (leave OwnerReferences nil) for cross-namespace
-		// cases so the CronJob is created without an owner reference.
-		if fbc.GetNamespace() == cronJob.GetNamespace() {
-			if err := controllerutil.SetControllerReference(fbc, cronJob, r.Scheme); err != nil {
-				return fmt.Errorf("failed to set owner reference on CronJob: %w", err)
-			}
-		}
+		// intentionally left blank: do not set OwnerReferences here
 
 		return nil
 	})
