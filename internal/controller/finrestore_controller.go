@@ -519,24 +519,43 @@ func (r *FinRestoreReconciler) createOrUpdateRestoreJobPVC(
 func (r *FinRestoreReconciler) reconcileDelete(ctx context.Context, restore *finv1.FinRestore) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
-	restoreJob := &batchv1.Job{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      restoreJobName(restore),
-			Namespace: r.cephClusterNamespace,
-		},
-	}
-	propagationPolicy := metav1.DeletePropagationBackground
-	err := r.Delete(ctx, restoreJob,
-		&client.DeleteOptions{
-			PropagationPolicy: &propagationPolicy,
-		})
-	if err != nil {
+	var restoreJob batchv1.Job
+	if err := r.Get(ctx, client.ObjectKey{
+		Namespace: r.cephClusterNamespace,
+		Name:      restoreJobName(restore),
+	}, &restoreJob); err != nil {
 		if !k8serrors.IsNotFound(err) {
-			logger.Error(err, "failed to delete restore job")
+			logger.Error(err, "failed to get restore job")
 			return ctrl.Result{}, err
 		}
-	} else {
-		return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+		// Job not found => already deleted & proceed to the next step.
+	} else { // Job exists
+		// Skip reconcile until the job will be finished successfully.
+		done, err := jobCompleted(&restoreJob)
+		if err != nil {
+			logger.Error(err, "restore job failed")
+			return ctrl.Result{}, err
+		}
+		if !done {
+			logger.Info("waiting for restore job to finish")
+			return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+		}
+
+		// Job finished => delete it
+		// We need to wait until the job is deleted because the job has a lock on the backup date host.
+		// If we don't wait, the next job may wait forever.
+		propagationPolicy := metav1.DeletePropagationBackground
+		if err := r.Delete(ctx, &restoreJob,
+			&client.DeleteOptions{
+				PropagationPolicy: &propagationPolicy,
+			}); err != nil {
+			if !k8serrors.IsNotFound(err) {
+				logger.Error(err, "failed to delete restore job")
+				return ctrl.Result{}, err
+			}
+		} else {
+			return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+		}
 	}
 
 	restoreJobPVC := &corev1.PersistentVolumeClaim{
@@ -545,7 +564,7 @@ func (r *FinRestoreReconciler) reconcileDelete(ctx context.Context, restore *fin
 			Namespace: r.cephClusterNamespace,
 		},
 	}
-	err = r.Delete(ctx, restoreJobPVC)
+	err := r.Delete(ctx, restoreJobPVC)
 	if err != nil {
 		if !k8serrors.IsNotFound(err) {
 			logger.Error(err, "failed to delete restore job PVC")
