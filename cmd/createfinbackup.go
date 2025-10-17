@@ -69,6 +69,8 @@ func createFinBackupJobMain() error {
 	if err != nil {
 		return fmt.Errorf("invalid batch.kubernetes.io/cronjob-scheduled-timestamp: %w", err)
 	}
+	// CronJob timestamps are truncated to minute precision.
+	jobCreatedAt = jobCreatedAt.Truncate(time.Minute)
 
 	in := &input.CreateFinBackup{
 		FinBackupConfigName:         fbcName,
