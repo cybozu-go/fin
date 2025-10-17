@@ -9,11 +9,12 @@ import (
 	finv1 "github.com/cybozu-go/fin/api/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
-
 	"k8s.io/apimachinery/pkg/runtime"
+
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
@@ -182,7 +183,9 @@ func (r *FinBackupConfigReconciler) createOrUpdateCronJob(
 		setEnvFromFieldRef(container, "JOB_NAME", "metadata.labels['batch.kubernetes.io/job-name']")
 		setEnvFromFieldRef(container, "POD_NAMESPACE", "metadata.namespace")
 
-		// intentionally left blank: do not set OwnerReferences here
+		if err := controllerutil.SetControllerReference(fbc, cronJob, r.Scheme); err != nil {
+			return fmt.Errorf("failed to set owner reference on CronJob: %w", err)
+		}
 
 		return nil
 	})
