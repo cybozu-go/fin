@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"os"
@@ -9,6 +10,8 @@ import (
 	"github.com/cybozu-go/fin/internal/job/createfinbackup"
 	"github.com/cybozu-go/fin/internal/job/input"
 	"github.com/spf13/cobra"
+	batchv1 "k8s.io/api/batch/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 var createFinBackupCmd = &cobra.Command{
@@ -37,22 +40,34 @@ func createFinBackupJobMain() error {
 		return fmt.Errorf("--fin-backup-config-namespace is required")
 	}
 
-	jobName := os.Getenv("JobName")
+	jobName := os.Getenv("JOB_NAME")
 	if jobName == "" {
-		return fmt.Errorf("JobName environment variable is not set")
+		return fmt.Errorf("JOB_NAME environment variable is not set")
 	}
-	jobCreatedAtStr := os.Getenv("JobCreationTimestamp")
-	if jobCreatedAtStr == "" {
-		return fmt.Errorf("JobCreationTimestamp environment variable is not set")
-	}
-	jobCreatedAt, err := time.Parse(time.RFC3339, jobCreatedAtStr)
-	if err != nil {
-		return fmt.Errorf("invalid JobCreationTimestamp: %w", err)
+	podNamespace := os.Getenv("POD_NAMESPACE")
+	if podNamespace == "" {
+		return fmt.Errorf("POD_NAMESPACE environment variable is not set")
 	}
 
 	k8sClient, err := getControllerClient()
 	if err != nil {
 		return fmt.Errorf("failed to create controller client: %w", err)
+	}
+
+	// Lookup the Job resource to find the cronjob-scheduled-timestamp annotation
+	ctx := context.Background()
+	job := &batchv1.Job{}
+	if err := k8sClient.Get(ctx, client.ObjectKey{Namespace: podNamespace, Name: jobName}, job); err != nil {
+		return fmt.Errorf("failed to get Job %s/%s: %w", podNamespace, jobName, err)
+	}
+
+	tsStr, ok := job.Annotations["batch.kubernetes.io/cronjob-scheduled-timestamp"]
+	if !ok {
+		return fmt.Errorf("job %s/%s missing annotation batch.kubernetes.io/cronjob-scheduled-timestamp", podNamespace, jobName)
+	}
+	jobCreatedAt, err := time.Parse(time.RFC3339, tsStr)
+	if err != nil {
+		return fmt.Errorf("invalid batch.kubernetes.io/cronjob-scheduled-timestamp: %w", err)
 	}
 
 	in := &input.CreateFinBackup{

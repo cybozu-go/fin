@@ -192,6 +192,7 @@ func controllerMain(args []string) error {
 		mgr.GetClient(),
 		mgr.GetScheme(),
 		overwriteFBCSchedule,
+		os.Getenv("MANAGED_CEPH_CLUSTER_ID"),
 	)
 	if err := finBackupConfigReconciler.SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("unable to create controller FinBackupConfig: %w", err)

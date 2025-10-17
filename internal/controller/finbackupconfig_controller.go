@@ -7,13 +7,12 @@ import (
 	"os"
 	"slices"
 	"strings"
-	"time"
 
 	finv1 "github.com/cybozu-go/fin/api/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -28,7 +27,7 @@ var errEmptyClusterID error = errors.New("cluster ID is empty")
 type FinBackupConfigReconciler struct {
 	client.Client
 	Scheme               *runtime.Scheme
-	finCephClusterID     string
+	managedCephClusterID string
 	overwriteFBCSchedule string
 }
 
@@ -36,10 +35,12 @@ func NewFinBackupConfigReconciler(
 	client client.Client,
 	scheme *runtime.Scheme,
 	overwriteFBCSchedule string,
+	finCephClusterID string,
 ) *FinBackupConfigReconciler {
 	return &FinBackupConfigReconciler{
 		Client:               client,
 		Scheme:               scheme,
+		managedCephClusterID: finCephClusterID,
 		overwriteFBCSchedule: overwriteFBCSchedule,
 	}
 }
@@ -67,15 +68,15 @@ func (r *FinBackupConfigReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	}
 
 	var pvc corev1.PersistentVolumeClaim
-	if err := r.Get(ctx, types.NamespacedName{Namespace: fbc.Namespace, Name: fbc.Spec.PVC}, &pvc); err != nil {
+	if err := r.Get(ctx, types.NamespacedName{Namespace: fbc.Spec.PVCNamespace, Name: fbc.Spec.PVC}, &pvc); err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to get PVC %s/%s: %w", fbc.Namespace, fbc.Spec.PVC, err)
 	}
 
-	clusterID, err := getCephClusterIDFromPVC(ctx, r.Client, &pvc)
+	ok, err := checkCephCluster(ctx, r.Client, &pvc, r.managedCephClusterID)
 	if err != nil {
-		return ctrl.Result{}, fmt.Errorf("failed to get Ceph cluster ID: %s: %s: %w", fbc.Namespace, fbc.Spec.PVC, err)
+		return ctrl.Result{}, fmt.Errorf("failed to check Ceph cluster: %w", err)
 	}
-	if clusterID != r.finCephClusterID {
+	if !ok {
 		logger.Info("the target pvc is not managed by this controller")
 		return ctrl.Result{}, nil
 	}
@@ -210,17 +211,6 @@ func (r *FinBackupConfigReconciler) createOrUpdateCronJob(
 		var backoffLimit int32 = 65535
 		cronJob.Spec.JobTemplate.Spec.BackoffLimit = &backoffLimit
 
-		// Set Job creation timestamp as RFC3339 string into PodTemplate annotations
-		creationTime := metav1.Now().Format(time.RFC3339)
-		if cronJob.Spec.JobTemplate.Annotations == nil {
-			cronJob.Spec.JobTemplate.Annotations = make(map[string]string)
-		}
-		cronJob.Spec.JobTemplate.Annotations["job.k8s.io/created-at"] = creationTime
-		if cronJob.Spec.JobTemplate.Spec.Template.Annotations == nil {
-			cronJob.Spec.JobTemplate.Spec.Template.Annotations = make(map[string]string)
-		}
-		cronJob.Spec.JobTemplate.Spec.Template.Annotations["job.k8s.io/created-at"] = creationTime
-
 		podSpec := &cronJob.Spec.JobTemplate.Spec.Template.Spec
 		podSpec.ServiceAccountName = serviceAccountName
 		podSpec.RestartPolicy = corev1.RestartPolicyOnFailure
@@ -239,9 +229,8 @@ func (r *FinBackupConfigReconciler) createOrUpdateCronJob(
 			"--fin-backup-config-namespace=" + fbc.GetNamespace(),
 		}
 
-		// Set environment variables using Downward API
-		setEnvFromFieldRef(container, "JobName", "metadata.labels['batch.kubernetes.io/job-name']")
-		setEnvFromFieldRef(container, "JobCreationTimestamp", "metadata.annotations['job.k8s.io/created-at']")
+		setEnvFromFieldRef(container, "JOB_NAME", "metadata.labels['batch.kubernetes.io/job-name']")
+		setEnvFromFieldRef(container, "POD_NAMESPACE", "metadata.namespace")
 
 		if err := controllerutil.SetControllerReference(fbc, cronJob, r.Scheme); err != nil {
 			return fmt.Errorf("failed to set owner reference on CronJob: %w", err)
@@ -252,8 +241,7 @@ func (r *FinBackupConfigReconciler) createOrUpdateCronJob(
 	if err != nil {
 		return fmt.Errorf("failed to create CronJob: %s: %w", cronJobName, err)
 	}
-	if op != controllerutil.OperationResultNone {
-		logger.Info(fmt.Sprintf("CronJob successfully created or updated: %s", cronJobName))
-	}
+	// Log the operation result to avoid unused variable warnings and for observability
+	logger.Info("createOrUpdate CronJob", "name", cronJobName, "operation", op)
 	return nil
 }
