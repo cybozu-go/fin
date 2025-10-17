@@ -235,6 +235,7 @@ var _ = Describe("FinBackupConfig Controller", func() {
 			Expect(k8sClient.Create(ctx, fbc)).NotTo(HaveOccurred())
 			defer func() { _ = k8sClient.Delete(ctx, fbc) }()
 
+			// Act
 			req := ctrl.Request{
 				NamespacedName: types.NamespacedName{
 					Name:      fbc.Name,
@@ -244,6 +245,7 @@ var _ = Describe("FinBackupConfig Controller", func() {
 			_, err := reconciler.Reconcile(ctx, req)
 			Expect(err).NotTo(HaveOccurred())
 
+			// Assert
 			cronJob := &batchv1.CronJob{}
 			cronJobName := "fbc-" + string(fbc.UID)
 			Consistently(func() error {
@@ -265,6 +267,8 @@ var _ = Describe("FinBackupConfig Controller", func() {
 			//
 			// Assert:
 			//   - CronJob schedule is the overwriteFBCSchedule value.
+
+			// Arrange
 			localReconciler := NewFinBackupConfigReconciler(k8sClient, scheme.Scheme, "15 3 * * *", namespace)
 
 			sc := NewRBDStorageClass("test-overwrite", namespace, rbdPoolName)
@@ -302,6 +306,7 @@ var _ = Describe("FinBackupConfig Controller", func() {
 			Expect(k8sClient.Create(ctx, fbc)).NotTo(HaveOccurred())
 			defer func() { _ = k8sClient.Delete(ctx, fbc) }()
 
+			// Act
 			req := ctrl.Request{
 				NamespacedName: types.NamespacedName{
 					Name:      fbc.Name,
@@ -311,6 +316,7 @@ var _ = Describe("FinBackupConfig Controller", func() {
 			_, err := localReconciler.Reconcile(ctx, req)
 			Expect(err).NotTo(HaveOccurred())
 
+			// Assert
 			cronJob := &batchv1.CronJob{}
 			cronJobName := "fbc-" + string(fbc.UID)
 			err = k8sClient.Get(ctx, types.NamespacedName{Name: cronJobName, Namespace: namespace}, cronJob)
