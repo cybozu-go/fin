@@ -87,7 +87,7 @@ func (r *FinBackupConfigReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 
 	serviceAccountName := os.Getenv("CREATE_FINBACKUP_JOB_SERVICE_ACCOUNT")
 
-	if err := r.createOrUpdateCronJob(ctx, &fbc, fbc.Namespace, serviceAccountName, image); err != nil {
+	if err := r.createOrUpdateCronJob(ctx, &fbc, r.managedCephClusterID, serviceAccountName, image); err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to create or update CronJob: %w", err)
 	}
 
@@ -183,8 +183,13 @@ func (r *FinBackupConfigReconciler) createOrUpdateCronJob(
 		setEnvFromFieldRef(container, "JOB_NAME", "metadata.labels['batch.kubernetes.io/job-name']")
 		setEnvFromFieldRef(container, "POD_NAMESPACE", "metadata.namespace")
 
-		if err := controllerutil.SetControllerReference(fbc, cronJob, r.Scheme); err != nil {
-			return fmt.Errorf("failed to set owner reference on CronJob: %w", err)
+		// Set owner reference only when owner and object are in the same
+		// namespace. Do nothing (leave OwnerReferences nil) for cross-namespace
+		// cases so the CronJob is created without an owner reference.
+		if fbc.GetNamespace() == cronJob.GetNamespace() {
+			if err := controllerutil.SetControllerReference(fbc, cronJob, r.Scheme); err != nil {
+				return fmt.Errorf("failed to set owner reference on CronJob: %w", err)
+			}
 		}
 
 		return nil
