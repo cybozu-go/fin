@@ -16,7 +16,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 )
 
-func createControllerPod(name, namespace string) *corev1.Pod {
+func newControllerPod(name, namespace string) *corev1.Pod {
 	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
@@ -54,8 +54,8 @@ var _ = Describe("FinBackupConfig Controller", func() {
 			k8sClient,
 			scheme.Scheme,
 			"",
+			namespace,
 		)
-		reconciler.finCephClusterID = namespace
 	})
 
 	AfterEach(func() {
@@ -97,7 +97,7 @@ var _ = Describe("FinBackupConfig Controller", func() {
 			}()
 
 			By("creating controller Pod")
-			pod := createControllerPod("test-controller", namespace)
+			pod := newControllerPod("test-controller", namespace)
 			err = k8sClient.Create(ctx, pod)
 			Expect(err).NotTo(HaveOccurred())
 			defer func() { _ = k8sClient.Delete(ctx, pod) }()
@@ -114,9 +114,10 @@ var _ = Describe("FinBackupConfig Controller", func() {
 					Namespace: namespace,
 				},
 				Spec: finv1.FinBackupConfigSpec{
-					PVC:      pvc.Name,
-					Schedule: "0 2 * * *",
-					Suspend:  false,
+					PVCNamespace: pvc.Namespace,
+					PVC:          pvc.Name,
+					Schedule:     "0 2 * * *",
+					Suspend:      false,
 				},
 			}
 			err = k8sClient.Create(ctx, fbc)
@@ -148,9 +149,7 @@ var _ = Describe("FinBackupConfig Controller", func() {
 			Expect(cronJob.Spec.ConcurrencyPolicy).To(Equal(batchv1.ForbidConcurrent))
 			Expect(*cronJob.Spec.JobTemplate.Spec.BackoffLimit).To(Equal(int32(65535)))
 
-			By("verifying PodTemplate has correct annotations")
-			Expect(cronJob.Spec.JobTemplate.Annotations).To(HaveKey("job.k8s.io/created-at"))
-			Expect(cronJob.Spec.JobTemplate.Spec.Template.Annotations).To(HaveKey("job.k8s.io/created-at"))
+			By("verifying PodTemplate annotations are not used for job creation time")
 
 			By("verifying container configuration")
 			podSpec := cronJob.Spec.JobTemplate.Spec.Template.Spec
@@ -169,13 +168,14 @@ var _ = Describe("FinBackupConfig Controller", func() {
 			}))
 
 			By("verifying environment variables are set via Downward API")
-			jobNameEnv := findEnvVar(container.Env, "JobName")
+			jobNameEnv := findEnvVar(container.Env, "JOB_NAME")
 			Expect(jobNameEnv).NotTo(BeNil())
 			Expect(jobNameEnv.ValueFrom.FieldRef.FieldPath).To(Equal("metadata.labels['batch.kubernetes.io/job-name']"))
 
-			creationTimeEnv := findEnvVar(container.Env, "JobCreationTimestamp")
-			Expect(creationTimeEnv).NotTo(BeNil())
-			Expect(creationTimeEnv.ValueFrom.FieldRef.FieldPath).To(Equal("metadata.annotations['job.k8s.io/created-at']"))
+			// JobCreationTimestamp is retrieved by the Pod process by querying the Job resource.
+			podNsEnv := findEnvVar(container.Env, "POD_NAMESPACE")
+			Expect(podNsEnv).NotTo(BeNil())
+			Expect(podNsEnv.ValueFrom.FieldRef.FieldPath).To(Equal("metadata.namespace"))
 
 			By("verifying owner reference is set")
 			ownerRefs := cronJob.GetOwnerReferences()
@@ -208,7 +208,7 @@ var _ = Describe("FinBackupConfig Controller", func() {
 			Expect(k8sClient.Create(ctx, pv)).NotTo(HaveOccurred())
 			defer func() { DeletePVCAndPV(ctx, pvc.Namespace, pvc.Name) }()
 
-			pod := createControllerPod("pod-mismatch", namespace)
+			pod := newControllerPod("pod-mismatch", namespace)
 			Expect(k8sClient.Create(ctx, pod)).NotTo(HaveOccurred())
 			defer func() { _ = k8sClient.Delete(ctx, pod) }()
 			Expect(os.Setenv("POD_NAME", pod.Name)).To(Succeed())
@@ -217,7 +217,12 @@ var _ = Describe("FinBackupConfig Controller", func() {
 
 			fbc := &finv1.FinBackupConfig{
 				ObjectMeta: metav1.ObjectMeta{Name: "fbc-mismatch", Namespace: namespace},
-				Spec:       finv1.FinBackupConfigSpec{PVC: pvc.Name, Schedule: "0 2 * * *", Suspend: false},
+				Spec: finv1.FinBackupConfigSpec{
+					PVCNamespace: pvc.Namespace,
+					PVC:          pvc.Name,
+					Schedule:     "0 2 * * *",
+					Suspend:      false,
+				},
 			}
 			Expect(k8sClient.Create(ctx, fbc)).NotTo(HaveOccurred())
 			defer func() { _ = k8sClient.Delete(ctx, fbc) }()
@@ -252,8 +257,7 @@ var _ = Describe("FinBackupConfig Controller", func() {
 			//
 			// Assert:
 			//   - CronJob schedule is the overwriteFBCSchedule value.
-			localReconciler := NewFinBackupConfigReconciler(k8sClient, scheme.Scheme, "15 3 * * *")
-			localReconciler.finCephClusterID = namespace
+			localReconciler := NewFinBackupConfigReconciler(k8sClient, scheme.Scheme, "15 3 * * *", namespace)
 
 			sc := NewRBDStorageClass("test-overwrite", namespace, rbdPoolName)
 			Expect(k8sClient.Create(ctx, sc)).NotTo(HaveOccurred())
@@ -264,7 +268,7 @@ var _ = Describe("FinBackupConfig Controller", func() {
 			Expect(k8sClient.Create(ctx, pv)).NotTo(HaveOccurred())
 			defer func() { DeletePVCAndPV(ctx, pvc.Namespace, pvc.Name) }()
 
-			pod := createControllerPod("pod-overwrite", namespace)
+			pod := newControllerPod("pod-overwrite", namespace)
 			Expect(k8sClient.Create(ctx, pod)).NotTo(HaveOccurred())
 			defer func() { _ = k8sClient.Delete(ctx, pod) }()
 			Expect(os.Setenv("POD_NAME", pod.Name)).To(Succeed())
@@ -273,7 +277,12 @@ var _ = Describe("FinBackupConfig Controller", func() {
 
 			fbc := &finv1.FinBackupConfig{
 				ObjectMeta: metav1.ObjectMeta{Name: "fbc-overwrite", Namespace: namespace},
-				Spec:       finv1.FinBackupConfigSpec{PVC: pvc.Name, Schedule: "0 2 * * *", Suspend: false},
+				Spec: finv1.FinBackupConfigSpec{
+					PVCNamespace: pvc.Namespace,
+					PVC:          pvc.Name,
+					Schedule:     "0 2 * * *",
+					Suspend:      false,
+				},
 			}
 			Expect(k8sClient.Create(ctx, fbc)).NotTo(HaveOccurred())
 			defer func() { _ = k8sClient.Delete(ctx, fbc) }()
