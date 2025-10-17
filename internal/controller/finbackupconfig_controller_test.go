@@ -46,6 +46,7 @@ func findEnvVar(envVars []corev1.EnvVar, name string) *corev1.EnvVar {
 var _ = Describe("FinBackupConfig Controller", func() {
 	var reconciler *FinBackupConfigReconciler
 	var ctx context.Context
+	const fbcNamespace = namespace + "-fbc"
 
 	BeforeEach(func() {
 		ctx = context.Background()
@@ -74,6 +75,7 @@ var _ = Describe("FinBackupConfig Controller", func() {
 			//   - No error is returned.
 			//   - CronJob's schedule, owner, JobTemplate and container settings are as expected.
 
+			// Arrange
 			By("creating RBD StorageClass")
 			sc := NewRBDStorageClass("test", namespace, rbdPoolName)
 			err := k8sClient.Create(ctx, sc)
@@ -104,11 +106,15 @@ var _ = Describe("FinBackupConfig Controller", func() {
 			Expect(os.Setenv("CREATE_FINBACKUP_JOB_SERVICE_ACCOUNT", "test-sa")).To(Succeed())
 			DeferCleanup(func() { _ = os.Unsetenv("CREATE_FINBACKUP_JOB_SERVICE_ACCOUNT") })
 
-			By("creating FinBackupConfig")
+			By("creating FinBackupConfig in a different namespace from the controller Pod")
+			fbcNSObj := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: fbcNamespace}}
+			Expect(k8sClient.Create(ctx, fbcNSObj)).NotTo(HaveOccurred())
+			defer func() { _ = k8sClient.Delete(ctx, fbcNSObj) }()
+
 			fbc := &finv1.FinBackupConfig{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-fbc",
-					Namespace: namespace,
+					Namespace: fbcNamespace,
 				},
 				Spec: finv1.FinBackupConfigSpec{
 					PVCNamespace: pvc.Namespace,
@@ -133,12 +139,8 @@ var _ = Describe("FinBackupConfig Controller", func() {
 			By("verifying CronJob was created with correct specifications")
 			cronJobName := "fbc-" + string(fbc.UID)
 			cronJob := &batchv1.CronJob{}
-			Eventually(func() error {
-				return k8sClient.Get(ctx, types.NamespacedName{
-					Name:      cronJobName,
-					Namespace: namespace,
-				}, cronJob)
-			}, 10*time.Second).Should(Succeed())
+			err = k8sClient.Get(ctx, types.NamespacedName{Name: cronJobName, Namespace: namespace}, cronJob)
+			Expect(err).NotTo(HaveOccurred())
 
 			Expect(cronJob.Spec.Schedule).To(Equal("0 2 * * *"))
 			Expect(*cronJob.Spec.Suspend).To(Equal(false))
@@ -196,6 +198,8 @@ var _ = Describe("FinBackupConfig Controller", func() {
 			//
 			// Assert:
 			//   - CronJob is not created.
+
+			// Arrange
 			sc := NewRBDStorageClass("test-mismatch", "different-cluster-id", rbdPoolName)
 			Expect(k8sClient.Create(ctx, sc)).NotTo(HaveOccurred())
 			defer func() { _ = k8sClient.Delete(ctx, sc) }()
@@ -215,8 +219,12 @@ var _ = Describe("FinBackupConfig Controller", func() {
 			Expect(os.Setenv("CREATE_FINBACKUP_JOB_SERVICE_ACCOUNT", "test-sa")).To(Succeed())
 			DeferCleanup(func() { _ = os.Unsetenv("CREATE_FINBACKUP_JOB_SERVICE_ACCOUNT") })
 
+			fbcNSObj := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: fbcNamespace}}
+			Expect(k8sClient.Create(ctx, fbcNSObj)).NotTo(HaveOccurred())
+			defer func() { _ = k8sClient.Delete(ctx, fbcNSObj) }()
+
 			fbc := &finv1.FinBackupConfig{
-				ObjectMeta: metav1.ObjectMeta{Name: "fbc-mismatch", Namespace: namespace},
+				ObjectMeta: metav1.ObjectMeta{Name: "fbc-mismatch", Namespace: fbcNamespace},
 				Spec: finv1.FinBackupConfigSpec{
 					PVCNamespace: pvc.Namespace,
 					PVC:          pvc.Name,
@@ -278,8 +286,12 @@ var _ = Describe("FinBackupConfig Controller", func() {
 			Expect(os.Setenv("CREATE_FINBACKUP_JOB_SERVICE_ACCOUNT", "test-sa")).To(Succeed())
 			DeferCleanup(func() { _ = os.Unsetenv("CREATE_FINBACKUP_JOB_SERVICE_ACCOUNT") })
 
+			fbcNSObj := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: fbcNamespace}}
+			Expect(k8sClient.Create(ctx, fbcNSObj)).NotTo(HaveOccurred())
+			defer func() { _ = k8sClient.Delete(ctx, fbcNSObj) }()
+
 			fbc := &finv1.FinBackupConfig{
-				ObjectMeta: metav1.ObjectMeta{Name: "fbc-overwrite", Namespace: namespace},
+				ObjectMeta: metav1.ObjectMeta{Name: "fbc-overwrite", Namespace: fbcNamespace},
 				Spec: finv1.FinBackupConfigSpec{
 					PVCNamespace: pvc.Namespace,
 					PVC:          pvc.Name,
@@ -301,9 +313,8 @@ var _ = Describe("FinBackupConfig Controller", func() {
 
 			cronJob := &batchv1.CronJob{}
 			cronJobName := "fbc-" + string(fbc.UID)
-			Eventually(func() error {
-				return k8sClient.Get(ctx, types.NamespacedName{Name: cronJobName, Namespace: namespace}, cronJob)
-			}, 10*time.Second).Should(Succeed())
+			err = k8sClient.Get(ctx, types.NamespacedName{Name: cronJobName, Namespace: namespace}, cronJob)
+			Expect(err).NotTo(HaveOccurred())
 
 			Expect(cronJob.Spec.Schedule).To(Equal("15 3 * * *"))
 		})
