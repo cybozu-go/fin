@@ -156,7 +156,7 @@ func restoreTestSuite() {
 
 	// CSATEST-1613
 	// Description:
-	//   Deletion will succeed if delete FinRestore before the restore process completes.
+	//   Deletion will succeed if FinRestore is deleted before the restore process completes.
 	//
 	// Arrange:
 	//   - A backup-target PVC exists.
@@ -169,8 +169,8 @@ func restoreTestSuite() {
 	//
 	// Assert:
 	//   - FinRestore1 is deleted successfully.
-	//   - FinRestore2 is created successfully(status will be verified).
-	It("should delete the a FinRestore and create another FinRestore successfully", func(ctx SpecContext) {
+	//   - FinRestore2 is created successfully (status will be verified).
+	It("should delete the FinRestore and create another one successfully", func(ctx SpecContext) {
 		finrestore1Name := "finbackup-test-1"
 		finrestore2Name := "finbackup-test-2"
 

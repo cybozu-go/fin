@@ -530,7 +530,7 @@ func (r *FinRestoreReconciler) reconcileDelete(ctx context.Context, restore *fin
 		}
 		// Job not found => already deleted & proceed to the next step.
 	} else { // Job exists
-		// Skip reconcile until the job will be finished successfully.
+		// Skip reconciliation until the job is finished successfully.
 		done, err := jobCompleted(&restoreJob)
 		if err != nil {
 			logger.Error(err, "restore job failed")
@@ -542,7 +542,7 @@ func (r *FinRestoreReconciler) reconcileDelete(ctx context.Context, restore *fin
 		}
 
 		// Job finished => delete it
-		// We need to wait until the job is deleted because the job has a lock on the backup date host.
+		// We need to wait until the job is deleted because it has a lock on the backup data stored in the backup node.
 		// If we don't wait, the next job may wait forever.
 		propagationPolicy := metav1.DeletePropagationBackground
 		if err := r.Delete(ctx, &restoreJob,
