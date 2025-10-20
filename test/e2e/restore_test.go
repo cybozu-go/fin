@@ -16,7 +16,7 @@ func restoreTestSuite() {
 	var pod *corev1.Pod
 	var restorePod *corev1.Pod
 	var finbackup *finv1.FinBackup
-	var finrestore *finv1.FinRestore
+	finrestores := make([]*finv1.FinRestore, 3)
 	var err error
 	var finbackupNamespace = pvcNamespace
 	var finrestoreNamespace = pvcNamespace
@@ -82,12 +82,12 @@ func restoreTestSuite() {
 
 		// Act
 		By("restoring from the backup")
-		finrestore, err = GetFinRestore(
+		finrestores[0], err = GetFinRestore(
 			finrestoreNamespace, "finrestore-test", finbackup.Name, "finrestore-test", rookNamespace)
 		Expect(err).NotTo(HaveOccurred())
-		err = CreateFinRestore(ctx, ctrlClient, finrestore)
+		err = CreateFinRestore(ctx, ctrlClient, finrestores[0])
 		Expect(err).NotTo(HaveOccurred())
-		err = WaitForFinRestoreReady(ctx, ctrlClient, finrestoreNamespace, finrestore.Name, 2*time.Minute)
+		err = WaitForFinRestoreReady(ctx, ctrlClient, finrestoreNamespace, finrestores[0].Name, 2*time.Minute)
 		Expect(err).NotTo(HaveOccurred())
 
 		By("verifying the existence of the restore PVC")
@@ -97,9 +97,9 @@ func restoreTestSuite() {
 
 		By("creating a pod to verify the contents in the restore PVC")
 		restorePod, err = GetPod(
-			finrestore.Spec.PVCNamespace,
+			finrestores[0].Spec.PVCNamespace,
 			"test-restore-pod",
-			finrestore.Spec.PVC,
+			finrestores[0].Spec.PVC,
 			"ghcr.io/cybozu/ubuntu:24.04",
 			"/restore",
 		)
@@ -141,7 +141,7 @@ func restoreTestSuite() {
 
 		// Assert
 		By("verifying the deletion of the restore job")
-		restoreJobName := fmt.Sprintf("fin-restore-%s", finrestore.UID)
+		restoreJobName := fmt.Sprintf("fin-restore-%s", finrestores[0].UID)
 		err = WaitForJobDeletion(ctx, k8sClient, rookNamespace, restoreJobName, 10*time.Second)
 		Expect(err).NotTo(HaveOccurred())
 
@@ -154,14 +154,76 @@ func restoreTestSuite() {
 		Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
 	})
 
+	// CSATEST-1613
+	// Description:
+	//   Deletion will succeed if FinRestore is deleted before the restore process completes.
+	//
+	// Arrange:
+	//   - A backup-target PVC exists.
+	//   - FinBackup referring to the PVC exists.
+	//
+	// Act:
+	//   - Create a FinRestore1 referring to the FinBackup.
+	//   - Delete the FinRestore1 before the restore process completes.
+	//   - Create another FinRestore2 referring to the same FinBackup.
+	//
+	// Assert:
+	//   - FinRestore1 is deleted successfully.
+	//   - FinRestore2 is created successfully (status will be verified).
+	It("should delete the FinRestore and create another one successfully", func(ctx SpecContext) {
+		finrestore1Name := "finbackup-test-1"
+		finrestore2Name := "finbackup-test-2"
+
+		// Arrange
+		// Already arranged: A backup-target PVC exists.
+
+		// Act
+		By("creating the first FinRestore targeting the FinBackup")
+		finrestores[1], err = GetFinRestore(
+			finrestoreNamespace, finrestore1Name, finbackup.Name, "finrestore-test-r1", pvcNamespace)
+		Expect(err).NotTo(HaveOccurred())
+		err = CreateFinRestore(ctx, ctrlClient, finrestores[1])
+		Expect(err).NotTo(HaveOccurred())
+
+		By("deleting the first FinRestore after starting the restore process")
+		_, stderr, err := kubectl("wait",
+			"--for=jsonpath={.metadata.finalizers[?(@==\"finrestore.fin.cybozu.io/finalizer\")]}",
+			"finrestore", "-n", finrestoreNamespace, finrestore1Name, "--timeout=2m")
+		Expect(err).NotTo(HaveOccurred(), string(stderr))
+		err = DeleteFinRestore(ctx, ctrlClient, finrestoreNamespace, finrestore1Name)
+		Expect(err).NotTo(HaveOccurred())
+
+		By("creating the second FinRestore targeting the same FinBackup")
+		finrestores[2], err = GetFinRestore(
+			finrestoreNamespace, finrestore2Name, finbackup.Name, "finrestore-test-r2", pvcNamespace)
+		Expect(err).NotTo(HaveOccurred())
+		err = CreateFinRestore(ctx, ctrlClient, finrestores[2])
+		Expect(err).NotTo(HaveOccurred())
+
+		// Assert
+		By("checking that the first FinRestore is deleted successfully")
+		err = WaitForFinRestoreDeletion(ctx, ctrlClient, finrestoreNamespace, finrestore1Name, 2*time.Minute)
+		Expect(err).NotTo(HaveOccurred())
+
+		By("checking that the second FinRestore is created successfully")
+		err = WaitForFinRestoreReady(ctx, ctrlClient, finrestoreNamespace, finrestore2Name, 2*time.Minute)
+		Expect(err).NotTo(HaveOccurred())
+
+		// Cleanup for finrestore[2]
+		err = DeleteFinRestore(ctx, ctrlClient, finrestoreNamespace, finrestore2Name)
+		Expect(err).NotTo(HaveOccurred())
+	})
+
 	AfterAll(func(ctx SpecContext) {
 		By("deleting the pod to verify the contents in the restore PVC")
 		err := DeletePod(ctx, k8sClient, rookNamespace, restorePod.Name)
 		Expect(err).NotTo(HaveOccurred())
 
 		By("deleting the restore PVC")
-		err = DeletePVC(ctx, k8sClient, finrestore.Spec.PVCNamespace, finrestore.Spec.PVC)
-		Expect(err).NotTo(HaveOccurred())
+		for _, fr := range finrestores {
+			err = DeletePVC(ctx, k8sClient, fr.Spec.PVCNamespace, fr.Spec.PVC)
+			Expect(err).NotTo(HaveOccurred())
+		}
 
 		By("deleting the backup")
 		err = DeleteFinBackup(ctx, ctrlClient, finbackupNamespace, finbackup.Name)
