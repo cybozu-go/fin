@@ -62,8 +62,8 @@ func controllerMain(args []string) error {
 		"If set the metrics endpoint is served securely")
 	fs.BoolVar(&enableHTTP2, "enable-http2", false,
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
-	fs.Uint64Var(&rawImgExpansionUnitSize, "raw-img-expansion-unit-size", 0,
-		"Set FIN_RAW_IMG_EXPANSION_UNIT_SIZE in backup job.")
+	fs.Uint64Var(&rawImgExpansionUnitSize, "raw-img-expansion-unit-size", ceph.DefaultExpansionUnitSize,
+		fmt.Sprintf("Set %s in jobs.", controller.EnvRawImgExpansionUnitSize))
 	fs.StringVar(&webhookCertPath, "webhook-cert-path", "",
 		"The file path of the webhook certificate file.")
 	fs.StringVar(&webhookKeyPath, "webhook-key-path", "",
@@ -88,6 +88,9 @@ func controllerMain(args []string) error {
 		if webhookCertPath == "" || webhookKeyPath == "" {
 			return fmt.Errorf("--webhook-cert-path and --webhook-key-path must be provided when webhooks are enabled")
 		}
+	}
+	if rawImgExpansionUnitSize == 0 {
+		return fmt.Errorf("raw-img-expansion-unit-size must be greater than 0")
 	}
 
 	// if the enable-http2 flag is false (the default), http/2 should be disabled

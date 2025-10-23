@@ -690,6 +690,10 @@ func (r *FinBackupReconciler) createOrUpdateBackupJob(
 						Name:  "MAX_PART_SIZE",
 						Value: strconv.FormatInt(maxPartSize.Value(), 10),
 					},
+					{
+						Name:  EnvRawImgExpansionUnitSize,
+						Value: strconv.FormatUint(r.rawImgExpansionUnitSize, 10),
+					},
 				},
 				Image:           r.podImage,
 				ImagePullPolicy: corev1.PullIfNotPresent,
@@ -743,12 +747,6 @@ func (r *FinBackupReconciler) createOrUpdateBackupJob(
 					},
 				},
 			},
-		}
-		if r.rawImgExpansionUnitSize != 0 {
-			job.Spec.Template.Spec.Containers[0].Env = append(job.Spec.Template.Spec.Containers[0].Env, corev1.EnvVar{
-				Name:  "FIN_RAW_IMG_EXPANSION_UNIT_SIZE",
-				Value: strconv.FormatUint(r.rawImgExpansionUnitSize, 10),
-			})
 		}
 
 		job.Spec.Template.Spec.Volumes = []corev1.Volume{
@@ -860,6 +858,10 @@ func (r *FinBackupReconciler) createOrUpdateDeletionJob(ctx context.Context, bac
 					{
 						Name:  "BACKUP_TARGET_PVC_UID",
 						Value: backup.GetLabels()[labelBackupTargetPVCUID],
+					},
+					{
+						Name:  EnvRawImgExpansionUnitSize,
+						Value: strconv.FormatUint(r.rawImgExpansionUnitSize, 10),
 					},
 				},
 				Image:           r.podImage,
@@ -1154,6 +1156,10 @@ func (r *FinBackupReconciler) createOrUpdateVerificationJob(
 					{
 						Name:  "BACKUP_TARGET_PVC_UID",
 						Value: string(pvc.GetUID()),
+					},
+					{
+						Name:  EnvRawImgExpansionUnitSize,
+						Value: strconv.FormatUint(r.rawImgExpansionUnitSize, 10),
 					},
 				},
 				Image:           r.podImage,

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	finv1 "github.com/cybozu-go/fin/api/v1"
+	"github.com/cybozu-go/fin/internal/controller"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"k8s.io/client-go/kubernetes"
@@ -36,6 +37,8 @@ var _ = BeforeSuite(func() {
 	Expect(err).NotTo(HaveOccurred())
 	ctrlClient, err = client.New(kubeConfig, client.Options{Scheme: scheme.Scheme})
 	Expect(err).NotTo(HaveOccurred())
+
+	Expect(os.Setenv(controller.EnvRawImgExpansionUnitSize, "4096")).NotTo(HaveOccurred())
 })
 
 var _ = Describe("Fin", func() {
