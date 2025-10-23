@@ -22,6 +22,7 @@ type Deletion struct {
 	actionUID           string
 	targetSnapshotID    int
 	targetPVCUID        string
+	expansionUnitSize   uint64
 }
 
 func NewDeletion(in *input.Deletion) *Deletion {
@@ -32,6 +33,7 @@ func NewDeletion(in *input.Deletion) *Deletion {
 		actionUID:           in.ActionUID,
 		targetSnapshotID:    in.TargetSnapshotID,
 		targetPVCUID:        in.TargetPVCUID,
+		expansionUnitSize:   in.ExpansionUnitSize,
 	}
 }
 
@@ -129,6 +131,7 @@ func (d *Deletion) applyAllDiffParts(raw, diff *job.BackupMetadataEntry) error {
 			diffPartPath,
 			sourceSnapshotName,
 			targetSnapshotName,
+			d.expansionUnitSize,
 		); err != nil {
 			return fmt.Errorf("failed to apply diff part %d: %w", i, err)
 		}

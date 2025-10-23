@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/cybozu-go/fin/internal/model"
+	"github.com/cybozu-go/fin/test/utils"
 	"github.com/stretchr/testify/require"
 )
 
@@ -364,7 +365,9 @@ func testRBDRepository2_exportDiff(t *testing.T, rbdRepo *RBDRepository2, volume
 			// apply diffs to a new block device
 			for _, diff := range tc.diffsToApply {
 				diffFilePath := filepath.Join(workDir, diff.file)
-				err := rbdRepo.ApplyDiffToRawImage(rawImagePath, diffFilePath, diff.fromSnapName, diff.toSnapName)
+				err := rbdRepo.ApplyDiffToRawImage(
+					rawImagePath, diffFilePath, diff.fromSnapName, diff.toSnapName, utils.RawImgExpansionUnitSize,
+				)
 				require.NoError(t, err, "failed to apply diff %s", diff.file)
 			}
 

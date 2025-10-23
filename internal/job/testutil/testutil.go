@@ -16,6 +16,7 @@ import (
 	"github.com/cybozu-go/fin/internal/infrastructure/nlv"
 	"github.com/cybozu-go/fin/internal/job/input"
 	"github.com/cybozu-go/fin/internal/model"
+	"github.com/cybozu-go/fin/test/utils"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -52,6 +53,7 @@ func NewBackupInput(
 		TargetPVCNamespace:        pvc.Namespace,
 		TargetPVCUID:              string(pvc.UID),
 		MaxPartSize:               maxPartSize,
+		ExpansionUnitSize:         utils.RawImgExpansionUnitSize,
 	}
 }
 

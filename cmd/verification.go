@@ -72,13 +72,19 @@ func verificationJobMain() error {
 		return fmt.Errorf("BACKUP_TARGET_PVC_UID environment variable is not set")
 	}
 
+	expansionUnitSize, err := getExpansionUnitSize()
+	if err != nil {
+		return err
+	}
+
 	v := verification.NewVerification(&input.Verification{
-		Repo:             finRepo,
-		RBDRepo:          rbdRepo,
-		NLVRepo:          nlvRepo,
-		ActionUID:        actionUID,
-		TargetSnapshotID: backupSnapshotID,
-		TargetPVCUID:     pvcUID,
+		Repo:              finRepo,
+		RBDRepo:           rbdRepo,
+		NLVRepo:           nlvRepo,
+		ActionUID:         actionUID,
+		TargetSnapshotID:  backupSnapshotID,
+		TargetPVCUID:      pvcUID,
+		ExpansionUnitSize: expansionUnitSize,
 	})
 	for {
 		err = v.Perform()

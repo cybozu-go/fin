@@ -106,6 +106,11 @@ func backupJobMain() error {
 		return fmt.Errorf("invalid MAX_PART_SIZE: %w", err)
 	}
 
+	expansionUnitSize, err := getExpansionUnitSize()
+	if err != nil {
+		return err
+	}
+
 	b := backup.NewBackup(&input.Backup{
 		Repo:                      finRepo,
 		K8sClient:                 clientSet,
@@ -120,6 +125,7 @@ func backupJobMain() error {
 		TargetPVCNamespace:        pvcNamespace,
 		TargetPVCUID:              pvcUID,
 		MaxPartSize:               maxPartSize,
+		ExpansionUnitSize:         expansionUnitSize,
 	})
 	for {
 		err = b.Perform()

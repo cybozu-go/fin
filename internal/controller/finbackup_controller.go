@@ -746,7 +746,7 @@ func (r *FinBackupReconciler) createOrUpdateBackupJob(
 		}
 		if r.rawImgExpansionUnitSize != 0 {
 			job.Spec.Template.Spec.Containers[0].Env = append(job.Spec.Template.Spec.Containers[0].Env, corev1.EnvVar{
-				Name:  "FIN_RAW_IMG_EXPANSION_UNIT_SIZE",
+				Name:  EnvRawImgExpansionUnitSize,
 				Value: strconv.FormatUint(r.rawImgExpansionUnitSize, 10),
 			})
 		}
@@ -871,6 +871,13 @@ func (r *FinBackupReconciler) createOrUpdateDeletionJob(ctx context.Context, bac
 					},
 				},
 			},
+		}
+
+		if r.rawImgExpansionUnitSize != 0 {
+			job.Spec.Template.Spec.Containers[0].Env = append(job.Spec.Template.Spec.Containers[0].Env, corev1.EnvVar{
+				Name:  EnvRawImgExpansionUnitSize,
+				Value: strconv.FormatUint(r.rawImgExpansionUnitSize, 10),
+			})
 		}
 
 		job.Spec.Template.Spec.Volumes = []corev1.Volume{
@@ -1165,6 +1172,12 @@ func (r *FinBackupReconciler) createOrUpdateVerificationJob(
 					},
 				},
 			},
+		}
+		if r.rawImgExpansionUnitSize != 0 {
+			job.Spec.Template.Spec.Containers[0].Env = append(job.Spec.Template.Spec.Containers[0].Env, corev1.EnvVar{
+				Name:  EnvRawImgExpansionUnitSize,
+				Value: strconv.FormatUint(r.rawImgExpansionUnitSize, 10),
+			})
 		}
 
 		job.Spec.Template.Spec.Volumes = []corev1.Volume{
