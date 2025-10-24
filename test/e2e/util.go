@@ -23,10 +23,9 @@ import (
 )
 
 const (
-	rookNamespace = "rook-ceph"
-	pvcNamespace  = "test-ns"
-	pvcName       = "test-pvc"
-	poolName      = "rook-ceph-block-pool"
+	rookNamespace    = "rook-ceph"
+	rookStorageClass = "rook-ceph-block"
+	poolName         = "rook-ceph-block-pool"
 )
 
 var (

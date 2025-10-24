@@ -6,12 +6,14 @@ import (
 	"time"
 
 	finv1 "github.com/cybozu-go/fin/api/v1"
+	"github.com/cybozu-go/fin/test/utils"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
 )
 
 func backupTestSuite() {
+	var ns *corev1.Namespace
 	var pvc *corev1.PersistentVolumeClaim
 	var pod *corev1.Pod
 	var finbackup *finv1.FinBackup
@@ -19,29 +21,29 @@ func backupTestSuite() {
 
 	BeforeAll(func(ctx SpecContext) {
 		By("creating a namespace")
-		ns := GetNamespace(pvcNamespace)
+		ns = GetNamespace(utils.GetUniqueName("test-ns-"))
 		err = CreateNamespace(ctx, k8sClient, ns)
 		Expect(err).NotTo(HaveOccurred())
 
 		By("creating a PVC")
-		pvc, err = GetPVC(pvcNamespace, "test-pvc", "Block", "rook-ceph-block", "ReadWriteOnce", "100Mi")
+		pvc, err = GetPVC(ns.Name, utils.GetUniqueName("test-pvc-"), "Block", rookStorageClass, "ReadWriteOnce", "100Mi")
 		Expect(err).NotTo(HaveOccurred())
 		err = CreatePVC(ctx, k8sClient, pvc)
 		Expect(err).NotTo(HaveOccurred())
 
 		By("creating a pod")
-		pod, err = GetPod(pvcNamespace, "test-pod", "test-pvc", "ghcr.io/cybozu/ubuntu:24.04", "/data")
+		pod, err = GetPod(ns.Name, utils.GetUniqueName("test-pod-"), pvc.Name, "ghcr.io/cybozu/ubuntu:24.04", "/data")
 		Expect(err).NotTo(HaveOccurred())
 		err = CreatePod(ctx, k8sClient, pod)
 		Expect(err).NotTo(HaveOccurred())
-		err = WaitForPodReady(ctx, k8sClient, pvcNamespace, "test-pod", 2*time.Minute)
+		err = WaitForPodReady(ctx, k8sClient, ns.Name, pod.Name, 2*time.Minute)
 		Expect(err).NotTo(HaveOccurred())
 
 		By("writing data to the pvc")
-		_, stderr, err := kubectl("exec", "-n", pvcNamespace, "test-pod", "--",
+		_, stderr, err := kubectl("exec", "-n", ns.Name, pod.Name, "--",
 			"dd", "if=/dev/urandom", "of=/data", "bs=1K", "count=1")
 		Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
-		_, stderr, err = kubectl("exec", "-n", pvcNamespace, "test-pod", "--", "sync")
+		_, stderr, err = kubectl("exec", "-n", ns.Name, pod.Name, "--", "sync")
 		Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
 	})
 
@@ -61,22 +63,22 @@ func backupTestSuite() {
 	//     with the same data as the head of the PVC.
 	It("should create full backup", func(ctx SpecContext) {
 		By("reading the data from the pvc")
-		expectedWrittenData, stderr, err := kubectl("exec", "-n", pvcNamespace, pod.Name, "--",
+		expectedWrittenData, stderr, err := kubectl("exec", "-n", ns.Name, pod.Name, "--",
 			"dd", "if=/data", "bs=1K", "count=1")
 		Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
 
 		By("creating a backup")
-		finbackup, err = GetFinBackup(rookNamespace, "finbackup-test", pvcNamespace, pvc.Name, "minikube-worker")
+		finbackup, err = GetFinBackup(rookNamespace, utils.GetUniqueName("test-finbackup-"), ns.Name, pvc.Name, "minikube-worker")
 		Expect(err).NotTo(HaveOccurred())
 		err = CreateFinBackup(ctx, ctrlClient, finbackup)
 		Expect(err).NotTo(HaveOccurred())
-		err = WaitForFinBackupStoredToNodeAndVerified(ctx, ctrlClient, rookNamespace, finbackup.GetName(), 1*time.Minute)
+		err = WaitForFinBackupStoredToNodeAndVerified(ctx, ctrlClient, rookNamespace, finbackup.Name, 1*time.Minute)
 		Expect(err).NotTo(HaveOccurred())
 
 		By("verifying the data in raw.img")
 		// `--native-ssh=false` is used to avoid issues of conversion from LF to CRLF.
 		actualWrittenData, stderr, err := execWrapper(minikube, nil, "ssh", "--native-ssh=false", "--",
-			"dd", fmt.Sprintf("if=/fin/%s/%s/raw.img", pvcNamespace, pvcName), "bs=1K", "count=1", "status=none")
+			"dd", fmt.Sprintf("if=/fin/%s/%s/raw.img", ns.Name, pvc.Name), "bs=1K", "count=1", "status=none")
 		Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
 		Expect(actualWrittenData).To(Equal(expectedWrittenData), "Data in raw.img does not match the expected data")
 	})
@@ -103,7 +105,7 @@ func backupTestSuite() {
 		Expect(err).NotTo(HaveOccurred())
 
 		By("verifying the deletion of raw.img")
-		rawImgPath := filepath.Join("/fin", pvcNamespace, pvcName, "raw.img")
+		rawImgPath := filepath.Join("/fin", ns.Name, pvc.Name, "raw.img")
 		stdout, stderr, err := execWrapper(minikube, nil, "ssh", "--native-ssh=false", "--", "test", "!", "-e", rawImgPath)
 		Expect(err).NotTo(HaveOccurred(), "raw.img file should be deleted. stdout: %s, stderr: %s", stdout, stderr)
 
@@ -130,7 +132,7 @@ func backupTestSuite() {
 		Expect(err).NotTo(HaveOccurred())
 
 		By("deleting the namespace")
-		err = DeleteNamespace(ctx, k8sClient, pvcNamespace)
+		err = DeleteNamespace(ctx, k8sClient, ns.Name)
 		Expect(err).NotTo(HaveOccurred())
 	})
 }
