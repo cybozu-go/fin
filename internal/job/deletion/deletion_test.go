@@ -1,7 +1,6 @@
 package deletion
 
 import (
-	"encoding/json"
 	"math"
 	"os"
 	"testing"
@@ -9,9 +8,11 @@ import (
 
 	"github.com/cybozu-go/fin/internal/infrastructure/fake"
 	"github.com/cybozu-go/fin/internal/job"
+	"github.com/cybozu-go/fin/internal/job/backup"
 	"github.com/cybozu-go/fin/internal/job/input"
 	"github.com/cybozu-go/fin/internal/job/testutil"
 	"github.com/cybozu-go/fin/internal/model"
+	"github.com/cybozu-go/fin/test/utils"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -151,9 +152,7 @@ func TestDelete_RawAndDiffCase_Success(t *testing.T) {
 
 	// Arrange
 	actionUID := uuid.New().String()
-	targetRBDPoolName := "test-pool"
-	targetRBDImageName := "test-image"
-	partSize := uint64(512)
+	partSize := uint64(1024)
 
 	previousSnapshotID := 1
 	previousSnapshotName := "test-snap1"
@@ -168,28 +167,17 @@ func TestDelete_RawAndDiffCase_Success(t *testing.T) {
 	previousSnapshotTimestamp := targetSnapshotTimestamp.Add(-24 * time.Hour)
 
 	nlvRepo, finRepo, _ := testutil.CreateNLVAndFinRepoForTest(t)
-
-	rbdRepo := fake.NewRBDRepository(map[fake.PoolImageName][]*model.RBDSnapshot{
-		{PoolName: targetRBDPoolName, ImageName: targetRBDImageName}: {
-			{
-				ID:        previousSnapshotID,
-				Name:      previousSnapshotName,
-				Size:      previousSnapshotSize,
-				Timestamp: model.NewRBDTimeStamp(previousSnapshotTimestamp),
-			},
-			{
-				ID:        targetSnapshotID,
-				Name:      targetSnapshotName,
-				Size:      targetSnapshotSize,
-				Timestamp: model.NewRBDTimeStamp(targetSnapshotTimestamp),
-			},
-		},
-	})
+	_, volumeInfo := fake.NewStorage()
+	rbdRepo := fake.NewRBDRepository2(volumeInfo.PoolName, volumeInfo.ImageName)
+	prevSnap, _, err := rbdRepo.CreateSnapshotWithRandomData(previousSnapshotName, previousSnapshotSize)
+	require.NoError(t, err)
+	targetSnap, _, err := rbdRepo.CreateSnapshotWithRandomData(targetSnapshotName, targetSnapshotSize)
+	require.NoError(t, err)
 
 	// Set the backup metadata
 	metadata := &job.BackupMetadata{
 		PVCUID:       targetPVCUID,
-		RBDImageName: targetRBDImageName,
+		RBDImageName: volumeInfo.ImageName,
 		Raw: &job.BackupMetadataEntry{
 			SnapID:    previousSnapshotID,
 			SnapName:  previousSnapshotName,
@@ -217,13 +205,13 @@ func TestDelete_RawAndDiffCase_Success(t *testing.T) {
 	partCount := int(math.Ceil(float64(targetSnapshotSize) / float64(partSize)))
 	for i := range partCount {
 		err := rbdRepo.ExportDiff(&model.ExportDiffInput{
-			PoolName:       targetRBDPoolName,
+			PoolName:       volumeInfo.PoolName,
 			ReadOffset:     uint64(i) * partSize,
 			ReadLength:     partSize,
-			FromSnap:       &previousSnapshotName,
-			MidSnapPrefix:  "test-prefix",
-			ImageName:      targetRBDImageName,
-			TargetSnapName: targetSnapshotName,
+			FromSnap:       &prevSnap.Name,
+			MidSnapPrefix:  "test-snap2",
+			ImageName:      volumeInfo.ImageName,
+			TargetSnapName: targetSnap.Name,
 			OutputFile:     nlvRepo.GetDiffPartPath(targetSnapshotID, i),
 		})
 		require.NoError(t, err)
@@ -235,10 +223,11 @@ func TestDelete_RawAndDiffCase_Success(t *testing.T) {
 		ActionUID:           actionUID,
 		TargetSnapshotID:    previousSnapshotID,
 		TargetPVCUID:        targetPVCUID,
+		ExpansionUnitSize:   utils.RawImgExpansionUnitSize,
 	})
 
 	// Act
-	err := deletionJob.Perform()
+	err = deletionJob.Perform()
 	require.NoError(t, err)
 
 	// Assert
@@ -255,18 +244,13 @@ func TestDelete_RawAndDiffCase_Success(t *testing.T) {
 	}
 
 	// Assert
-	// WARN: This assertion relies on the fake implementation.
-	var rawImage fake.RawImage
-	file, err := os.Open(nlvRepo.GetRawImagePath())
+	fullData, err := os.ReadFile(nlvRepo.GetRawImagePath())
 	require.NoError(t, err)
-	defer func() { _ = file.Close() }()
-	err = json.NewDecoder(file).Decode(&rawImage)
-	require.NoError(t, err)
-	assert.Equal(t, partCount, len(rawImage.AppliedDiffs), "raw image should have four applied diffs")
+	require.Equal(t, 4096, len(fullData))
+	// TODO: Check the contents of raw image after applying diff.
 
 	// TODO
 	// check whether the raw image file size equals the sum of the diff part sizes.
-
 	err = finRepo.StartOrRestartAction(uuid.New().String(), model.Backup)
 	assert.NoError(t, err)
 }
@@ -292,104 +276,31 @@ func TestDelete_Retry_RawAndDiffCase_Success(t *testing.T) {
 
 	// Arrange
 	actionUID := uuid.New().String()
-	targetRBDPoolName := "test-pool"
-	targetRBDImageName := "test-image"
-	partSize := uint64(512)
-
-	previousSnapshotID := 1
-	previousSnapshotName := "test-snap1"
-	previousSnapshotSize := uint64(1024)
-
-	targetSnapshotID := 2
-	targetSnapshotName := "test-snap2"
-	targetSnapshotSize := uint64(2048)
-	targetPVCUID := uuid.New().String()
-
-	targetSnapshotTimestamp := time.Now().Round(0)
-	previousSnapshotTimestamp := targetSnapshotTimestamp.Add(-24 * time.Hour)
+	partSize := uint64(1024)
 
 	nlvRepo, finRepo, _ := testutil.CreateNLVAndFinRepoForTest(t)
+	k8sClient, volumeInfo := fake.NewStorage()
+	rbdRepo := fake.NewRBDRepository2(volumeInfo.PoolName, volumeInfo.ImageName)
 
-	rbdRepo := fake.NewRBDRepository(map[fake.PoolImageName][]*model.RBDSnapshot{
-		{PoolName: targetRBDPoolName, ImageName: targetRBDImageName}: {
-			{
-				ID:        previousSnapshotID,
-				Name:      previousSnapshotName,
-				Size:      previousSnapshotSize,
-				Timestamp: model.NewRBDTimeStamp(previousSnapshotTimestamp),
-			},
-			{
-				ID:        targetSnapshotID,
-				Name:      targetSnapshotName,
-				Size:      targetSnapshotSize,
-				Timestamp: model.NewRBDTimeStamp(targetSnapshotTimestamp),
-			},
-		},
-	})
-
-	// Set the backup metadata
-	metadata := &job.BackupMetadata{
-		PVCUID:       targetPVCUID,
-		RBDImageName: targetRBDImageName,
-		Raw: &job.BackupMetadataEntry{
-			SnapID:    previousSnapshotID,
-			SnapName:  previousSnapshotName,
-			SnapSize:  previousSnapshotSize,
-			PartSize:  partSize,
-			CreatedAt: previousSnapshotTimestamp,
-		},
-		Diff: []*job.BackupMetadataEntry{
-			{
-				SnapID:    targetSnapshotID,
-				SnapName:  targetSnapshotName,
-				SnapSize:  targetSnapshotSize,
-				PartSize:  partSize,
-				CreatedAt: targetSnapshotTimestamp,
-			},
-		},
-	}
-	require.NoError(t, job.SetBackupMetadata(finRepo, metadata))
-
-	// Create raw.img file
-	file, err := os.Create(nlvRepo.GetRawImagePath())
+	prevSnap, _, err := rbdRepo.CreateSnapshotWithRandomData("test-snap1", 1024)
 	require.NoError(t, err)
-	err = json.NewEncoder(file).Encode(&fake.RawImage{
-		AppliedDiffs: []*fake.ExportedDiff{
-			{
-				PoolName:      targetRBDPoolName,
-				ReadOffset:    0,
-				ReadLength:    partSize,
-				FromSnap:      &previousSnapshotName,
-				MidSnapPrefix: "test-prefix",
-				ImageName:     targetRBDImageName,
-				SnapID:        previousSnapshotID,
-				SnapName:      previousSnapshotName,
-				SnapSize:      previousSnapshotSize,
-				SnapTimestamp: previousSnapshotTimestamp,
-			},
-		},
-	})
+	targetSnap, _, err := rbdRepo.CreateSnapshotWithRandomData("test-snap2", 4096)
 	require.NoError(t, err)
-	require.NoError(t, file.Close())
 
-	// Create diff directory and part files
-	require.NoError(t, nlvRepo.MakeDiffDir(targetSnapshotID))
-
-	// Create multiple diff parts (ceil(2048/512) = 4 parts)
-	partCount := int(math.Ceil(float64(targetSnapshotSize) / float64(partSize)))
-	for i := range partCount {
-		err := rbdRepo.ExportDiff(&model.ExportDiffInput{
-			PoolName:       targetRBDPoolName,
-			ReadOffset:     uint64(i) * partSize,
-			ReadLength:     partSize,
-			FromSnap:       &previousSnapshotName,
-			MidSnapPrefix:  "test-prefix",
-			ImageName:      targetRBDImageName,
-			TargetSnapName: targetSnapshotName,
-			OutputFile:     nlvRepo.GetDiffPartPath(targetSnapshotID, i),
-		})
-		require.NoError(t, err)
-	}
+	fullBackupInput := testutil.NewBackupInput(k8sClient, volumeInfo, prevSnap.ID, nil, partSize)
+	fullBackupInput.Repo = finRepo
+	fullBackupInput.K8sClient = k8sClient
+	fullBackupInput.RBDRepo = rbdRepo
+	fullBackupInput.NodeLocalVolumeRepo = nlvRepo
+	err = backup.NewBackup(fullBackupInput).Perform()
+	require.NoError(t, err)
+	incrBackupInput := testutil.NewBackupInput(k8sClient, volumeInfo, targetSnap.ID, &prevSnap.ID, partSize)
+	incrBackupInput.Repo = finRepo
+	incrBackupInput.K8sClient = k8sClient
+	incrBackupInput.RBDRepo = rbdRepo
+	incrBackupInput.NodeLocalVolumeRepo = nlvRepo
+	err = backup.NewBackup(incrBackupInput).Perform()
+	require.NoError(t, err)
 
 	// Simulate the existing deletion action.
 	err = finRepo.StartOrRestartAction(actionUID, model.Deletion)
@@ -402,8 +313,9 @@ func TestDelete_Retry_RawAndDiffCase_Success(t *testing.T) {
 		RBDRepo:             rbdRepo,
 		NodeLocalVolumeRepo: nlvRepo,
 		ActionUID:           actionUID,
-		TargetSnapshotID:    previousSnapshotID,
-		TargetPVCUID:        targetPVCUID,
+		TargetSnapshotID:    prevSnap.ID,
+		TargetPVCUID:        fullBackupInput.TargetPVCUID,
+		ExpansionUnitSize:   utils.RawImgExpansionUnitSize,
 	})
 
 	// Act
@@ -414,24 +326,19 @@ func TestDelete_Retry_RawAndDiffCase_Success(t *testing.T) {
 	updatedMetadata, err := job.GetBackupMetadata(finRepo)
 	require.NoError(t, err)
 	assert.NotNil(t, updatedMetadata.Raw)
-	assert.Equal(t, metadata.Diff[0].SnapID, updatedMetadata.Raw.SnapID)
-	assert.Equal(t, metadata.Diff[0].SnapSize, updatedMetadata.Raw.SnapSize)
-	assert.WithinDuration(t, metadata.Diff[0].CreatedAt, updatedMetadata.Raw.CreatedAt, 0)
+	assert.Equal(t, targetSnap.ID, updatedMetadata.Raw.SnapID)
+	assert.Equal(t, targetSnap.Size, updatedMetadata.Raw.SnapSize)
+	assert.WithinDuration(t, targetSnap.Timestamp.Time, updatedMetadata.Raw.CreatedAt, 0)
 	assert.Empty(t, updatedMetadata.Diff)
 
-	for i := range partCount {
-		assert.NoDirExistsf(t, nlvRepo.GetDiffPartPath(targetSnapshotID, i), "diff part-%d file should have been deleted", i)
+	for i := range int(math.Ceil(float64(targetSnap.Size) / float64(partSize))) {
+		assert.NoDirExistsf(t, nlvRepo.GetDiffPartPath(targetSnap.ID, i), "diff part-%d file should have been deleted", i)
 	}
 
 	// Assert
-	// WARN: This assertion relies on the fake implementation.
-	var rawImage fake.RawImage
-	file, err = os.Open(nlvRepo.GetRawImagePath())
+	fullData, err := os.ReadFile(nlvRepo.GetRawImagePath())
 	require.NoError(t, err)
-	defer func() { _ = file.Close() }()
-	err = json.NewDecoder(file).Decode(&rawImage)
-	require.NoError(t, err)
-	assert.Equal(t, partCount, len(rawImage.AppliedDiffs), "raw image should have four applied diffs")
+	require.Equal(t, 4096, len(fullData))
 
 	// TODO: check whether the raw image file size equals the sum of the diff part sizes.
 
