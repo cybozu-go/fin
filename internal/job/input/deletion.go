@@ -9,4 +9,5 @@ type Deletion struct {
 	ActionUID           string
 	TargetSnapshotID    int
 	TargetPVCUID        string
+	ExpansionUnitSize   uint64
 }

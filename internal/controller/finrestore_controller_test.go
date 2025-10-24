@@ -2,7 +2,6 @@ package controller
 
 import (
 	"encoding/json"
-	"os"
 
 	finv1 "github.com/cybozu-go/fin/api/v1"
 	"github.com/cybozu-go/fin/test/utils"
@@ -39,16 +38,12 @@ var _ = Describe("FinRestore Controller Reconcile Test", Ordered, func() {
 	})
 
 	BeforeEach(func(ctx SpecContext) {
-		expansionUnitSize, ok := os.LookupEnv("FIN_RAW_IMG_EXPANSION_UNIT_SIZE")
-		if !ok {
-			expansionUnitSize = "4096" // 4KiB
-		}
 		reconciler = NewFinRestoreReconciler(
 			k8sClient,
 			scheme.Scheme,
 			namespace,
 			podImage,
-			ptr.To(resource.MustParse(expansionUnitSize)),
+			ptr.To(resource.MustParse("4096")),
 		)
 	})
 

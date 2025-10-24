@@ -23,6 +23,8 @@ const (
 
 	certmanagerVersion = "v1.14.4"
 	certmanagerURLTmpl = "https://github.com/jetstack/cert-manager/releases/download/%s/cert-manager.yaml"
+
+	RawImgExpansionUnitSize uint64 = 4 * 1024 // 4 KiB
 )
 
 var (

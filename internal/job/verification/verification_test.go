@@ -39,20 +39,12 @@ type countingRBDRepository2 struct {
 var _ model.RBDRepository = (*countingRBDRepository2)(nil)
 
 func (r *countingRBDRepository2) ApplyDiffToRawImage(
-	rawImagePath, diffPath, sourceSnapshotName, targetSnapshotName string,
+	rawImagePath, diffPath, sourceSnapshotName, targetSnapshotName string, expansionUnitSize uint64,
 ) error {
 	r.applyDiffCount++
 	return r.RBDRepository2.ApplyDiffToRawImage(
-		rawImagePath, diffPath, sourceSnapshotName, targetSnapshotName)
-}
-
-func TestMain(m *testing.M) {
-	if os.Getenv("FIN_RAW_IMG_EXPANSION_UNIT_SIZE") == "" {
-		if err := os.Setenv("FIN_RAW_IMG_EXPANSION_UNIT_SIZE", "4096"); err != nil {
-			panic("failed to set env: " + err.Error())
-		}
-	}
-	m.Run()
+		rawImagePath, diffPath, sourceSnapshotName, targetSnapshotName, expansionUnitSize,
+	)
 }
 
 type setupInput struct {
@@ -355,6 +347,7 @@ func TestVerification_Success_Resume(t *testing.T) {
 		cfg.nlvRepo.GetDiffPartPath(cfg.incrementalSnapshot.ID, 0),
 		sourceSnapshotName,
 		targetSnapshotName,
+		utils.RawImgExpansionUnitSize,
 	)
 	require.NoError(t, err)
 	err = cfg.finRepo.UpdateActionPrivateData(cfg.incrementalBackupInput.ActionUID, []byte("{\"nextDiffPart\":1}"))
@@ -362,12 +355,13 @@ func TestVerification_Success_Resume(t *testing.T) {
 
 	// Act
 	verification := NewVerification(&input.Verification{
-		Repo:             cfg.finRepo,
-		RBDRepo:          cfg.rbdRepo,
-		NLVRepo:          cfg.nlvRepo,
-		ActionUID:        cfg.incrementalBackupInput.ActionUID,
-		TargetSnapshotID: cfg.incrementalBackupInput.TargetSnapshotID,
-		TargetPVCUID:     cfg.incrementalBackupInput.TargetPVCUID,
+		Repo:              cfg.finRepo,
+		RBDRepo:           cfg.rbdRepo,
+		NLVRepo:           cfg.nlvRepo,
+		ActionUID:         cfg.incrementalBackupInput.ActionUID,
+		TargetSnapshotID:  cfg.incrementalBackupInput.TargetSnapshotID,
+		TargetPVCUID:      cfg.incrementalBackupInput.TargetPVCUID,
+		ExpansionUnitSize: cfg.incrementalBackupInput.ExpansionUnitSize,
 	})
 	err = verification.Perform()
 

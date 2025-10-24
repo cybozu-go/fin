@@ -17,22 +17,24 @@ import (
 )
 
 type Verification struct {
-	repo             model.FinRepository
-	nlvRepo          model.NodeLocalVolumeRepository
-	rbdRepo          model.RBDRepository
-	actionUID        string
-	targetSnapshotID int
-	targetPVCUID     string
+	repo              model.FinRepository
+	nlvRepo           model.NodeLocalVolumeRepository
+	rbdRepo           model.RBDRepository
+	actionUID         string
+	targetSnapshotID  int
+	targetPVCUID      string
+	expansionUnitSize uint64
 }
 
 func NewVerification(in *input.Verification) *Verification {
 	return &Verification{
-		repo:             in.Repo,
-		nlvRepo:          in.NLVRepo,
-		rbdRepo:          in.RBDRepo,
-		actionUID:        in.ActionUID,
-		targetSnapshotID: in.TargetSnapshotID,
-		targetPVCUID:     in.TargetPVCUID,
+		repo:              in.Repo,
+		nlvRepo:           in.NLVRepo,
+		rbdRepo:           in.RBDRepo,
+		actionUID:         in.ActionUID,
+		targetSnapshotID:  in.TargetSnapshotID,
+		targetPVCUID:      in.TargetPVCUID,
+		expansionUnitSize: in.ExpansionUnitSize,
 	}
 }
 
@@ -231,6 +233,7 @@ func (v *Verification) loopApplyDiff(
 			v.nlvRepo.GetDiffPartPath(v.targetSnapshotID, i),
 			sourceSnapshotName,
 			targetSnapshotName,
+			v.expansionUnitSize,
 		); err != nil {
 			return fmt.Errorf("failed to apply diff: %w", err)
 		}

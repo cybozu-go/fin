@@ -22,6 +22,8 @@ import (
 
 const (
 	maxJobBackoffLimit = 65535
+
+	EnvRawImgExpansionUnitSize = "FIN_RAW_IMG_EXPANSION_UNIT_SIZE"
 )
 
 func jobCompleted(job *batchv1.Job) (done bool, err error) {
