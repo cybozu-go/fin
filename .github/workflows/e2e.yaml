@@ -46,8 +46,6 @@ jobs:
           sudo chmod 777 /var/run/libvirt/libvirt-sock
           sudo ls -la /var/run/libvirt/libvirt-sock
           ls -l /dev/kvm
-          sudo rmmod kvm_amd
-          sudo rmmod kvm
           sudo modprobe -a kvm
           sudo modprobe -a kvm_amd
       - name: Set up Docker Buildx
