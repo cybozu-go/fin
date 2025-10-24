@@ -130,8 +130,8 @@ func applyDiffToBlockDevice(blockDevicePath string, diffFile io.Reader, fromSnap
 		return fmt.Errorf("block device size is smaller than diff size: %s", blockDevicePath)
 	}
 
-	if err = applyDiffDataRecords(blockDeviceFile, diffFileReader, blockDevicePath, 0, true); err != nil {
-		return fmt.Errorf("failed to process diff data: %w", err)
+	if err = applyDiffDataRecords(blockDeviceFile, diffFileReader, 0, true); err != nil {
+		return fmt.Errorf("failed to apply diff records to %s: %w", blockDevicePath, err)
 	}
 
 	return nil
@@ -170,8 +170,8 @@ func applyDiffToRawImage(
 		defer func() { _ = rawImgFile.Close() }()
 	}
 
-	if err := applyDiffDataRecords(rawImgFile, diffFileReader, rawImageFilePath, expansionUnitSize, false); err != nil {
-		return fmt.Errorf("failed to read diff data: %w", err)
+	if err := applyDiffDataRecords(rawImgFile, diffFileReader, expansionUnitSize, false); err != nil {
+		return fmt.Errorf("failed to apply diff records to %q: %w", rawImageFilePath, err)
 	}
 
 	return nil
@@ -194,13 +194,12 @@ func openDiffDataRecords(diffFile io.Reader, fromSnapName, toSnapName string) (*
 func applyDiffDataRecords(
 	dstFile *os.File,
 	diffFileReader *bufio.Reader,
-	dstFilePath string,
 	expansionUnitSize uint64,
 	isDstBlockDevice bool,
 ) error {
 	stat, err := dstFile.Stat()
 	if err != nil {
-		return fmt.Errorf("failed to stat raw image file: %s: %w", dstFilePath, err)
+		return fmt.Errorf("failed to stat destination file: %w", err)
 	}
 	fileSize := stat.Size()
 	prevOffset := uint64(0)
@@ -233,22 +232,22 @@ func applyDiffDataRecords(
 			if !isDstBlockDevice && offset+length > uint64(fileSize) {
 				fileSize = int64(math.Ceil(float64(offset+length)/float64(expansionUnitSize)) * float64(expansionUnitSize))
 				if err := unix.Fallocate(int(dstFile.Fd()), 0, 0, fileSize); err != nil {
-					return fmt.Errorf("failed to fallocate: %s: %w", dstFilePath, err)
+					return fmt.Errorf("failed to fallocate raw image file: %w", err)
 				}
 			}
 
 			// Write data to destination file
 			if tag == 'w' {
 				if _, err := dstFile.Seek(int64(offset), io.SeekStart); err != nil {
-					return fmt.Errorf("failed to seek in destination file: %s: %w", dstFilePath, err)
+					return fmt.Errorf("failed to seek in destination file: %w", err)
 				}
 				if _, err := io.CopyN(dstFile, diffFileReader, int64(length)); err != nil {
-					return fmt.Errorf("failed to write to destination file: %s: %w", dstFilePath, err)
+					return fmt.Errorf("failed to write to destination file: %w", err)
 				}
 			} else if isDstBlockDevice {
 				err := zerooutBlockDevice(dstFile, offset, length)
 				if err != nil {
-					return fmt.Errorf("failed to discard block device: %s: %w", dstFilePath, err)
+					return fmt.Errorf("failed to discard block device: %w", err)
 				}
 			} else if length > 0 {
 				if err := unix.Fallocate(
@@ -257,7 +256,7 @@ func applyDiffDataRecords(
 					int64(offset),
 					int64(length),
 				); err != nil {
-					return fmt.Errorf("failed to write zero data to destination file: %s: %w", dstFilePath, err)
+					return fmt.Errorf("failed to write zero data to destination file: %w", err)
 				}
 			}
 
