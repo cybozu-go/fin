@@ -40,8 +40,7 @@ var _ = BeforeSuite(func() {
 
 var _ = Describe("Fin", func() {
 	Context("wait environment", waitEnvironment)
-	Context("backup", Ordered, backupTestSuite)
+	Context("full backup", Ordered, fullBackupTestSuite)
 	Context("incremental backup", Ordered, incrementalBackupTestSuite)
-	Context("restore", Ordered, restoreTestSuite)
 	Context("verification", Ordered, verificationTestSuite)
 })
