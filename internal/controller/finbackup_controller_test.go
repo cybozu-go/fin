@@ -1049,6 +1049,219 @@ var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
 			})
 		})
 	})
+
+	Context("Automatic deletion feature for FinBackup", func() {
+		var oldFinBackup *finv1.FinBackup
+		var finBackup *finv1.FinBackup
+		var pvc *corev1.PersistentVolumeClaim
+		var pv *corev1.PersistentVolume
+		var imgName = "image-for-cleanup"
+		var labels map[string]string
+
+		var newFinBackup = func(
+			ctx context.Context,
+			name, node string,
+			labels map[string]string,
+			snapID int,
+		) *finv1.FinBackup {
+			fb := NewFinBackup(namespace, name, pvc.Name, pvc.Namespace, node)
+			fb.Labels = labels
+			Expect(k8sClient.Create(ctx, fb)).Should(Succeed())
+			fb.Status.SnapID = ptr.To(snapID)
+			Expect(k8sClient.Status().Update(ctx, fb)).Should(Succeed())
+			return fb
+		}
+
+		BeforeEach(func(ctx SpecContext) {
+			pvc, pv = NewPVCAndPV(sc, namespace, "test-pvc-cleanup", "test-pv-cleanup", imgName)
+			Expect(k8sClient.Create(ctx, pvc)).Should(Succeed())
+			Expect(k8sClient.Create(ctx, pv)).Should(Succeed())
+
+			labels = map[string]string{
+				LabelFinBackupConfigUID: "finbackup-config-uid",
+				labelBackupTargetPVCUID: string(pvc.GetUID()),
+			}
+
+			oldFinBackup = NewFinBackup(namespace, "old-finbackup", pvc.Name, pvc.Namespace, "test-node")
+			oldFinBackup.Labels = labels
+			Expect(k8sClient.Create(ctx, oldFinBackup)).Should(Succeed())
+			oldFinBackup.Status.SnapID = ptr.To(1)
+			Expect(k8sClient.Status().Update(ctx, oldFinBackup)).Should(Succeed())
+		})
+
+		AfterEach(func(ctx SpecContext) {
+			DeletePVCAndPV(ctx, pvc.Namespace, pvc.Name)
+			Expect(k8sClient.Delete(ctx, finBackup)).Should(Succeed())
+			_ = k8sClient.Delete(ctx, oldFinBackup)
+		})
+
+		// Description:
+		//   Delete the single older FinBackup managed by the same FinBackupConfig.
+		//
+		// Preconditions:
+		//   - A backup-target PVC and PV exist.
+		//   - One older FinBackup is labeled with the FinBackupConfig UID and backup-target PVC UID.
+		//
+		// Arrange:
+		//   - Create a newer FinBackup with the same FinBackupConfig UID and backup-target PVC UID labels.
+		//
+		// Act:
+		//   - Call deleteOldFinBackup().
+		//
+		// Assert:
+		//   - deleteOldFinBackup() returns no error.
+		//   - The older FinBackup is deleted.
+		It("should delete the older FinBackup managed by the FinBackupConfig", func(ctx SpecContext) {
+			By("creating the newer FinBackup")
+			finBackup = newFinBackup(ctx, "finbackup-test", "test-node", labels, 2)
+
+			By("calling deleteOldFinBackup()")
+			err := reconciler.deleteOldFinBackup(ctx, finBackup, pvc)
+			Expect(err).ShouldNot(HaveOccurred())
+
+			By("verifying the older FinBackup is deleted")
+			var fb finv1.FinBackup
+			err = k8sClient.Get(ctx, client.ObjectKeyFromObject(oldFinBackup), &fb)
+			Expect(err).To(MatchError(k8serrors.IsNotFound, "should not find the older FinBackup"))
+		})
+
+		// Description:
+		//   Retain the older FinBackup when the newer FinBackup lacks the FinBackupConfig label.
+		//
+		// Preconditions:
+		//   - A backup-target PVC and PV exist.
+		//   - One older FinBackup is labeled with the FinBackupConfig and backup-target PVC UID.
+		//
+		// Arrange:
+		//   - Create a newer FinBackup that omits the FinBackupConfig label.
+		//
+		// Act:
+		//   - Call deleteOldFinBackup().
+		//
+		// Assert:
+		//   - deleteOldFinBackup() returns no error.
+		//   - The older FinBackup exists.
+		It("should retain the older FinBackup when a newer FinBackup lacks the FinBackupConfig label", func(ctx SpecContext) {
+			By("creating the newer unlabeled FinBackup")
+			labels := map[string]string{
+				labelBackupTargetPVCUID: string(pvc.GetUID()),
+			}
+			finBackup = newFinBackup(ctx, "finbackup-test", "test-node", labels, 2)
+
+			By("calling deleteOldFinBackup()")
+			err := reconciler.deleteOldFinBackup(ctx, finBackup, pvc)
+			Expect(err).ShouldNot(HaveOccurred())
+
+			By("verifying the older FinBackup exists")
+			var fb finv1.FinBackup
+			err = k8sClient.Get(ctx, client.ObjectKeyFromObject(oldFinBackup), &fb)
+			Expect(err).ShouldNot(HaveOccurred())
+		})
+
+		// Description:
+		//   Return an error and retain all older FinBackups if more than one exists on the same node.
+		//
+		// Preconditions:
+		//   - A backup-target PVC and PV exist.
+		//   - One older FinBackup is labeled with the FinBackupConfig UID and backup-target PVC UID.
+		//
+		// Arrange:
+		//   - Create a second older FinBackup with the same labels on the same node.
+		//   - Create a newer FinBackup with a larger SnapID on the same node.
+		//
+		// Act:
+		//   - Call deleteOldFinBackup().
+		//
+		// Assert:
+		//   - deleteOldFinBackup() returns an error indicating only one older FinBackup is allowed.
+		//   - Both older FinBackups exist.
+		It("should return an error when more than one older FinBackup exists on the same node", func(ctx SpecContext) {
+			By("creating the second older FinBackup")
+			oldFinBackup2 := newFinBackup(ctx, "older-finbackup-test-2", "test-node", labels, 2)
+
+			By("creating the newer FinBackup")
+			finBackup = newFinBackup(ctx, "finbackup-test", "test-node", labels, 3)
+
+			By("calling deleteOldFinBackup()")
+			err := reconciler.deleteOldFinBackup(ctx, finBackup, pvc)
+			Expect(err).To(MatchError(ContainSubstring("only one older FinBackup is allowed on node")))
+
+			By("verifying both older FinBackups exist")
+			var fb finv1.FinBackup
+			err = k8sClient.Get(ctx, client.ObjectKeyFromObject(oldFinBackup), &fb)
+			Expect(err).ShouldNot(HaveOccurred())
+
+			err = k8sClient.Get(ctx, client.ObjectKeyFromObject(oldFinBackup2), &fb)
+			Expect(err).ShouldNot(HaveOccurred())
+
+			// Cleanup the additionally created older FinBackup
+			Expect(k8sClient.Delete(ctx, oldFinBackup2)).Should(Succeed())
+		})
+
+		// Description:
+		//   Retain the older FinBackup that resides on a different node.
+		//
+		// Preconditions:
+		//   - A backup-target PVC and PV exist.
+		//   - One older FinBackup is labeled with the FinBackupConfig UID and backup-target PVC UID.
+		//
+		// Arrange:
+		//   - Create a newer FinBackup on a different node.
+		//
+		// Act:
+		//   - Call deleteOldFinBackup().
+		//
+		// Assert:
+		//   - deleteOldFinBackup() returns no error.
+		//   - The older FinBackup on the other node exists.
+		It("should retain the older FinBackup on a different node", func(ctx SpecContext) {
+			By("creating the newer FinBackup on a different node")
+			finBackup = newFinBackup(ctx, "finbackup-test", "different-node", labels, 2)
+
+			By("calling deleteOldFinBackup()")
+			err := reconciler.deleteOldFinBackup(ctx, finBackup, pvc)
+			Expect(err).ShouldNot(HaveOccurred())
+
+			By("verifying the older FinBackup on the other node exists")
+			var fb finv1.FinBackup
+			err = k8sClient.Get(ctx, client.ObjectKeyFromObject(oldFinBackup), &fb)
+			Expect(err).ShouldNot(HaveOccurred())
+		})
+
+		// Description:
+		//   Retain the older FinBackup managed by a different FinBackupConfig on the same node.
+		//
+		// Preconditions:
+		//   - A backup-target PVC and PV exist.
+		//   - One older FinBackup is labeled with a FinBackupConfig UID and backup-target PVC UID.
+		//
+		// Arrange:
+		//   - Create a newer FinBackup on the same node with a different FinBackupConfig UID.
+		//
+		// Act:
+		//   - Call deleteOldFinBackup().
+		//
+		// Assert:
+		//   - deleteOldFinBackup() returns no error.
+		//   - The older FinBackup with the different FinBackupConfig UID exists.
+		It("should retain the older FinBackup managed by a different FinBackupConfig", func(ctx SpecContext) {
+			By("creating the newer FinBackup with a different FinBackupConfig UID on the same node")
+			labels := map[string]string{
+				LabelFinBackupConfigUID: "different-finbackup-config-uid",
+				labelBackupTargetPVCUID: string(pvc.GetUID()),
+			}
+			finBackup = newFinBackup(ctx, "finbackup-test", "test-node", labels, 2)
+
+			By("calling deleteOldFinBackup()")
+			err := reconciler.deleteOldFinBackup(ctx, finBackup, pvc)
+			Expect(err).ShouldNot(HaveOccurred())
+
+			By("verifying the older FinBackup with the different FinBackupConfig UID exists")
+			var fb finv1.FinBackup
+			err = k8sClient.Get(ctx, client.ObjectKeyFromObject(oldFinBackup), &fb)
+			Expect(err).ShouldNot(HaveOccurred())
+		})
+	})
 })
 
 // CSATEST-1627

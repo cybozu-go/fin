@@ -8,6 +8,7 @@ import (
 	"time"
 
 	finv1 "github.com/cybozu-go/fin/api/v1"
+	"github.com/cybozu-go/fin/internal/controller"
 	"github.com/cybozu-go/fin/internal/job/input"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -16,7 +17,6 @@ import (
 )
 
 const (
-	labelFinBackupConfigUID       = "fin.cybozu.io/fbc-uid"
 	annotationFinBackupConfigName = "fin.cybozu.io/fbc-name"
 	annotationFinBackupConfigNS   = "fin.cybozu.io/fbc-namespace"
 
@@ -82,7 +82,7 @@ func newFinBackupFromConfig(fbc *finv1.FinBackupConfig, jobName string, jobCreat
 			Name:      fbName,
 			Namespace: fbc.Namespace,
 			Labels: map[string]string{
-				labelFinBackupConfigUID: string(fbc.UID),
+				controller.LabelFinBackupConfigUID: string(fbc.UID),
 			},
 			Annotations: map[string]string{
 				annotationFinBackupConfigName: fbc.Name,
