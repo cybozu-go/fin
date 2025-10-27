@@ -39,7 +39,8 @@ func verificationTestSuite() {
 		Expect(err).NotTo(HaveOccurred())
 
 		By("creating a pod")
-		pod := GetPodMountingFilesystem(ns.Name, utils.GetUniqueName("test-pod-"), pvc.Name, "ghcr.io/cybozu/ubuntu:24.04", "/data")
+		pod := GetPodMountingFilesystem(ns.Name, utils.GetUniqueName("test-pod-"),
+			pvc.Name, "ghcr.io/cybozu/ubuntu:24.04", "/data")
 		err = CreatePod(ctx, k8sClient, pod)
 		Expect(err).NotTo(HaveOccurred())
 		err = WaitForPodReady(ctx, k8sClient, pod.Namespace, pod.Name, 2*time.Minute)
@@ -87,7 +88,8 @@ func verificationTestSuite() {
 
 		// Act (1)
 		By("creating a backup")
-		finbackup, err := GetFinBackup(ns.Name, utils.GetUniqueName("test-finbackup-"), pvc.Namespace, pvc.Name, "minikube-worker")
+		finbackup, err := GetFinBackup(ns.Name, utils.GetUniqueName("test-finbackup-"),
+			pvc.Namespace, pvc.Name, "minikube-worker")
 		Expect(err).NotTo(HaveOccurred())
 		err = CreateFinBackup(ctx, ctrlClient, finbackup)
 		Expect(err).NotTo(HaveOccurred())
@@ -251,7 +253,8 @@ func verificationTestSuite() {
 
 		// Act
 		By("creating a FinBackup resource")
-		finbackup, err := GetFinBackup(ns.Name, utils.GetUniqueName("test-finbackup-"), pvc.Namespace, pvc.Name, "minikube-worker")
+		finbackup, err := GetFinBackup(ns.Name, utils.GetUniqueName("test-finbackup-"),
+			pvc.Namespace, pvc.Name, "minikube-worker")
 		Expect(err).NotTo(HaveOccurred())
 		err = CreateFinBackup(ctx, ctrlClient, finbackup)
 		Expect(err).NotTo(HaveOccurred())
@@ -304,7 +307,8 @@ func verificationTestSuite() {
 
 			// Act (1)
 			By("creating a backup with annotation skip-verify")
-			finbackup, err := GetFinBackup(ns.Name, utils.GetUniqueName("test-finbackup-"), pvc.Namespace, pvc.Name, "minikube-worker")
+			finbackup, err := GetFinBackup(ns.Name, utils.GetUniqueName("test-finbackup-"),
+				pvc.Namespace, pvc.Name, "minikube-worker")
 			Expect(err).NotTo(HaveOccurred())
 			finbackup.Annotations = map[string]string{
 				"fin.cybozu.io/skip-verify": "true",

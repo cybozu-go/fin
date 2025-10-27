@@ -70,7 +70,8 @@ func fullBackupTestSuite() {
 		Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
 
 		By("creating a backup")
-		finbackup, err = GetFinBackup(rookNamespace, utils.GetUniqueName("test-finbackup-"), ns.Name, pvc.Name, "minikube-worker")
+		finbackup, err = GetFinBackup(rookNamespace, utils.GetUniqueName("test-finbackup-"),
+			ns.Name, pvc.Name, "minikube-worker")
 		Expect(err).NotTo(HaveOccurred())
 		err = CreateFinBackup(ctx, ctrlClient, finbackup)
 		Expect(err).NotTo(HaveOccurred())

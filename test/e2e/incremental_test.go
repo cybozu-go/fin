@@ -76,7 +76,8 @@ func incrementalBackupTestSuite() {
 		Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
 
 		By("creating a full backup")
-		finbackup1, err = GetFinBackup(rookNamespace, utils.GetUniqueName("test-finbackup-"), ns.Name, pvc.Name, "minikube-worker")
+		finbackup1, err = GetFinBackup(rookNamespace, utils.GetUniqueName("test-finbackup-"),
+			ns.Name, pvc.Name, "minikube-worker")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(CreateFinBackup(ctx, ctrlClient, finbackup1)).NotTo(HaveOccurred())
 		Expect(WaitForFinBackupStoredToNodeAndVerified(ctx, ctrlClient, rookNamespace, finbackup1.Name, 1*time.Minute)).
@@ -113,7 +114,8 @@ func incrementalBackupTestSuite() {
 
 	It("should create an incremental backup", func(ctx SpecContext) {
 		By("creating an incremental backup")
-		finbackup2, err := GetFinBackup(rookNamespace, utils.GetUniqueName("test-finbackup-"), ns.Name, pvc.Name, "minikube-worker")
+		finbackup2, err := GetFinBackup(rookNamespace, utils.GetUniqueName("test-finbackup-"),
+			ns.Name, pvc.Name, "minikube-worker")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(CreateFinBackup(ctx, ctrlClient, finbackup2)).NotTo(HaveOccurred())
 		Expect(WaitForFinBackupStoredToNodeAndVerified(ctx, ctrlClient, rookNamespace, finbackup2.Name, 1*time.Minute)).
