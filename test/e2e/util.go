@@ -73,7 +73,7 @@ func waitEnvironment() {
 	})
 }
 
-func GetPVC(namespace, name, volumeMode, storageClassName, accessModes, size string) (*corev1.PersistentVolumeClaim, error) {
+func NewPVC(namespace, name, volumeMode, storageClassName, accessModes, size string) (*corev1.PersistentVolumeClaim, error) {
 	tmpl := `apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -127,7 +127,7 @@ func DeletePVC(ctx context.Context, client kubernetes.Interface, namespace, name
 	return client.CoreV1().PersistentVolumeClaims(namespace).Delete(ctx, name, metav1.DeleteOptions{PropagationPolicy: &policy})
 }
 
-func GetPodMountingFilesystem(namespace, name, pvcName, image, mountPath string) *corev1.Pod {
+func NewPodMountingFilesystem(namespace, name, pvcName, image, mountPath string) *corev1.Pod {
 	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
@@ -161,7 +161,7 @@ func GetPodMountingFilesystem(namespace, name, pvcName, image, mountPath string)
 	}
 }
 
-func GetPod(namespace, name, pvcName, image, devicePath string) (*corev1.Pod, error) {
+func NewPod(namespace, name, pvcName, image, devicePath string) (*corev1.Pod, error) {
 	tmpl := `apiVersion: v1
 kind: Pod
 metadata:
@@ -217,7 +217,7 @@ func DeletePod(ctx context.Context, client kubernetes.Interface, namespace, name
 	return client.CoreV1().Pods(namespace).Delete(ctx, name, metav1.DeleteOptions{PropagationPolicy: &policy})
 }
 
-func GetNamespace(name string) *corev1.Namespace {
+func NewNamespace(name string) *corev1.Namespace {
 	return &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: name}}
 }
 
@@ -260,7 +260,7 @@ func WaitForPodReady(ctx context.Context, client kubernetes.Interface, namespace
 	})
 }
 
-func GetFinBackup(namespace, name, pvcNamespace, pvcName, node string) (*finv1.FinBackup, error) {
+func NewFinBackup(namespace, name, pvcNamespace, pvcName, node string) (*finv1.FinBackup, error) {
 	tmpl := `apiVersion: fin.cybozu.io/v1
 kind: FinBackup
 metadata:
@@ -302,7 +302,7 @@ func CreateFinBackup(ctx context.Context, client client.Client, finbackup *finv1
 	return client.Create(ctx, finbackup)
 }
 
-func GetFinRestore(namespace, name, backupName, pvcName, pvcNamespace string) (*finv1.FinRestore, error) {
+func NewFinRestore(namespace, name, backupName, pvcName, pvcNamespace string) (*finv1.FinRestore, error) {
 	tmpl := `apiVersion: fin.cybozu.io/v1
 kind: FinRestore
 metadata:

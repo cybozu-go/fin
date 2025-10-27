@@ -48,17 +48,17 @@ func incrementalBackupTestSuite() {
 
 	BeforeAll(func(ctx SpecContext) {
 		By("creating a namespace")
-		ns = GetNamespace(utils.GetUniqueName("test-ns-"))
+		ns = NewNamespace(utils.GetUniqueName("test-ns-"))
 		Expect(CreateNamespace(ctx, k8sClient, ns)).NotTo(HaveOccurred())
 
 		By("creating a PVC")
-		pvc, err = GetPVC(ns.Name, utils.GetUniqueName("test-pvc-"), "Block", rookStorageClass, "ReadWriteOnce", "100Mi")
+		pvc, err = NewPVC(ns.Name, utils.GetUniqueName("test-pvc-"), "Block", rookStorageClass, "ReadWriteOnce", "100Mi")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(CreatePVC(ctx, k8sClient, pvc)).NotTo(HaveOccurred())
 
 		By("creating a Pod")
 		devicePath = "/data"
-		pod, err = GetPod(ns.Name, utils.GetUniqueName("test-pod-"), pvc.Name, "ghcr.io/cybozu/ubuntu:24.04", devicePath)
+		pod, err = NewPod(ns.Name, utils.GetUniqueName("test-pod-"), pvc.Name, "ghcr.io/cybozu/ubuntu:24.04", devicePath)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(CreatePod(ctx, k8sClient, pod)).NotTo(HaveOccurred())
 		Expect(WaitForPodReady(ctx, k8sClient, ns.Name, pod.Name, 2*time.Minute)).NotTo(HaveOccurred())
@@ -76,7 +76,7 @@ func incrementalBackupTestSuite() {
 		Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
 
 		By("creating a full backup")
-		finbackup1, err = GetFinBackup(rookNamespace, utils.GetUniqueName("test-finbackup-"),
+		finbackup1, err = NewFinBackup(rookNamespace, utils.GetUniqueName("test-finbackup-"),
 			ns.Name, pvc.Name, "minikube-worker")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(CreateFinBackup(ctx, ctrlClient, finbackup1)).NotTo(HaveOccurred())
@@ -114,7 +114,7 @@ func incrementalBackupTestSuite() {
 
 	It("should create an incremental backup", func(ctx SpecContext) {
 		By("creating an incremental backup")
-		finbackup2, err := GetFinBackup(rookNamespace, utils.GetUniqueName("test-finbackup-"),
+		finbackup2, err := NewFinBackup(rookNamespace, utils.GetUniqueName("test-finbackup-"),
 			ns.Name, pvc.Name, "minikube-worker")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(CreateFinBackup(ctx, ctrlClient, finbackup2)).NotTo(HaveOccurred())
