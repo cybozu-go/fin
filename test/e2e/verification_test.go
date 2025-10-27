@@ -21,16 +21,16 @@ func verificationTestSuite() {
 
 	BeforeEach(func(ctx SpecContext) {
 		ns = GetNamespace(utils.GetUniqueName("test-ns-"))
-		By("creating a namespace: " + ns.GetName())
+		By("creating a namespace: " + ns.Name)
 		err = CreateNamespace(ctx, k8sClient, ns)
 		Expect(err).NotTo(HaveOccurred())
 
 		By("creating a PVC")
 		pvc, err = GetPVC(
-			ns.GetName(),
-			"test-pvc",
+			ns.Name,
+			utils.GetUniqueName("test-pvc-"),
 			"Filesystem",
-			"rook-ceph-block",
+			rookStorageClass,
 			"ReadWriteOnce",
 			"100Mi",
 		)
@@ -39,21 +39,22 @@ func verificationTestSuite() {
 		Expect(err).NotTo(HaveOccurred())
 
 		By("creating a pod")
-		pod := GetPodMountingFilesystem(ns.GetName(), "test-pod", pvc.GetName(), "ghcr.io/cybozu/ubuntu:24.04", "/data")
+		pod := GetPodMountingFilesystem(ns.Name, utils.GetUniqueName("test-pod-"),
+			pvc.Name, "ghcr.io/cybozu/ubuntu:24.04", "/data")
 		err = CreatePod(ctx, k8sClient, pod)
 		Expect(err).NotTo(HaveOccurred())
-		err = WaitForPodReady(ctx, k8sClient, pod.GetNamespace(), pod.GetName(), 2*time.Minute)
+		err = WaitForPodReady(ctx, k8sClient, pod.Namespace, pod.Name, 2*time.Minute)
 		Expect(err).NotTo(HaveOccurred())
 
 		By("writing data to the pvc")
-		_, _, err = kubectl("exec", "-n", ns.GetName(), pod.GetName(), "--",
+		_, _, err = kubectl("exec", "-n", ns.Name, pod.Name, "--",
 			"dd", "if=/dev/urandom", "of=/data/test", "bs=1K", "count=1")
 		Expect(err).NotTo(HaveOccurred())
-		_, _, err = kubectl("exec", "-n", ns.GetName(), pod.GetName(), "--", "sync")
+		_, _, err = kubectl("exec", "-n", ns.Name, pod.Name, "--", "sync")
 		Expect(err).NotTo(HaveOccurred())
 
 		By("reading the data from the pvc")
-		expectedWrittenData, _, err = kubectl("exec", "-n", pod.GetNamespace(), pod.GetName(), "--", "cat", "/data/test")
+		expectedWrittenData, _, err = kubectl("exec", "-n", pod.Namespace, pod.Name, "--", "cat", "/data/test")
 		Expect(err).NotTo(HaveOccurred())
 	})
 
@@ -87,14 +88,15 @@ func verificationTestSuite() {
 
 		// Act (1)
 		By("creating a backup")
-		finbackup, err := GetFinBackup(ns.GetName(), "finbackup-test", pvc.GetNamespace(), pvc.GetName(), "minikube-worker")
+		finbackup, err := GetFinBackup(ns.Name, utils.GetUniqueName("test-finbackup-"),
+			pvc.Namespace, pvc.Name, "minikube-worker")
 		Expect(err).NotTo(HaveOccurred())
 		err = CreateFinBackup(ctx, ctrlClient, finbackup)
 		Expect(err).NotTo(HaveOccurred())
 
 		// Assert (1)
 		err = WaitForFinBackupStoredToNodeAndVerified(
-			ctx, ctrlClient, finbackup.GetNamespace(), finbackup.GetName(), 2*time.Minute)
+			ctx, ctrlClient, finbackup.Namespace, finbackup.Name, 2*time.Minute)
 		Expect(err).NotTo(HaveOccurred())
 
 		// Arrange (2)
@@ -102,14 +104,15 @@ func verificationTestSuite() {
 
 		// Act (2)
 		By("restoring from the backup")
+		finRestoreName := utils.GetUniqueName("test-finrestore-")
 		finrestore, err := GetFinRestore(
-			ns.GetName(), "finrestore-test", finbackup.GetName(), "finrestore-test", pvc.GetNamespace())
+			ns.Name, finRestoreName, finbackup.Name, finRestoreName, pvc.Namespace)
 		Expect(err).NotTo(HaveOccurred())
 		err = CreateFinRestore(ctx, ctrlClient, finrestore)
 		Expect(err).NotTo(HaveOccurred())
 
 		// Assert (2)
-		err = WaitForFinRestoreReady(ctx, ctrlClient, finrestore.GetNamespace(), finrestore.GetName(), 2*time.Minute)
+		err = WaitForFinRestoreReady(ctx, ctrlClient, finrestore.Namespace, finrestore.Name, 2*time.Minute)
 		Expect(err).NotTo(HaveOccurred())
 
 		By("verifying the existence of the restore PVC")
@@ -120,19 +123,19 @@ func verificationTestSuite() {
 		By("creating a pod to verify the contents in the restored PVC")
 		restorePod := GetPodMountingFilesystem(
 			finrestore.Spec.PVCNamespace,
-			"test-restore-pod",
+			utils.GetUniqueName("test-restore-pod-"),
 			finrestore.Spec.PVC,
 			"ghcr.io/cybozu/ubuntu:24.04",
 			"/restored",
 		)
 		err = CreatePod(ctx, k8sClient, restorePod)
 		Expect(err).NotTo(HaveOccurred())
-		err = WaitForPodReady(ctx, k8sClient, restorePod.GetNamespace(), restorePod.GetName(), 2*time.Minute)
+		err = WaitForPodReady(ctx, k8sClient, restorePod.Namespace, restorePod.Name, 2*time.Minute)
 		Expect(err).NotTo(HaveOccurred())
 
 		By("verifying the data in the restored PVC")
 		restoredData, _, err := kubectl(
-			"exec", "-n", restorePod.GetNamespace(), restorePod.GetName(), "--", "cat", "/restored/test")
+			"exec", "-n", restorePod.Namespace, restorePod.Name, "--", "cat", "/restored/test")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(restoredData).To(Equal(expectedWrittenData))
 	})
@@ -154,16 +157,16 @@ func verificationTestSuite() {
 	It("should set Verified=False condition to FinBackup when backup is corrupted", func(ctx SpecContext) {
 		// Arrange
 		By("creating a static PV and PVC to access the RBD image as a block device")
-		stdout, _, err := kubectl("get", "pvc", "-n", pvc.GetNamespace(), pvc.GetName(), "-o", "jsonpath={.spec.volumeName}")
+		stdout, _, err := kubectl("get", "pvc", "-n", pvc.Namespace, pvc.Name, "-o", "jsonpath={.spec.volumeName}")
 		Expect(err).NotTo(HaveOccurred())
 		volumeName := string(stdout)
 		stdout, _, err = kubectl("get", "pv", volumeName, "-o", "jsonpath={.spec.csi.volumeAttributes.imageName}")
 		Expect(err).NotTo(HaveOccurred())
 		imageName := string(stdout)
 
-		staticPVName := "test-static-pv"
-		staticPVCName := "test-static-pvc"
-		staticPodName := "test-static-pod"
+		staticPVName := utils.GetUniqueName("test-static-pv-")
+		staticPVCName := utils.GetUniqueName("test-static-pvc-")
+		staticPodName := utils.GetUniqueName("test-static-pod-")
 
 		err = ctrlClient.Create(ctx, &corev1.PersistentVolume{
 			ObjectMeta: metav1.ObjectMeta{
@@ -186,7 +189,7 @@ func verificationTestSuite() {
 						FSType:       "ext4",
 						VolumeAttributes: map[string]string{
 							"clusterID":     "rook-ceph",
-							"pool":          "rook-ceph-block-pool",
+							"pool":          poolName,
 							"staticVolume":  "true",
 							"imageFeatures": "layering",
 						},
@@ -250,7 +253,8 @@ func verificationTestSuite() {
 
 		// Act
 		By("creating a FinBackup resource")
-		finbackup, err := GetFinBackup(ns.GetName(), "finbackup-test", pvc.GetNamespace(), pvc.GetName(), "minikube-worker")
+		finbackup, err := GetFinBackup(ns.Name, utils.GetUniqueName("test-finbackup-"),
+			pvc.Namespace, pvc.Name, "minikube-worker")
 		Expect(err).NotTo(HaveOccurred())
 		err = CreateFinBackup(ctx, ctrlClient, finbackup)
 		Expect(err).NotTo(HaveOccurred())
@@ -261,8 +265,8 @@ func verificationTestSuite() {
 			err := ctrlClient.Get(
 				ctx,
 				types.NamespacedName{
-					Namespace: finbackup.GetNamespace(),
-					Name:      finbackup.GetName(),
+					Namespace: finbackup.Namespace,
+					Name:      finbackup.Name,
 				},
 				finbackup,
 			)
@@ -303,7 +307,8 @@ func verificationTestSuite() {
 
 			// Act (1)
 			By("creating a backup with annotation skip-verify")
-			finbackup, err := GetFinBackup(ns.GetName(), "finbackup-test", pvc.GetNamespace(), pvc.GetName(), "minikube-worker")
+			finbackup, err := GetFinBackup(ns.Name, utils.GetUniqueName("test-finbackup-"),
+				pvc.Namespace, pvc.Name, "minikube-worker")
 			Expect(err).NotTo(HaveOccurred())
 			finbackup.Annotations = map[string]string{
 				"fin.cybozu.io/skip-verify": "true",
@@ -316,7 +321,7 @@ func verificationTestSuite() {
 			Eventually(func(g Gomega, ctx SpecContext) {
 				err := ctrlClient.Get(
 					ctx,
-					types.NamespacedName{Namespace: finbackup.GetNamespace(), Name: finbackup.GetName()},
+					types.NamespacedName{Namespace: finbackup.Namespace, Name: finbackup.Name},
 					finbackup,
 				)
 				g.Expect(err).NotTo(HaveOccurred())
@@ -329,15 +334,16 @@ func verificationTestSuite() {
 
 			// Act (2)
 			By("restoring from the backup")
+			finRestoreName := utils.GetUniqueName("test-finrestore-")
 			finrestore, err := GetFinRestore(
-				ns.GetName(), "finrestore-test", finbackup.GetName(), "finrestore-test", pvc.GetNamespace())
+				ns.Name, finRestoreName, finbackup.Name, finRestoreName, pvc.Namespace)
 			Expect(err).NotTo(HaveOccurred())
 			finrestore.Spec.AllowUnverified = true
 			err = CreateFinRestore(ctx, ctrlClient, finrestore)
 			Expect(err).NotTo(HaveOccurred())
 
 			// Assert (2)
-			err = WaitForFinRestoreReady(ctx, ctrlClient, finrestore.GetNamespace(), finrestore.GetName(), 2*time.Minute)
+			err = WaitForFinRestoreReady(ctx, ctrlClient, finrestore.Namespace, finrestore.Name, 2*time.Minute)
 			Expect(err).NotTo(HaveOccurred())
 		},
 	)
