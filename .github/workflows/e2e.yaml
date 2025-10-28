@@ -46,8 +46,8 @@ jobs:
           sudo chmod 777 /var/run/libvirt/libvirt-sock
           sudo ls -la /var/run/libvirt/libvirt-sock
           ls -l /dev/kvm
-          sudo modprobe -a kvm
-          sudo modprobe -a kvm_amd
+          # x86 GitHub Runner can be one of Intel and AMD, so try both.
+          sudo modprobe -a kvm_intel || sudo modprobe -a kvm_amd
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
       - name: Build and push Docker image with cache
