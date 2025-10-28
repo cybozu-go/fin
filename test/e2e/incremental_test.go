@@ -48,20 +48,20 @@ func incrementalBackupTestSuite() {
 
 	BeforeAll(func(ctx SpecContext) {
 		By("creating a namespace")
-		ns = GetNamespace(utils.GetUniqueName("test-ns-"))
+		ns = NewNamespace(utils.GetUniqueName("test-ns-"))
 		Expect(CreateNamespace(ctx, k8sClient, ns)).NotTo(HaveOccurred())
 
 		By("creating a PVC")
-		pvc, err = GetPVC(ns.Name, utils.GetUniqueName("test-pvc-"), "Block", rookStorageClass, "ReadWriteOnce", "100Mi")
+		pvc, err = NewPVC(ns.Name, utils.GetUniqueName("test-pvc-"), "Block", rookStorageClass, "ReadWriteOnce", "100Mi")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(CreatePVC(ctx, k8sClient, pvc)).NotTo(HaveOccurred())
 
 		By("creating a Pod")
 		devicePath = "/data"
-		pod, err = GetPod(ns.Name, utils.GetUniqueName("test-pod-"), pvc.Name, "ghcr.io/cybozu/ubuntu:24.04", devicePath)
+		pod, err = NewPod(ns.Name, utils.GetUniqueName("test-pod-"), pvc.Name, "ghcr.io/cybozu/ubuntu:24.04", devicePath)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(CreatePod(ctx, k8sClient, pod)).NotTo(HaveOccurred())
-		Expect(WaitForPodReady(ctx, k8sClient, ns.Name, pod.Name, 2*time.Minute)).NotTo(HaveOccurred())
+		Expect(WaitForPodReady(ctx, k8sClient, pod, 2*time.Minute)).NotTo(HaveOccurred())
 
 		By("writing data to the PVC")
 		_, stderr, err := kubectl("exec", "-n", ns.Name, pod.Name, "--",
@@ -76,11 +76,11 @@ func incrementalBackupTestSuite() {
 		Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
 
 		By("creating a full backup")
-		finbackup1, err = GetFinBackup(rookNamespace, utils.GetUniqueName("test-finbackup-"),
-			ns.Name, pvc.Name, "minikube-worker")
+		finbackup1, err = NewFinBackup(rookNamespace, utils.GetUniqueName("test-finbackup-"),
+			pvc, "minikube-worker")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(CreateFinBackup(ctx, ctrlClient, finbackup1)).NotTo(HaveOccurred())
-		Expect(WaitForFinBackupStoredToNodeAndVerified(ctx, ctrlClient, rookNamespace, finbackup1.Name, 1*time.Minute)).
+		Expect(WaitForFinBackupStoredToNodeAndVerified(ctx, ctrlClient, finbackup1, 1*time.Minute)).
 			NotTo(HaveOccurred())
 
 		By("verifying the data in raw.img from the full backup")
@@ -104,21 +104,21 @@ func incrementalBackupTestSuite() {
 			if fb == nil {
 				continue
 			}
-			Expect(DeleteFinBackup(ctx, ctrlClient, fb.Namespace, fb.Name)).NotTo(HaveOccurred())
-			Expect(WaitForFinBackupDeletion(ctx, ctrlClient, fb.Namespace, fb.Name, 2*time.Minute)).NotTo(HaveOccurred())
+			Expect(DeleteFinBackup(ctx, ctrlClient, fb)).NotTo(HaveOccurred())
+			Expect(WaitForFinBackupDeletion(ctx, ctrlClient, fb, 2*time.Minute)).NotTo(HaveOccurred())
 		}
-		Expect(DeletePod(ctx, k8sClient, pod.Namespace, pod.Name)).NotTo(HaveOccurred())
-		Expect(DeletePVC(ctx, k8sClient, pvc.Namespace, pvc.Name)).NotTo(HaveOccurred())
-		Expect(DeleteNamespace(ctx, k8sClient, ns.Name)).NotTo(HaveOccurred())
+		Expect(DeletePod(ctx, k8sClient, pod)).NotTo(HaveOccurred())
+		Expect(DeletePVC(ctx, k8sClient, pvc)).NotTo(HaveOccurred())
+		Expect(DeleteNamespace(ctx, k8sClient, ns)).NotTo(HaveOccurred())
 	})
 
 	It("should create an incremental backup", func(ctx SpecContext) {
 		By("creating an incremental backup")
-		finbackup2, err := GetFinBackup(rookNamespace, utils.GetUniqueName("test-finbackup-"),
-			ns.Name, pvc.Name, "minikube-worker")
+		finbackup2, err := NewFinBackup(rookNamespace, utils.GetUniqueName("test-finbackup-"),
+			pvc, "minikube-worker")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(CreateFinBackup(ctx, ctrlClient, finbackup2)).NotTo(HaveOccurred())
-		Expect(WaitForFinBackupStoredToNodeAndVerified(ctx, ctrlClient, rookNamespace, finbackup2.Name, 1*time.Minute)).
+		Expect(WaitForFinBackupStoredToNodeAndVerified(ctx, ctrlClient, finbackup2, 1*time.Minute)).
 			NotTo(HaveOccurred())
 
 		By("verifying the data in raw.img as full backup")

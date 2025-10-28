@@ -23,22 +23,22 @@ func fullBackupTestSuite() {
 
 	BeforeAll(func(ctx SpecContext) {
 		By("creating a namespace")
-		ns = GetNamespace(utils.GetUniqueName("test-ns-"))
+		ns = NewNamespace(utils.GetUniqueName("test-ns-"))
 		err = CreateNamespace(ctx, k8sClient, ns)
 		Expect(err).NotTo(HaveOccurred())
 
 		By("creating a PVC")
-		pvc, err = GetPVC(ns.Name, utils.GetUniqueName("test-pvc-"), "Block", rookStorageClass, "ReadWriteOnce", "100Mi")
+		pvc, err = NewPVC(ns.Name, utils.GetUniqueName("test-pvc-"), "Block", rookStorageClass, "ReadWriteOnce", "100Mi")
 		Expect(err).NotTo(HaveOccurred())
 		err = CreatePVC(ctx, k8sClient, pvc)
 		Expect(err).NotTo(HaveOccurred())
 
 		By("creating a pod")
-		pod, err = GetPod(ns.Name, utils.GetUniqueName("test-pod-"), pvc.Name, "ghcr.io/cybozu/ubuntu:24.04", "/data")
+		pod, err = NewPod(ns.Name, utils.GetUniqueName("test-pod-"), pvc.Name, "ghcr.io/cybozu/ubuntu:24.04", "/data")
 		Expect(err).NotTo(HaveOccurred())
 		err = CreatePod(ctx, k8sClient, pod)
 		Expect(err).NotTo(HaveOccurred())
-		err = WaitForPodReady(ctx, k8sClient, ns.Name, pod.Name, 2*time.Minute)
+		err = WaitForPodReady(ctx, k8sClient, pod, 2*time.Minute)
 		Expect(err).NotTo(HaveOccurred())
 
 		By("writing data to the pvc")
@@ -70,12 +70,12 @@ func fullBackupTestSuite() {
 		Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
 
 		By("creating a backup")
-		finbackup, err = GetFinBackup(rookNamespace, utils.GetUniqueName("test-finbackup-"),
-			ns.Name, pvc.Name, "minikube-worker")
+		finbackup, err = NewFinBackup(rookNamespace, utils.GetUniqueName("test-finbackup-"),
+			pvc, "minikube-worker")
 		Expect(err).NotTo(HaveOccurred())
 		err = CreateFinBackup(ctx, ctrlClient, finbackup)
 		Expect(err).NotTo(HaveOccurred())
-		err = WaitForFinBackupStoredToNodeAndVerified(ctx, ctrlClient, rookNamespace, finbackup.Name, 1*time.Minute)
+		err = WaitForFinBackupStoredToNodeAndVerified(ctx, ctrlClient, finbackup, 1*time.Minute)
 		Expect(err).NotTo(HaveOccurred())
 
 		By("verifying the data in raw.img")
@@ -114,12 +114,12 @@ func fullBackupTestSuite() {
 		// Act
 		By("restoring from the backup")
 		finRestoreName0 := utils.GetUniqueName("test-finrestore-")
-		finrestores[0], err = GetFinRestore(
-			rookNamespace, finRestoreName0, finbackup.Name, finRestoreName0, ns.Name)
+		finrestores[0], err = NewFinRestore(
+			finRestoreName0, finbackup, ns.Name, finRestoreName0)
 		Expect(err).NotTo(HaveOccurred())
 		err = CreateFinRestore(ctx, ctrlClient, finrestores[0])
 		Expect(err).NotTo(HaveOccurred())
-		err = WaitForFinRestoreReady(ctx, ctrlClient, rookNamespace, finrestores[0].Name, 2*time.Minute)
+		err = WaitForFinRestoreReady(ctx, ctrlClient, finrestores[0], 2*time.Minute)
 		Expect(err).NotTo(HaveOccurred())
 
 		By("verifying the existence of the restore PVC")
@@ -128,7 +128,7 @@ func fullBackupTestSuite() {
 		Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
 
 		By("creating a pod to verify the contents in the restore PVC")
-		restorePod, err = GetPod(
+		restorePod, err = NewPod(
 			finrestores[0].Spec.PVCNamespace,
 			"test-restore-pod",
 			finrestores[0].Spec.PVC,
@@ -138,7 +138,7 @@ func fullBackupTestSuite() {
 		Expect(err).NotTo(HaveOccurred())
 		err = CreatePod(ctx, k8sClient, restorePod)
 		Expect(err).NotTo(HaveOccurred())
-		err = WaitForPodReady(ctx, k8sClient, ns.Name, restorePod.Name, 2*time.Minute)
+		err = WaitForPodReady(ctx, k8sClient, restorePod, 2*time.Minute)
 		Expect(err).NotTo(HaveOccurred())
 
 		By("verifying the data in the restore PVC")
@@ -171,9 +171,9 @@ func fullBackupTestSuite() {
 	It("should delete restore", func(ctx SpecContext) {
 		// Action
 		By("deleting FinRestore")
-		err = DeleteFinRestore(ctx, ctrlClient, rookNamespace, finrestores[0].Name)
+		err = DeleteFinRestore(ctx, ctrlClient, finrestores[0])
 		Expect(err).NotTo(HaveOccurred())
-		err = WaitForFinRestoreDeletion(ctx, ctrlClient, rookNamespace, finrestores[0].Name, 2*time.Minute)
+		err = WaitForFinRestoreDeletion(ctx, ctrlClient, finrestores[0], 2*time.Minute)
 		Expect(err).NotTo(HaveOccurred())
 
 		// Assert
@@ -214,8 +214,8 @@ func fullBackupTestSuite() {
 		// Act
 		By("creating the first FinRestore targeting the FinBackup")
 		finRestoreName1 := utils.GetUniqueName("test-finrestore-")
-		finrestores[1], err = GetFinRestore(
-			rookNamespace, finRestoreName1, finbackup.Name, finRestoreName1, ns.Name)
+		finrestores[1], err = NewFinRestore(
+			finRestoreName1, finbackup, ns.Name, finRestoreName1)
 		Expect(err).NotTo(HaveOccurred())
 		err = CreateFinRestore(ctx, ctrlClient, finrestores[1])
 		Expect(err).NotTo(HaveOccurred())
@@ -225,28 +225,28 @@ func fullBackupTestSuite() {
 			"--for=jsonpath={.metadata.finalizers[?(@==\"finrestore.fin.cybozu.io/finalizer\")]}",
 			"finrestore", "-n", rookNamespace, finRestoreName1, "--timeout=2m")
 		Expect(err).NotTo(HaveOccurred(), string(stderr))
-		err = DeleteFinRestore(ctx, ctrlClient, rookNamespace, finRestoreName1)
+		err = DeleteFinRestore(ctx, ctrlClient, finrestores[1])
 		Expect(err).NotTo(HaveOccurred())
 
 		By("creating the second FinRestore targeting the same FinBackup")
 		finRestoreName2 := utils.GetUniqueName("test-finrestore-")
-		finrestores[2], err = GetFinRestore(
-			rookNamespace, finRestoreName2, finbackup.Name, finRestoreName2, ns.Name)
+		finrestores[2], err = NewFinRestore(
+			finRestoreName2, finbackup, ns.Name, finRestoreName2)
 		Expect(err).NotTo(HaveOccurred())
 		err = CreateFinRestore(ctx, ctrlClient, finrestores[2])
 		Expect(err).NotTo(HaveOccurred())
 
 		// Assert
 		By("checking that the first FinRestore is deleted successfully")
-		err = WaitForFinRestoreDeletion(ctx, ctrlClient, rookNamespace, finRestoreName1, 2*time.Minute)
+		err = WaitForFinRestoreDeletion(ctx, ctrlClient, finrestores[1], 2*time.Minute)
 		Expect(err).NotTo(HaveOccurred())
 
 		By("checking that the second FinRestore is created successfully")
-		err = WaitForFinRestoreReady(ctx, ctrlClient, rookNamespace, finRestoreName2, 2*time.Minute)
+		err = WaitForFinRestoreReady(ctx, ctrlClient, finrestores[2], 2*time.Minute)
 		Expect(err).NotTo(HaveOccurred())
 
 		// Cleanup
-		err = DeleteFinRestore(ctx, ctrlClient, rookNamespace, finRestoreName2)
+		err = DeleteFinRestore(ctx, ctrlClient, finrestores[2])
 		Expect(err).NotTo(HaveOccurred())
 	})
 
@@ -270,9 +270,9 @@ func fullBackupTestSuite() {
 	//   - Deleted the snapshot reference in FinBackup.
 	It("should delete full backup", func(ctx SpecContext) {
 		By("deleting the backup")
-		err = DeleteFinBackup(ctx, ctrlClient, rookNamespace, finbackup.Name)
+		err = DeleteFinBackup(ctx, ctrlClient, finbackup)
 		Expect(err).NotTo(HaveOccurred())
-		err = WaitForFinBackupDeletion(ctx, ctrlClient, rookNamespace, finbackup.Name, 2*time.Minute)
+		err = WaitForFinBackupDeletion(ctx, ctrlClient, finbackup, 2*time.Minute)
 		Expect(err).NotTo(HaveOccurred())
 
 		By("verifying the deletion of raw.img")
@@ -295,25 +295,25 @@ func fullBackupTestSuite() {
 
 	AfterAll(func(ctx SpecContext) {
 		By("deleting the pod to verify the contents in the restore PVC")
-		err := DeletePod(ctx, k8sClient, restorePod.Namespace, restorePod.Name)
+		err := DeletePod(ctx, k8sClient, restorePod)
 		Expect(err).NotTo(HaveOccurred())
 
 		By("deleting the restore PVCs")
 		for _, fr := range finrestores {
-			err = DeletePVC(ctx, k8sClient, fr.Spec.PVCNamespace, fr.Spec.PVC)
+			err = DeleteRestorePVC(ctx, k8sClient, fr)
 			Expect(err).NotTo(HaveOccurred())
 		}
 
 		By("deleting the pod to write data to the PVC")
-		err = DeletePod(ctx, k8sClient, pod.Namespace, pod.Name)
+		err = DeletePod(ctx, k8sClient, pod)
 		Expect(err).NotTo(HaveOccurred())
 
 		By("deleting the PVC")
-		err = DeletePVC(ctx, k8sClient, pvc.Namespace, pvc.Name)
+		err = DeletePVC(ctx, k8sClient, pvc)
 		Expect(err).NotTo(HaveOccurred())
 
 		By("deleting the namespace")
-		err = DeleteNamespace(ctx, k8sClient, ns.Name)
+		err = DeleteNamespace(ctx, k8sClient, ns)
 		Expect(err).NotTo(HaveOccurred())
 	})
 }

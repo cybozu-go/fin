@@ -73,7 +73,7 @@ func waitEnvironment() {
 	})
 }
 
-func GetPVC(namespace, name, volumeMode, storageClassName, accessModes, size string) (*corev1.PersistentVolumeClaim, error) {
+func NewPVC(namespace, name, volumeMode, storageClassName, accessModes, size string) (*corev1.PersistentVolumeClaim, error) {
 	tmpl := `apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -122,12 +122,18 @@ func CreatePVC(ctx context.Context, client kubernetes.Interface, pvc *corev1.Per
 	return err
 }
 
-func DeletePVC(ctx context.Context, client kubernetes.Interface, namespace, name string) error {
+func DeletePVC(ctx context.Context, client kubernetes.Interface, pvc *corev1.PersistentVolumeClaim) error {
 	policy := metav1.DeletePropagationForeground
-	return client.CoreV1().PersistentVolumeClaims(namespace).Delete(ctx, name, metav1.DeleteOptions{PropagationPolicy: &policy})
+	return client.CoreV1().PersistentVolumeClaims(pvc.Namespace).Delete(ctx, pvc.Name, metav1.DeleteOptions{PropagationPolicy: &policy})
 }
 
-func GetPodMountingFilesystem(namespace, name, pvcName, image, mountPath string) *corev1.Pod {
+func DeleteRestorePVC(ctx context.Context, client kubernetes.Interface, finrestore *finv1.FinRestore) error {
+	policy := metav1.DeletePropagationForeground
+	return client.CoreV1().PersistentVolumeClaims(finrestore.Spec.PVCNamespace).Delete(
+		ctx, finrestore.Spec.PVC, metav1.DeleteOptions{PropagationPolicy: &policy})
+}
+
+func NewPodMountingFilesystem(namespace, name, pvcName, image, mountPath string) *corev1.Pod {
 	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
@@ -161,7 +167,7 @@ func GetPodMountingFilesystem(namespace, name, pvcName, image, mountPath string)
 	}
 }
 
-func GetPod(namespace, name, pvcName, image, devicePath string) (*corev1.Pod, error) {
+func NewPod(namespace, name, pvcName, image, devicePath string) (*corev1.Pod, error) {
 	tmpl := `apiVersion: v1
 kind: Pod
 metadata:
@@ -208,16 +214,16 @@ spec:
 }
 
 func CreatePod(ctx context.Context, client kubernetes.Interface, pod *corev1.Pod) error {
-	_, err := client.CoreV1().Pods(pod.GetNamespace()).Create(ctx, pod, metav1.CreateOptions{})
+	_, err := client.CoreV1().Pods(pod.Namespace).Create(ctx, pod, metav1.CreateOptions{})
 	return err
 }
 
-func DeletePod(ctx context.Context, client kubernetes.Interface, namespace, name string) error {
+func DeletePod(ctx context.Context, client kubernetes.Interface, pod *corev1.Pod) error {
 	policy := metav1.DeletePropagationForeground
-	return client.CoreV1().Pods(namespace).Delete(ctx, name, metav1.DeleteOptions{PropagationPolicy: &policy})
+	return client.CoreV1().Pods(pod.Namespace).Delete(ctx, pod.Name, metav1.DeleteOptions{PropagationPolicy: &policy})
 }
 
-func GetNamespace(name string) *corev1.Namespace {
+func NewNamespace(name string) *corev1.Namespace {
 	return &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: name}}
 }
 
@@ -226,15 +232,15 @@ func CreateNamespace(ctx context.Context, client kubernetes.Interface, namespace
 	return err
 }
 
-func DeleteNamespace(ctx context.Context, client kubernetes.Interface, namespace string) error {
+func DeleteNamespace(ctx context.Context, client kubernetes.Interface, namespace *corev1.Namespace) error {
 	policy := metav1.DeletePropagationForeground
-	err := client.CoreV1().Namespaces().Delete(ctx, namespace, metav1.DeleteOptions{PropagationPolicy: &policy})
+	err := client.CoreV1().Namespaces().Delete(ctx, namespace.Name, metav1.DeleteOptions{PropagationPolicy: &policy})
 	if err != nil {
 		return err
 	}
 
 	return wait.PollUntilContextTimeout(ctx, 5*time.Second, 3*time.Minute, true, func(ctx context.Context) (bool, error) {
-		_, err := client.CoreV1().Namespaces().Get(ctx, namespace, metav1.GetOptions{})
+		_, err := client.CoreV1().Namespaces().Get(ctx, namespace.Name, metav1.GetOptions{})
 		if errors.IsNotFound(err) {
 			return true, nil
 		}
@@ -245,13 +251,13 @@ func DeleteNamespace(ctx context.Context, client kubernetes.Interface, namespace
 	})
 }
 
-func WaitForPodReady(ctx context.Context, client kubernetes.Interface, namespace, name string, timeout time.Duration) error {
+func WaitForPodReady(ctx context.Context, client kubernetes.Interface, pod *corev1.Pod, timeout time.Duration) error {
 	return wait.PollUntilContextTimeout(ctx, time.Second, timeout, true, func(ctx context.Context) (bool, error) {
-		pod, err := client.CoreV1().Pods(namespace).Get(ctx, name, metav1.GetOptions{})
+		p, err := client.CoreV1().Pods(pod.Namespace).Get(ctx, pod.Name, metav1.GetOptions{})
 		if err != nil {
 			return false, err
 		}
-		for _, condition := range pod.Status.Conditions {
+		for _, condition := range p.Status.Conditions {
 			if condition.Type == corev1.PodReady && condition.Status == corev1.ConditionTrue {
 				return true, nil
 			}
@@ -260,7 +266,7 @@ func WaitForPodReady(ctx context.Context, client kubernetes.Interface, namespace
 	})
 }
 
-func GetFinBackup(namespace, name, pvcNamespace, pvcName, node string) (*finv1.FinBackup, error) {
+func NewFinBackup(namespace, name string, pvc *corev1.PersistentVolumeClaim, node string) (*finv1.FinBackup, error) {
 	tmpl := `apiVersion: fin.cybozu.io/v1
 kind: FinBackup
 metadata:
@@ -282,8 +288,8 @@ spec:
 	}{
 		Name:         name,
 		Namespace:    namespace,
-		PVCName:      pvcName,
-		PVCNamespace: pvcNamespace,
+		PVCName:      pvc.Name,
+		PVCNamespace: pvc.Namespace,
 		Node:         node,
 	})
 	if err != nil {
@@ -302,7 +308,7 @@ func CreateFinBackup(ctx context.Context, client client.Client, finbackup *finv1
 	return client.Create(ctx, finbackup)
 }
 
-func GetFinRestore(namespace, name, backupName, pvcName, pvcNamespace string) (*finv1.FinRestore, error) {
+func NewFinRestore(name string, backup *finv1.FinBackup, restorePVCNamespace, restorePVCName string) (*finv1.FinRestore, error) {
 	tmpl := `apiVersion: fin.cybozu.io/v1
 kind: FinRestore
 metadata:
@@ -323,10 +329,10 @@ spec:
 		PVCNamespace string
 	}{
 		Name:         name,
-		Namespace:    namespace,
-		BackupName:   backupName,
-		PVCName:      pvcName,
-		PVCNamespace: pvcNamespace,
+		Namespace:    backup.Namespace,
+		BackupName:   backup.Name,
+		PVCName:      restorePVCName,
+		PVCNamespace: restorePVCNamespace,
 	})
 	if err != nil {
 		return nil, err
@@ -344,43 +350,43 @@ func CreateFinRestore(ctx context.Context, client client.Client, finrestore *fin
 	return client.Create(ctx, finrestore)
 }
 
-func DeleteFinBackup(ctx context.Context, client client.Client, namespace, name string) error {
-	finbackup := &finv1.FinBackup{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace}}
-	return client.Delete(ctx, finbackup)
+func DeleteFinBackup(ctx context.Context, client client.Client, finbackup *finv1.FinBackup) error {
+	target := &finv1.FinBackup{ObjectMeta: metav1.ObjectMeta{Name: finbackup.Name, Namespace: finbackup.Namespace}}
+	return client.Delete(ctx, target)
 }
 
-func DeleteFinRestore(ctx context.Context, client client.Client, namespace, name string) error {
-	finrestore := &finv1.FinRestore{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace}}
-	return client.Delete(ctx, finrestore)
+func DeleteFinRestore(ctx context.Context, client client.Client, finrestore *finv1.FinRestore) error {
+	target := &finv1.FinRestore{ObjectMeta: metav1.ObjectMeta{Name: finrestore.Name, Namespace: finrestore.Namespace}}
+	return client.Delete(ctx, target)
 }
 
-func WaitForFinBackupStoredToNodeAndVerified(ctx context.Context, client client.Client, namespace, name string, timeout time.Duration) error {
+func WaitForFinBackupStoredToNodeAndVerified(ctx context.Context, c client.Client, finbackup *finv1.FinBackup, timeout time.Duration) error {
 	return wait.PollUntilContextTimeout(ctx, time.Second, timeout, true, func(ctx context.Context) (bool, error) {
-		finbackup := &finv1.FinBackup{}
-		err := client.Get(ctx, types.NamespacedName{Namespace: namespace, Name: name}, finbackup)
+		fb := &finv1.FinBackup{}
+		err := c.Get(ctx, client.ObjectKeyFromObject(finbackup), fb)
 		if err != nil {
 			return false, err
 		}
 
-		return finbackup.IsStoredToNode() && finbackup.IsVerifiedTrue(), nil
+		return fb.IsStoredToNode() && fb.IsVerifiedTrue(), nil
 	})
 }
 
-func WaitForFinRestoreReady(ctx context.Context, client client.Client, namespace, name string, timeout time.Duration) error {
+func WaitForFinRestoreReady(ctx context.Context, client client.Client, finrestore *finv1.FinRestore, timeout time.Duration) error {
 	return wait.PollUntilContextTimeout(ctx, time.Second, timeout, true, func(ctx context.Context) (bool, error) {
-		finrestore := &finv1.FinRestore{}
-		err := client.Get(ctx, types.NamespacedName{Namespace: namespace, Name: name}, finrestore)
+		fr := &finv1.FinRestore{}
+		err := client.Get(ctx, types.NamespacedName{Namespace: finrestore.Namespace, Name: finrestore.Name}, fr)
 		if err != nil {
 			return false, err
 		}
-		return finrestore.IsReady(), nil
+		return fr.IsReady(), nil
 	})
 }
 
 // WaitForDeletion waits for any client.Object to be deleted using controller-runtime client (for custom resources)
-func WaitForDeletion(ctx context.Context, ctrlClient client.Client, obj client.Object, namespace, name string, timeout time.Duration) error {
+func WaitForCustomResourceDeletion(ctx context.Context, ctrlClient client.Client, dummy, obj client.Object, timeout time.Duration) error {
 	return wait.PollUntilContextTimeout(ctx, 2*time.Second, timeout, true, func(ctx context.Context) (bool, error) {
-		err := ctrlClient.Get(ctx, types.NamespacedName{Namespace: namespace, Name: name}, obj)
+		err := ctrlClient.Get(ctx, types.NamespacedName{Namespace: obj.GetNamespace(), Name: obj.GetName()}, dummy)
 		if err != nil {
 			if errors.IsNotFound(err) {
 				return true, nil
@@ -405,12 +411,12 @@ func WaitForCoreDeletion(ctx context.Context, timeout time.Duration, getFunc fun
 	})
 }
 
-func WaitForFinBackupDeletion(ctx context.Context, ctrlClient client.Client, namespace, name string, timeout time.Duration) error {
-	return WaitForDeletion(ctx, ctrlClient, &finv1.FinBackup{}, namespace, name, timeout)
+func WaitForFinBackupDeletion(ctx context.Context, ctrlClient client.Client, finbackup *finv1.FinBackup, timeout time.Duration) error {
+	return WaitForCustomResourceDeletion(ctx, ctrlClient, &finv1.FinBackup{}, finbackup, timeout)
 }
 
-func WaitForFinRestoreDeletion(ctx context.Context, ctrlClient client.Client, namespace, name string, timeout time.Duration) error {
-	return WaitForDeletion(ctx, ctrlClient, &finv1.FinRestore{}, namespace, name, timeout)
+func WaitForFinRestoreDeletion(ctx context.Context, ctrlClient client.Client, finrestore *finv1.FinRestore, timeout time.Duration) error {
+	return WaitForCustomResourceDeletion(ctx, ctrlClient, &finv1.FinRestore{}, finrestore, timeout)
 }
 
 // WaitForJobDeletion waits for a Job to be deleted using kubernetes.Interface
@@ -422,17 +428,17 @@ func WaitForJobDeletion(ctx context.Context, k8sClient kubernetes.Interface, nam
 }
 
 // WaitForPodDeletion waits for a Pod to be deleted using kubernetes.Interface
-func WaitForPodDeletion(ctx context.Context, k8sClient kubernetes.Interface, namespace, name string, timeout time.Duration) error {
+func WaitForPodDeletion(ctx context.Context, k8sClient kubernetes.Interface, pod *corev1.Pod, timeout time.Duration) error {
 	return WaitForCoreDeletion(ctx, timeout, func(ctx context.Context) error {
-		_, err := k8sClient.CoreV1().Pods(namespace).Get(ctx, name, metav1.GetOptions{})
+		_, err := k8sClient.CoreV1().Pods(pod.GetNamespace()).Get(ctx, pod.GetName(), metav1.GetOptions{})
 		return err
 	})
 }
 
 // WaitForPVCDeletion waits for a PVC to be deleted using kubernetes.Interface
-func WaitForPVCDeletion(ctx context.Context, k8sClient kubernetes.Interface, namespace, name string, timeout time.Duration) error {
+func WaitForPVCDeletion(ctx context.Context, k8sClient kubernetes.Interface, pvc *corev1.PersistentVolumeClaim, timeout time.Duration) error {
 	return WaitForCoreDeletion(ctx, timeout, func(ctx context.Context) error {
-		_, err := k8sClient.CoreV1().PersistentVolumeClaims(namespace).Get(ctx, name, metav1.GetOptions{})
+		_, err := k8sClient.CoreV1().PersistentVolumeClaims(pvc.GetNamespace()).Get(ctx, pvc.GetName(), metav1.GetOptions{})
 		return err
 	})
 }
