@@ -106,7 +106,7 @@ func verificationTestSuite() {
 		By("restoring from the backup")
 		finRestoreName := utils.GetUniqueName("test-finrestore-")
 		finrestore, err := NewFinRestore(
-			finRestoreName, finbackup, finRestoreName, pvc.Namespace)
+			finRestoreName, finbackup, pvc.Namespace, finRestoreName)
 		Expect(err).NotTo(HaveOccurred())
 		err = CreateFinRestore(ctx, ctrlClient, finrestore)
 		Expect(err).NotTo(HaveOccurred())
@@ -338,7 +338,7 @@ func verificationTestSuite() {
 			By("restoring from the backup")
 			finRestoreName := utils.GetUniqueName("test-finrestore-")
 			finrestore, err := NewFinRestore(
-				finRestoreName, finbackup, finRestoreName, pvc.Namespace)
+				finRestoreName, finbackup, pvc.Namespace, finRestoreName)
 			Expect(err).NotTo(HaveOccurred())
 			finrestore.Spec.AllowUnverified = true
 			err = CreateFinRestore(ctx, ctrlClient, finrestore)

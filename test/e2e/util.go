@@ -308,7 +308,7 @@ func CreateFinBackup(ctx context.Context, client client.Client, finbackup *finv1
 	return client.Create(ctx, finbackup)
 }
 
-func NewFinRestore(name string, backup *finv1.FinBackup, restorePVCName, restorePVCNamespace string) (*finv1.FinRestore, error) {
+func NewFinRestore(name string, backup *finv1.FinBackup, restorePVCNamespace, restorePVCName string) (*finv1.FinRestore, error) {
 	tmpl := `apiVersion: fin.cybozu.io/v1
 kind: FinRestore
 metadata:

@@ -115,7 +115,7 @@ func fullBackupTestSuite() {
 		By("restoring from the backup")
 		finRestoreName0 := utils.GetUniqueName("test-finrestore-")
 		finrestores[0], err = NewFinRestore(
-			finRestoreName0, finbackup, finRestoreName0, ns.Name)
+			finRestoreName0, finbackup, ns.Name, finRestoreName0)
 		Expect(err).NotTo(HaveOccurred())
 		err = CreateFinRestore(ctx, ctrlClient, finrestores[0])
 		Expect(err).NotTo(HaveOccurred())
@@ -215,7 +215,7 @@ func fullBackupTestSuite() {
 		By("creating the first FinRestore targeting the FinBackup")
 		finRestoreName1 := utils.GetUniqueName("test-finrestore-")
 		finrestores[1], err = NewFinRestore(
-			finRestoreName1, finbackup, finRestoreName1, ns.Name)
+			finRestoreName1, finbackup, ns.Name, finRestoreName1)
 		Expect(err).NotTo(HaveOccurred())
 		err = CreateFinRestore(ctx, ctrlClient, finrestores[1])
 		Expect(err).NotTo(HaveOccurred())
@@ -231,7 +231,7 @@ func fullBackupTestSuite() {
 		By("creating the second FinRestore targeting the same FinBackup")
 		finRestoreName2 := utils.GetUniqueName("test-finrestore-")
 		finrestores[2], err = NewFinRestore(
-			finRestoreName2, finbackup, finRestoreName2, ns.Name)
+			finRestoreName2, finbackup, ns.Name, finRestoreName2)
 		Expect(err).NotTo(HaveOccurred())
 		err = CreateFinRestore(ctx, ctrlClient, finrestores[2])
 		Expect(err).NotTo(HaveOccurred())
