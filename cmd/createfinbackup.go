@@ -11,7 +11,7 @@ import (
 )
 
 var createFinBackupCmd = &cobra.Command{
-	Use: "create-fin-backup",
+	Use: "create-finbackup-job",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return createFinBackupJobMain()
 	},
