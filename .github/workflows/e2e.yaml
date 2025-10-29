@@ -28,26 +28,7 @@ jobs:
           sudo rm -rf /usr/share/dotnet /usr/local/.ghcup
           df -h /
 
-      - name: KVM setup
-        run: |
-          VIRTUALIZATION_SUPPORT=$(grep -E -q 'vmx|svm' /proc/cpuinfo && echo yes || echo no)
-          echo ${VIRTUALIZATION_SUPPORT}
-          if [ "${VIRTUALIZATION_SUPPORT}" != "yes" ]; then
-            echo "CPU does not support the virtualization feature."
-            exit 1
-          fi
-          sudo apt-get update
-          sudo apt-get install -y qemu-kvm libvirt-daemon-system libvirt-clients bridge-utils
-          kvm-ok
-          sudo adduser `id -un` libvirt
-          sudo adduser `id -un` kvm
-          virsh list --all
-          sudo ls -la /var/run/libvirt/libvirt-sock
-          sudo chmod 777 /var/run/libvirt/libvirt-sock
-          sudo ls -la /var/run/libvirt/libvirt-sock
-          ls -l /dev/kvm
-          # x86 GitHub Runner can be one of Intel and AMD, so try both.
-          sudo modprobe -a kvm_intel || sudo modprobe -a kvm_amd
+      - uses: ./.github/actions/set-up-kvm-for-e2e-tests
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
       - name: Build and push Docker image with cache
