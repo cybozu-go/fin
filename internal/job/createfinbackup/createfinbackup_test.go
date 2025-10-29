@@ -9,6 +9,7 @@ import (
 	"time"
 
 	finv1 "github.com/cybozu-go/fin/api/v1"
+	"github.com/cybozu-go/fin/internal/controller"
 	"github.com/cybozu-go/fin/internal/job/input"
 	"k8s.io/apimachinery/pkg/api/equality"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -79,7 +80,7 @@ func Test_newFinBackupFromConfig(t *testing.T) {
 				ObjectMeta: metav1.ObjectMeta{
 					Name:        "fbc1-20220607080910-zzzzzz01",
 					Namespace:   "ns1",
-					Labels:      map[string]string{labelFinBackupConfigUID: "uid-123"},
+					Labels:      map[string]string{controller.LabelFinBackupConfigUID: "uid-123"},
 					Annotations: map[string]string{annotationFinBackupConfigName: "fbc1", annotationFinBackupConfigNS: "ns1"},
 				},
 				Spec: finv1.FinBackupSpec{PVC: "pvc1", PVCNamespace: "pvcns", Node: "node1"},
