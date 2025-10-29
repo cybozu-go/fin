@@ -15,7 +15,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -372,10 +371,10 @@ func WaitForFinBackupStoredToNodeAndVerified(ctx context.Context, c client.Clien
 	})
 }
 
-func WaitForFinRestoreReady(ctx context.Context, client client.Client, finrestore *finv1.FinRestore, timeout time.Duration) error {
+func WaitForFinRestoreReady(ctx context.Context, c client.Client, finrestore *finv1.FinRestore, timeout time.Duration) error {
 	return wait.PollUntilContextTimeout(ctx, time.Second, timeout, true, func(ctx context.Context) (bool, error) {
 		fr := &finv1.FinRestore{}
-		err := client.Get(ctx, types.NamespacedName{Namespace: finrestore.Namespace, Name: finrestore.Name}, fr)
+		err := c.Get(ctx, client.ObjectKeyFromObject(finrestore), fr)
 		if err != nil {
 			return false, err
 		}
@@ -386,7 +385,7 @@ func WaitForFinRestoreReady(ctx context.Context, client client.Client, finrestor
 // WaitForDeletion waits for any client.Object to be deleted using controller-runtime client (for custom resources)
 func WaitForCustomResourceDeletion(ctx context.Context, ctrlClient client.Client, dummy, obj client.Object, timeout time.Duration) error {
 	return wait.PollUntilContextTimeout(ctx, 2*time.Second, timeout, true, func(ctx context.Context) (bool, error) {
-		err := ctrlClient.Get(ctx, types.NamespacedName{Namespace: obj.GetNamespace(), Name: obj.GetName()}, dummy)
+		err := ctrlClient.Get(ctx, client.ObjectKeyFromObject(obj), dummy)
 		if err != nil {
 			if errors.IsNotFound(err) {
 				return true, nil
