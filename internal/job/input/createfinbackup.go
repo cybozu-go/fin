@@ -1,15 +1,13 @@
 package input
 
 import (
-	"time"
-
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 type CreateFinBackup struct {
-	FinBackupConfigName         string
-	FinBackupConfigNamespace    string
-	CurrentJobName              string
-	CurrentJobCreationTimestamp time.Time
-	CtrlClient                  client.Client
+	FinBackupConfigName      string
+	FinBackupConfigNamespace string
+	JobName                  string
+	JobNamespace             string
+	CtrlClient               client.Client
 }
