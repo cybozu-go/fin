@@ -34,6 +34,7 @@ type Backup struct {
 	targetPVCNamespace        string
 	targetPVCUID              string
 	maxPartSize               uint64
+	expansionUnitSize         uint64
 }
 
 func NewBackup(in *input.Backup) *Backup {
@@ -51,6 +52,7 @@ func NewBackup(in *input.Backup) *Backup {
 		targetPVCNamespace:        in.TargetPVCNamespace,
 		targetPVCUID:              in.TargetPVCUID,
 		maxPartSize:               in.MaxPartSize,
+		expansionUnitSize:         in.ExpansionUnitSize,
 	}
 }
 
@@ -300,6 +302,7 @@ func (b *Backup) loopApplyDiff(privateData *backupPrivateData, targetSnapshot *m
 			b.nodeLocalVolumeRepo.GetDiffPartPath(b.targetSnapshotID, i),
 			sourceSnapshotName,
 			targetSnapshotName,
+			b.expansionUnitSize,
 		); err != nil {
 			return fmt.Errorf("failed to apply diff: %w", err)
 		}

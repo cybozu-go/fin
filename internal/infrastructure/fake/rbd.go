@@ -151,7 +151,9 @@ func (r *RBDRepository) ApplyDiffToBlockDevice(blockDevicePath, diffFilePath, fr
 	return r.applyDiff(blockDevicePath, diffFilePath, fromSnapName, toSnapName)
 }
 
-func (r *RBDRepository) ApplyDiffToRawImage(rawImageFilePath, diffFilePath, fromSnapName, toSnapName string) error {
+func (r *RBDRepository) ApplyDiffToRawImage(
+	rawImageFilePath, diffFilePath, fromSnapName, toSnapName string, _ uint64,
+) error {
 	return r.applyDiff(rawImageFilePath, diffFilePath, fromSnapName, toSnapName)
 }
 

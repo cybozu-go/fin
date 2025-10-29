@@ -201,8 +201,12 @@ func (r *RBDRepository2) ApplyDiffToBlockDevice(blockDevicePath, diffFilePath, f
 	return ceph.NewRBDRepository().ApplyDiffToBlockDevice(blockDevicePath, diffFilePath, fromSnapName, toSnapName)
 }
 
-func (r *RBDRepository2) ApplyDiffToRawImage(rawImageFilePath, diffFilePath, fromSnapName, toSnapName string) error {
-	return ceph.NewRBDRepository().ApplyDiffToRawImage(rawImageFilePath, diffFilePath, fromSnapName, toSnapName)
+func (r *RBDRepository2) ApplyDiffToRawImage(
+	rawImageFilePath, diffFilePath, fromSnapName, toSnapName string, expansionUnitSize uint64,
+) error {
+	return ceph.NewRBDRepository().ApplyDiffToRawImage(
+		rawImageFilePath, diffFilePath, fromSnapName, toSnapName, expansionUnitSize,
+	)
 }
 
 func (r *RBDRepository2) getSnapshotVolume(snapshotID int) ([]byte, []int, error) {

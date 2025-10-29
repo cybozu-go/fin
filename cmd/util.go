@@ -2,8 +2,11 @@ package cmd
 
 import (
 	"fmt"
+	"os"
+	"strconv"
 
 	finv1 "github.com/cybozu-go/fin/api/v1"
+	"github.com/cybozu-go/fin/internal/controller"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -42,4 +45,16 @@ func getControllerClient() (client.Client, error) {
 		return nil, fmt.Errorf("failed to create controller-runtime client: %w", err)
 	}
 	return k8sClient, nil
+}
+
+func getExpansionUnitSize() (uint64, error) {
+	expansionUnitSizeStr := os.Getenv(controller.EnvRawImgExpansionUnitSize)
+	if expansionUnitSizeStr == "" {
+		return 0, fmt.Errorf("%s environment variable is not set", controller.EnvRawImgExpansionUnitSize)
+	}
+	expansionUnitSize, err := strconv.ParseUint(expansionUnitSizeStr, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("invalid %s: %w", controller.EnvRawImgExpansionUnitSize, err)
+	}
+	return expansionUnitSize, nil
 }

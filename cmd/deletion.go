@@ -71,6 +71,11 @@ func deletionJobMain() error {
 		return fmt.Errorf("invalid TARGET_SNAPSHOT_ID: %w", err)
 	}
 
+	expansionUnitSize, err := getExpansionUnitSize()
+	if err != nil {
+		return err
+	}
+
 	d := deletion.NewDeletion(&input.Deletion{
 		Repo:                finRepo,
 		RBDRepo:             rbdRepo,
@@ -78,6 +83,7 @@ func deletionJobMain() error {
 		ActionUID:           actionUID,
 		TargetSnapshotID:    targetSnapshotID,
 		TargetPVCUID:        pvcUID,
+		ExpansionUnitSize:   expansionUnitSize,
 	})
 	for {
 		err = d.Perform()

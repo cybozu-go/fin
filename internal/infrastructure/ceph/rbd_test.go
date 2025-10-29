@@ -433,6 +433,7 @@ func TestApplyDiffToRawImage_error_MissingDiffFileName(t *testing.T) {
 		"non existing file",
 		"",
 		"toSnap",
+		4*1024,
 	)
 
 	// Assert

@@ -16,6 +16,10 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+var (
+	DefaultExpansionUnitSize uint64 = 100 * 1024 * 1024 * 1024 // 100 GiB
+)
+
 type RBDRepository struct {
 }
 
@@ -91,22 +95,16 @@ func (r *RBDRepository) ApplyDiffToBlockDevice(blockDevicePath, diffFilePath, fr
 	return applyDiffToBlockDevice(blockDevicePath, diffFile, fromSnapName, toSnapName)
 }
 
-func (r *RBDRepository) ApplyDiffToRawImage(rawImageFilePath, diffFilePath, fromSnapName, toSnapName string) error {
+func (r *RBDRepository) ApplyDiffToRawImage(
+	rawImageFilePath, diffFilePath, fromSnapName, toSnapName string, expansionUnitSize uint64,
+) error {
 	diffFile, err := os.Open(diffFilePath)
 	if err != nil {
 		return fmt.Errorf("failed to open diff file: %s: %w", diffFilePath, err)
 	}
 	defer func() { _ = diffFile.Close() }()
 
-	expansionUnitSizeParsed := 100 * 1024 * 1024 * 1024 // 100 GiB by default
-	if expansionUnitSize := os.Getenv("FIN_RAW_IMG_EXPANSION_UNIT_SIZE"); expansionUnitSize != "" {
-		expansionUnitSizeParsed, err = strconv.Atoi(expansionUnitSize)
-		if err != nil {
-			return fmt.Errorf("failed to parse FIN_RAW_IMG_EXPANSION_UNIT_SIZE: %w", err)
-		}
-	}
-
-	return applyDiffToRawImage(rawImageFilePath, diffFile, fromSnapName, toSnapName, uint64(expansionUnitSizeParsed))
+	return applyDiffToRawImage(rawImageFilePath, diffFile, fromSnapName, toSnapName, expansionUnitSize)
 }
 
 func applyDiffToBlockDevice(blockDevicePath string, diffFile io.Reader, fromSnapName, toSnapName string) error {
