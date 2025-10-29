@@ -16,6 +16,12 @@ on:
 jobs:
   build:
     runs-on: "ubuntu-22.04"
+    strategy:
+      matrix:
+        label-filter:
+          - full-backup
+          - incremental-backup
+          - verification
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -56,4 +62,5 @@ jobs:
 
       - name: Run e2e tests
         run: |
-          make -C test/e2e do-test
+          make -C test/e2e do-test \
+          GINKGO_FLAGS=--label-filter='${{ matrix.label-filter }}'
