@@ -13,6 +13,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 func newControllerPod(name, namespace string) *corev1.Pod {
@@ -123,7 +124,7 @@ var _ = Describe("FinBackupConfig Controller", func() {
 			// Act
 			By("triggering reconcile")
 			req := ctrl.Request{
-				NamespacedName: types.NamespacedName{Name: fbc.Name, Namespace: fbc.Namespace},
+				NamespacedName: client.ObjectKeyFromObject(fbc),
 			}
 			_, err = reconciler.Reconcile(ctx, req)
 			Expect(err).NotTo(HaveOccurred())
@@ -221,12 +222,7 @@ var _ = Describe("FinBackupConfig Controller", func() {
 			defer func() { _ = k8sClient.Delete(ctx, fbc) }()
 
 			// Act
-			req := ctrl.Request{
-				NamespacedName: types.NamespacedName{
-					Name:      fbc.Name,
-					Namespace: fbc.Namespace,
-				},
-			}
+			req := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(fbc)}
 			_, err := reconciler.Reconcile(ctx, req)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -279,12 +275,7 @@ var _ = Describe("FinBackupConfig Controller", func() {
 			defer func() { _ = k8sClient.Delete(ctx, fbc) }()
 
 			// Act
-			req := ctrl.Request{
-				NamespacedName: types.NamespacedName{
-					Name:      fbc.Name,
-					Namespace: fbc.Namespace,
-				},
-			}
+			req := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(fbc)}
 			_, err := reconciler.Reconcile(ctx, req)
 			Expect(err).NotTo(HaveOccurred())
 

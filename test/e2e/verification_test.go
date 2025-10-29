@@ -9,8 +9,8 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 func verificationTestSuite() {
@@ -264,14 +264,7 @@ func verificationTestSuite() {
 		// Assert
 		By("waiting for the FinBackup to be stored to node and Verified=False")
 		Eventually(func(g Gomega, ctx SpecContext) {
-			err := ctrlClient.Get(
-				ctx,
-				types.NamespacedName{
-					Namespace: finbackup.Namespace,
-					Name:      finbackup.Name,
-				},
-				finbackup,
-			)
+			err := ctrlClient.Get(ctx, client.ObjectKeyFromObject(finbackup), finbackup)
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(finbackup.IsStoredToNode()).To(BeTrue())
 			g.Expect(finbackup.IsVerifiedFalse()).To(BeTrue())
@@ -321,11 +314,7 @@ func verificationTestSuite() {
 			// Assert (1)
 			By("waiting for the FinBackup to be stored to node and VerificationSkipped=True")
 			Eventually(func(g Gomega, ctx SpecContext) {
-				err := ctrlClient.Get(
-					ctx,
-					types.NamespacedName{Namespace: finbackup.Namespace, Name: finbackup.Name},
-					finbackup,
-				)
+				err := ctrlClient.Get(ctx, client.ObjectKeyFromObject(finbackup), finbackup)
 				g.Expect(err).NotTo(HaveOccurred())
 				g.Expect(finbackup.IsStoredToNode()).To(BeTrue())
 				g.Expect(finbackup.IsVerificationSkipped()).To(BeTrue())
