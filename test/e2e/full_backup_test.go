@@ -16,7 +16,6 @@ func fullBackupTestSuite() {
 	var ns *corev1.Namespace
 	var pvc *corev1.PersistentVolumeClaim
 	var pod *corev1.Pod
-	var restorePod *corev1.Pod
 	var finbackup *finv1.FinBackup
 	finrestores := make([]*finv1.FinRestore, 3)
 	var err error
@@ -104,6 +103,7 @@ func fullBackupTestSuite() {
 	//   - FinRestore becomes ready to use.
 	//   - The head of the restore PVC is filled with the same data
 	//     as the head of the PVC.
+	//   - The size of the restore PVC is the same as that of the backup target PVC.
 	It("should restore from full backup", func(ctx SpecContext) {
 		// Arrange
 		By("reading the data from the pvc")
@@ -122,30 +122,9 @@ func fullBackupTestSuite() {
 		err = WaitForFinRestoreReady(ctx, ctrlClient, finrestores[0], 2*time.Minute)
 		Expect(err).NotTo(HaveOccurred())
 
-		By("verifying the existence of the restore PVC")
-		_, stderr, err = kubectl("wait", "pvc", "-n", ns.Name, finrestores[0].Name,
-			"--for=jsonpath={.status.phase}=Bound", "--timeout=2m")
-		Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
-
-		By("creating a pod to verify the contents in the restore PVC")
-		restorePod, err = NewPod(
-			finrestores[0].Spec.PVCNamespace,
-			"test-restore-pod",
-			finrestores[0].Spec.PVC,
-			"ghcr.io/cybozu/ubuntu:24.04",
-			"/restore",
-		)
-		Expect(err).NotTo(HaveOccurred())
-		err = CreatePod(ctx, k8sClient, restorePod)
-		Expect(err).NotTo(HaveOccurred())
-		err = WaitForPodReady(ctx, k8sClient, restorePod, 2*time.Minute)
-		Expect(err).NotTo(HaveOccurred())
-
-		By("verifying the data in the restore PVC")
-		restoredData, stderr, err := kubectl("exec", "-n", ns.Name, restorePod.Name, "--",
-			"dd", "if=/restore", "bs=1K", "count=1")
-		Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
-		Expect(restoredData).To(Equal(expectedWrittenData), "Data in restore PVC does not match the expected data")
+		// Assert
+		VerifyDataInRestorePVC(ctx, k8sClient, finrestores[0], expectedWrittenData)
+		VerifySizeOfRestorePVC(ctx, ctrlClient, finrestores[0], finbackup)
 	})
 
 	// CSATEST-1552
@@ -294,10 +273,6 @@ func fullBackupTestSuite() {
 	})
 
 	AfterAll(func(ctx SpecContext) {
-		By("deleting the pod to verify the contents in the restore PVC")
-		err := DeletePod(ctx, k8sClient, restorePod)
-		Expect(err).NotTo(HaveOccurred())
-
 		By("deleting the restore PVCs")
 		for _, fr := range finrestores {
 			err = DeleteRestorePVC(ctx, k8sClient, fr)
