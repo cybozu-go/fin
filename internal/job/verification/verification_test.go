@@ -62,7 +62,7 @@ type setupOutput struct {
 }
 
 func setup(t *testing.T, input *setupInput) *setupOutput {
-	k8sClient, _, volumeInfo := fake.NewStorage()
+	k8sClient, volumeInfo := fake.NewStorage()
 	pvc, err := k8sClient.CoreV1().PersistentVolumeClaims(volumeInfo.Namespace).
 		Get(t.Context(), volumeInfo.PVCName, metav1.GetOptions{})
 	require.NoError(t, err)

@@ -1,7 +1,6 @@
 package fake
 
 import (
-	"github.com/cybozu-go/fin/internal/model"
 	"github.com/cybozu-go/fin/test/utils"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -17,10 +16,10 @@ type VolumeInfo struct {
 	ImageName string
 }
 
-// NewStorage creates a fake Kubernetes and RBD storage repository.
+// NewStorage creates a fake Kubernetes and VolumeInfo for RBD repository.
 // It creates a PVC, a PV, and a RBD volume with unique names.
 // The PVC is associated with a PV and a corresponding RBD volume.
-func NewStorage() (*fake.Clientset, *RBDRepository, *VolumeInfo) {
+func NewStorage() (*fake.Clientset, *VolumeInfo) {
 	volumeInfo := &VolumeInfo{
 		Namespace: utils.GetUniqueName("ns-"),
 		PVCName:   utils.GetUniqueName("pvc-"),
@@ -58,12 +57,5 @@ func NewStorage() (*fake.Clientset, *RBDRepository, *VolumeInfo) {
 	}
 	k8sClient := fake.NewClientset(pvc, pv)
 
-	// RBD volume without snapshots
-	rbdRepo := &RBDRepository{
-		snapshots: make([]*model.RBDSnapshot, 0),
-		poolName:  volumeInfo.PoolName,
-		imageName: volumeInfo.ImageName,
-	}
-
-	return k8sClient, rbdRepo, volumeInfo
+	return k8sClient, volumeInfo
 }

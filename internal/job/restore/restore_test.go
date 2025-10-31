@@ -57,7 +57,7 @@ type setupOutput struct {
 func setup(t *testing.T, config *setupInput) *setupOutput {
 	t.Helper()
 
-	k8sClient, _, volumeInfo := fake.NewStorage()
+	k8sClient, volumeInfo := fake.NewStorage()
 	rbdRepo := fake.NewRBDRepository2(volumeInfo.PoolName, volumeInfo.ImageName)
 	nlvRepo, finRepo, _ := testutil.CreateNLVAndFinRepoForTest(t)
 
