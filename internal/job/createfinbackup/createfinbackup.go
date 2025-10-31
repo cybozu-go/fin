@@ -10,6 +10,7 @@ import (
 	finv1 "github.com/cybozu-go/fin/api/v1"
 	"github.com/cybozu-go/fin/internal/controller"
 	"github.com/cybozu-go/fin/internal/job/input"
+	batchv1 "k8s.io/api/batch/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -29,7 +30,7 @@ type CreateFinBackup struct {
 	fbcName      string
 	fbcNamespace string
 	jobName      string
-	jobCreatedAt time.Time
+	jobNamespace string
 }
 
 func NewCreateFinBackup(in *input.CreateFinBackup) *CreateFinBackup {
@@ -37,8 +38,8 @@ func NewCreateFinBackup(in *input.CreateFinBackup) *CreateFinBackup {
 		client:       in.CtrlClient,
 		fbcName:      in.FinBackupConfigName,
 		fbcNamespace: in.FinBackupConfigNamespace,
-		jobName:      in.CurrentJobName,
-		jobCreatedAt: in.CurrentJobCreationTimestamp,
+		jobName:      in.JobName,
+		jobNamespace: in.JobNamespace,
 	}
 }
 
@@ -51,7 +52,13 @@ func (c *CreateFinBackup) Perform() error {
 		return fmt.Errorf("failed to get FinBackupConfig %s/%s: %w", c.fbcNamespace, c.fbcName, err)
 	}
 
-	fb := newFinBackupFromConfig(&fbc, c.jobName, c.jobCreatedAt)
+	// Lookup the Job resource to find the cronjob-scheduled-timestamp annotation
+	jobCreatedAt, err := c.getJobCreationTimestamp(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get job creation timestamp: %w", err)
+	}
+
+	fb := newFinBackupFromConfig(&fbc, c.jobName, jobCreatedAt)
 	if err := c.client.Create(ctx, fb); err != nil {
 		if k8serrors.IsAlreadyExists(err) {
 			slog.Info("FinBackup already exists, do nothing", "name", fb.Name, "namespace", fb.Namespace)
@@ -60,6 +67,31 @@ func (c *CreateFinBackup) Perform() error {
 		return fmt.Errorf("failed to create FinBackup from FinBackupConfig %s/%s: %w", c.fbcNamespace, c.fbcName, err)
 	}
 	return nil
+}
+
+// getJobCreationTimestamp retrieves the Job creation timestamp from the
+// batch.kubernetes.io/cronjob-scheduled-timestamp annotation
+func (c *CreateFinBackup) getJobCreationTimestamp(ctx context.Context) (time.Time, error) {
+	job := &batchv1.Job{}
+	if err := c.client.Get(ctx, types.NamespacedName{Namespace: c.jobNamespace, Name: c.jobName}, job); err != nil {
+		return time.Time{}, fmt.Errorf("failed to get Job %s/%s: %w", c.jobNamespace, c.jobName, err)
+	}
+
+	tsStr, ok := job.Annotations["batch.kubernetes.io/cronjob-scheduled-timestamp"]
+	if !ok {
+		return time.Time{}, fmt.Errorf(
+			"job %s/%s missing annotation batch.kubernetes.io/cronjob-scheduled-timestamp",
+			c.jobNamespace,
+			c.jobName,
+		)
+	}
+
+	jobCreatedAt, err := time.Parse(time.RFC3339, tsStr)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("invalid batch.kubernetes.io/cronjob-scheduled-timestamp: %w", err)
+	}
+
+	return jobCreatedAt, nil
 }
 
 // constructFinBackupName builds the FinBackup name according to the spec:

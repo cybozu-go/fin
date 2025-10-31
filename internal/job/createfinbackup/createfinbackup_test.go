@@ -11,9 +11,10 @@ import (
 	finv1 "github.com/cybozu-go/fin/api/v1"
 	"github.com/cybozu-go/fin/internal/controller"
 	"github.com/cybozu-go/fin/internal/job/input"
+	batchv1 "k8s.io/api/batch/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
@@ -98,8 +99,7 @@ func Test_newFinBackupFromConfig(t *testing.T) {
 }
 
 func TestCreateFinBackup_Perform(t *testing.T) {
-	scheme := runtime.NewScheme()
-	if err := finv1.AddToScheme(scheme); err != nil {
+	if err := finv1.AddToScheme(scheme.Scheme); err != nil {
 		t.Fatalf("failed to add finv1 to scheme: %v", err)
 	}
 
@@ -107,6 +107,18 @@ func TestCreateFinBackup_Perform(t *testing.T) {
 	fbc := &finv1.FinBackupConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "fbc-ok", Namespace: "ns"},
 		Spec:       finv1.FinBackupConfigSpec{PVC: "pvc", PVCNamespace: "pvcns", Node: "node"},
+	}
+
+	makeJob := func(name, namespace string, timestamp time.Time) *batchv1.Job {
+		return &batchv1.Job{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      name,
+				Namespace: namespace,
+				Annotations: map[string]string{
+					"batch.kubernetes.io/cronjob-scheduled-timestamp": timestamp.Format(time.RFC3339),
+				},
+			},
+		}
 	}
 
 	tests := []struct {
@@ -117,13 +129,16 @@ func TestCreateFinBackup_Perform(t *testing.T) {
 		wantErr         bool
 	}{
 		{
-			name:            "success-path",
-			existingObjects: []client.Object{fbc},
+			name: "success-path",
+			existingObjects: []client.Object{
+				fbc,
+				makeJob("job-0001", "job-ns", now),
+			},
 			input: &input.CreateFinBackup{
-				FinBackupConfigName:         "fbc-ok",
-				FinBackupConfigNamespace:    "ns",
-				CurrentJobName:              "job-0001",
-				CurrentJobCreationTimestamp: now,
+				FinBackupConfigName:      "fbc-ok",
+				FinBackupConfigNamespace: "ns",
+				JobName:                  "job-0001",
+				JobNamespace:             "job-ns",
 			},
 			wantErr: false,
 		},
@@ -131,6 +146,7 @@ func TestCreateFinBackup_Perform(t *testing.T) {
 			name: "already-exists-case",
 			existingObjects: []client.Object{
 				fbc,
+				makeJob("job-0002", "job-ns", now),
 				&finv1.FinBackup{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      constructFinBackupName(fbc.GetName(), "job-0002", now),
@@ -139,32 +155,37 @@ func TestCreateFinBackup_Perform(t *testing.T) {
 				},
 			},
 			input: &input.CreateFinBackup{
-				FinBackupConfigName:         "fbc-ok",
-				FinBackupConfigNamespace:    "ns",
-				CurrentJobName:              "job-0002",
-				CurrentJobCreationTimestamp: now,
+				FinBackupConfigName:      "fbc-ok",
+				FinBackupConfigNamespace: "ns",
+				JobName:                  "job-0002",
+				JobNamespace:             "job-ns",
 			},
 			wantErr: false,
 		},
 		{
-			name:            "missing-finbackupconfig",
-			existingObjects: []client.Object{},
+			name: "missing-finbackupconfig",
+			existingObjects: []client.Object{
+				makeJob("job-0003", "job-ns", now),
+			},
 			input: &input.CreateFinBackup{
-				FinBackupConfigName:         "no-such-fbc",
-				FinBackupConfigNamespace:    "ns",
-				CurrentJobName:              "job-0003",
-				CurrentJobCreationTimestamp: now,
+				FinBackupConfigName:      "no-such-fbc",
+				FinBackupConfigNamespace: "ns",
+				JobName:                  "job-0003",
+				JobNamespace:             "job-ns",
 			},
 			wantErr: true,
 		},
 		{
-			name:            "create-error",
-			existingObjects: []client.Object{fbc},
+			name: "create-error",
+			existingObjects: []client.Object{
+				fbc,
+				makeJob("job-0004", "job-ns", now),
+			},
 			input: &input.CreateFinBackup{
-				FinBackupConfigName:         "fbc-ok",
-				FinBackupConfigNamespace:    "ns",
-				CurrentJobName:              "job-0004",
-				CurrentJobCreationTimestamp: now,
+				FinBackupConfigName:      "fbc-ok",
+				FinBackupConfigNamespace: "ns",
+				JobName:                  "job-0004",
+				JobNamespace:             "job-ns",
 			},
 			interceptor: &interceptor.Funcs{
 				Create: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
@@ -177,7 +198,7 @@ func TestCreateFinBackup_Perform(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			builder := fake.NewClientBuilder().WithScheme(scheme).WithObjects(tt.existingObjects...)
+			builder := fake.NewClientBuilder().WithScheme(scheme.Scheme).WithObjects(tt.existingObjects...)
 			if tt.interceptor != nil {
 				builder = builder.WithInterceptorFuncs(*tt.interceptor)
 			}
