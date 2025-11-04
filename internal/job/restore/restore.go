@@ -144,8 +144,14 @@ func (r *Restore) doRestoreRawImagePhase(privateData *restorePrivateData, raw *j
 func (r *Restore) loopCopyChunk(privateData *restorePrivateData, rawImageSize uint64) error {
 	chunkCount := int(math.Ceil(float64(rawImageSize) / float64(r.rawImageChunkSize)))
 	for i := privateData.NextRawImageChunk; i < chunkCount; i++ {
-		if err := r.restoreVol.CopyChunk(r.nodeLocalVolumeRepo.GetRawImagePath(), i, r.rawImageChunkSize); err != nil {
+		rawImagePath := r.nodeLocalVolumeRepo.GetRawImagePath()
+		restoreVolPath := r.restoreVol.GetPath()
+		if err := r.restoreVol.CopyChunk(rawImagePath, i, r.rawImageChunkSize); err != nil {
 			return fmt.Errorf("failed to copy chunk %d: %w", i, err)
+		}
+
+		if err := job.SyncData(restoreVolPath); err != nil {
+			return fmt.Errorf("failed to sync %q: %w", restoreVolPath, err)
 		}
 
 		privateData.NextRawImageChunk = i + 1
@@ -186,10 +192,15 @@ func (r *Restore) loopApplyDiff(
 	for i := privateData.NextDiffPart; i < partCount; i++ {
 		sourceSnapshotName, targetSnapshotName :=
 			job.CalcSnapshotNamesWithOffset(source.SnapName, target.SnapName, i, partCount, target.PartSize)
-		if err := r.rbdRepo.ApplyDiffToBlockDevice(r.restoreVol.GetPath(),
-			r.nodeLocalVolumeRepo.GetDiffPartPath(target.SnapID, i),
-			sourceSnapshotName, targetSnapshotName); err != nil {
+		diffPartPath := r.nodeLocalVolumeRepo.GetDiffPartPath(target.SnapID, i)
+		restoreVolPath := r.restoreVol.GetPath()
+		if err := r.rbdRepo.ApplyDiffToBlockDevice(restoreVolPath,
+			diffPartPath, sourceSnapshotName, targetSnapshotName); err != nil {
 			return fmt.Errorf("failed to apply diff: %w", err)
+		}
+
+		if err := job.SyncData(restoreVolPath); err != nil {
+			return fmt.Errorf("failed to sync %q: %w", restoreVolPath, err)
 		}
 
 		privateData.NextDiffPart = i + 1

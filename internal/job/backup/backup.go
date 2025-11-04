@@ -247,6 +247,7 @@ func (b *Backup) loopExportDiff(
 ) error {
 	partCount := int(math.Ceil(float64(targetSnapshot.Size) / float64(b.maxPartSize)))
 	for i := privateData.NextStorePart; i < partCount; i++ {
+		diffPartPath := b.nodeLocalVolumeRepo.GetDiffPartPath(b.targetSnapshotID, i)
 		if err := b.rbdRepo.ExportDiff(&model.ExportDiffInput{
 			PoolName:       b.targetRBDPool,
 			ReadOffset:     b.maxPartSize * uint64(i),
@@ -255,9 +256,13 @@ func (b *Backup) loopExportDiff(
 			MidSnapPrefix:  targetSnapshot.Name,
 			ImageName:      b.targetRBDImageName,
 			TargetSnapName: targetSnapshot.Name,
-			OutputFile:     b.nodeLocalVolumeRepo.GetDiffPartPath(b.targetSnapshotID, i),
+			OutputFile:     diffPartPath,
 		}); err != nil {
 			return fmt.Errorf("failed to export diff: %w", err)
+		}
+
+		if err := job.SyncData(diffPartPath); err != nil {
+			return fmt.Errorf("failed to sync %q: %w", diffPartPath, err)
 		}
 
 		privateData.NextStorePart = i + 1
@@ -297,14 +302,20 @@ func (b *Backup) loopApplyDiff(privateData *backupPrivateData, targetSnapshot *m
 	for i := privateData.NextPatchPart; i < partCount; i++ {
 		sourceSnapshotName, targetSnapshotName :=
 			job.CalcSnapshotNamesWithOffset("", targetSnapshot.Name, i, partCount, b.maxPartSize)
+		rawImagePath := b.nodeLocalVolumeRepo.GetRawImagePath()
+		diffPartPath := b.nodeLocalVolumeRepo.GetDiffPartPath(b.targetSnapshotID, i)
 		if err := b.rbdRepo.ApplyDiffToRawImage(
-			b.nodeLocalVolumeRepo.GetRawImagePath(),
-			b.nodeLocalVolumeRepo.GetDiffPartPath(b.targetSnapshotID, i),
+			rawImagePath,
+			diffPartPath,
 			sourceSnapshotName,
 			targetSnapshotName,
 			b.expansionUnitSize,
 		); err != nil {
 			return fmt.Errorf("failed to apply diff: %w", err)
+		}
+
+		if err := job.SyncData(rawImagePath); err != nil {
+			return fmt.Errorf("failed to sync %q: %w", rawImagePath, err)
 		}
 
 		privateData.NextPatchPart = i + 1
