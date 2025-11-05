@@ -126,14 +126,19 @@ func (d *Deletion) applyAllDiffParts(raw, diff *job.BackupMetadataEntry) error {
 		sourceSnapshotName, targetSnapshotName :=
 			job.CalcSnapshotNamesWithOffset(raw.SnapName, diff.SnapName, i, partCount, diff.PartSize)
 		diffPartPath := d.nodeLocalVolumeRepo.GetDiffPartPath(diff.SnapID, i)
+		rawImagePath := d.nodeLocalVolumeRepo.GetRawImagePath()
 		if err := d.rbdRepo.ApplyDiffToRawImage(
-			d.nodeLocalVolumeRepo.GetRawImagePath(),
+			rawImagePath,
 			diffPartPath,
 			sourceSnapshotName,
 			targetSnapshotName,
 			d.expansionUnitSize,
 		); err != nil {
 			return fmt.Errorf("failed to apply diff part %d: %w", i, err)
+		}
+
+		if err := job.SyncData(rawImagePath); err != nil {
+			return fmt.Errorf("failed to sync %q: %w", rawImagePath, err)
 		}
 
 		// Update the next patch number for retry purposes

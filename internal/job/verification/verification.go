@@ -228,14 +228,20 @@ func (v *Verification) loopApplyDiff(
 	for i := nextDiffPart; i < partCount; i++ {
 		sourceSnapshotName, targetSnapshotName :=
 			job.CalcSnapshotNamesWithOffset(raw.SnapName, diff0.SnapName, i, partCount, diff0.PartSize)
+		instantVerifyImagePath := v.nlvRepo.GetInstantVerifyImagePath()
+		diffPartPath := v.nlvRepo.GetDiffPartPath(v.targetSnapshotID, i)
 		if err := v.rbdRepo.ApplyDiffToRawImage(
-			v.nlvRepo.GetInstantVerifyImagePath(),
-			v.nlvRepo.GetDiffPartPath(v.targetSnapshotID, i),
+			instantVerifyImagePath,
+			diffPartPath,
 			sourceSnapshotName,
 			targetSnapshotName,
 			v.expansionUnitSize,
 		); err != nil {
 			return fmt.Errorf("failed to apply diff: %w", err)
+		}
+
+		if err := job.SyncData(instantVerifyImagePath); err != nil {
+			return fmt.Errorf("failed to sync %q: %w", instantVerifyImagePath, err)
 		}
 
 		if err := v.setPrivateData(i + 1); err != nil {
