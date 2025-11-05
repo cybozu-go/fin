@@ -47,14 +47,14 @@ func incrementalBackupTestSuite() {
 		By("writing data to the PVC")
 		var stderr []byte
 		_, stderr, err = kubectl("exec", "-n", ns.Name, podForPVC.Name, "--",
-			"dd", "if=/dev/urandom", fmt.Sprintf("of=%s", devicePath), "bs=1K", "count=1")
+			"dd", "if=/dev/urandom", fmt.Sprintf("of=%s", devicePath), "bs=4K", "count=1")
 		Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
 		_, stderr, err = kubectl("exec", "-n", ns.Name, podForPVC.Name, "--", "sync")
 		Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
 
 		By("reading the data from the PVC")
 		dataOnFullBackup, stderr, err = kubectl("exec", "-n", ns.Name, podForPVC.Name, "--",
-			"dd", fmt.Sprintf("if=%s", devicePath), "bs=1K", "count=1")
+			"dd", fmt.Sprintf("if=%s", devicePath), "bs=4K", "count=1")
 		Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
 
 		By("creating a full backup")
@@ -70,13 +70,13 @@ func incrementalBackupTestSuite() {
 		// `--native-ssh=false` is used to avoid issues of conversion from LF to CRLF.
 		var rawImageData []byte
 		rawImageData, stderr, err = execWrapper(minikube, nil, "ssh", "--native-ssh=false", "--",
-			"dd", fmt.Sprintf("if=%s/raw.img", volumePath), "bs=1K", "count=1", "status=none")
+			"dd", fmt.Sprintf("if=%s/raw.img", volumePath), "bs=4K", "count=1", "status=none")
 		Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
 		Expect(rawImageData).To(Equal(dataOnFullBackup), "Data in raw.img does not match the expected data")
 
 		By("writing incremental data on the pvc")
 		_, stderr, err = kubectl("exec", "-n", ns.Name, podForPVC.Name, "--",
-			"dd", "if=/dev/urandom", fmt.Sprintf("of=%s", devicePath), "bs=1K", "count=1")
+			"dd", "if=/dev/urandom", fmt.Sprintf("of=%s", devicePath), "bs=4K", "count=1")
 		Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
 		_, stderr, err = kubectl("exec", "-n", ns.Name, podForPVC.Name, "--", "sync")
 		Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
@@ -130,7 +130,7 @@ func incrementalBackupTestSuite() {
 		By("verifying the data in raw.img as full backup")
 		var rawImageData, stderr []byte
 		rawImageData, stderr, err = execWrapper(minikube, nil, "ssh", "--native-ssh=false", "--",
-			"dd", fmt.Sprintf("if=%s/raw.img", volumePath), "bs=1K", "count=1", "status=none")
+			"dd", fmt.Sprintf("if=%s/raw.img", volumePath), "bs=4K", "count=1", "status=none")
 		Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
 		Expect(rawImageData).To(Equal(dataOnFullBackup), "Data in raw.img does not match the expected data")
 
@@ -146,7 +146,7 @@ func incrementalBackupTestSuite() {
 	//   Restore from incremental backup with no error.
 	//
 	// Precondition:
-	//   - An RBD PVC exists. The head of this PVC is filled with the new random data.
+	//   - An RBD PVC exists. The first 4KiB of this PVC is filled with the new random data.
 	//   - Two FinBackups corresponding to the RBD PVC exists
 	//     for both full backup and incremental backup and are ready to use.
 	//
@@ -158,15 +158,15 @@ func incrementalBackupTestSuite() {
 	//
 	// Assert:
 	//   - FinRestore becomes ready to use.
-	//   - The head of the restore PVC is filled with the same data
-	//     as the head of the PVC.
+	//   - The first 4KiB of the restore PVC is filled with the same data
+	//     as the first 4KiB of the PVC.
 	//   - The size of the restore PVC is the same as the snapshot.
 	It("should restore from incremental backup", func(ctx SpecContext) {
 		// Arrange
 		By("reading the data from the pvc")
 		var stderr []byte
 		dataOnIncrementalBackup, stderr, err = kubectl("exec", "-n", ns.Name, podForPVC.Name, "--",
-			"dd", "if=/data", "bs=1K", "count=1")
+			"dd", "if=/data", "bs=4K", "count=1")
 		Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
 
 		// Act
@@ -193,7 +193,7 @@ func incrementalBackupTestSuite() {
 	//   Restore from full backup with no error.
 	//
 	// Precondition:
-	//   - An RBD PVC exists. The head of this PVC is filled with the new random data.
+	//   - An RBD PVC exists. The first 4KiB of this PVC is filled with the new random data.
 	//   - Two FinBackup corresponding to the RBD PVC exists
 	//     for both full backup and incremental backup and are ready to use.
 	//
@@ -205,8 +205,8 @@ func incrementalBackupTestSuite() {
 	//
 	// Assert:
 	//   - FinRestore becomes ready to use.
-	//   - The head of the restore PVC is filled with the same data
-	//     as the head of the PVC.
+	//   - The first 4KiB of the restore PVC is filled with the same data
+	//     as the first 4KiB of the PVC.
 	//   - The size of the restore PVC is the same as the snapshot.
 	It("should restore from full backup", func(ctx SpecContext) {
 		// Act
@@ -274,7 +274,7 @@ func incrementalBackupTestSuite() {
 		By("verifying the data in raw.img as incremental backup")
 		var rawImageData []byte
 		rawImageData, stderr, err = execWrapper(minikube, nil, "ssh", "--native-ssh=false", "--",
-			"dd", fmt.Sprintf("if=%s/raw.img", volumePath), "bs=1K", "count=1", "status=none")
+			"dd", fmt.Sprintf("if=%s/raw.img", volumePath), "bs=4K", "count=1", "status=none")
 		Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
 		Expect(rawImageData).To(Equal(dataOnIncrementalBackup), "Data in raw.img does not match the expected data")
 
@@ -298,7 +298,7 @@ func incrementalBackupTestSuite() {
 	//   Restore from the remaining backup with no error.
 	//
 	// Precondition:
-	//   - An RBD PVC exists. The head of this PVC is filled with random data.
+	//   - An RBD PVC exists. The first 4KiB of this PVC is filled with random data.
 	//   - A FinBackup corresponding to the RBD PVC exists and is ready to use.
 	//
 	// Arrange:
@@ -309,8 +309,8 @@ func incrementalBackupTestSuite() {
 	//
 	// Assert:
 	//   - FinRestore becomes ready to use.
-	//   - The head of the restore PVC is filled with the same data
-	//     as the head of the PVC.
+	//   - The first 4KiB of the restore PVC is filled with the same data
+	//     as the first 4KiB of the PVC.
 	//   - The size of the restore PVC is the same as the snapshot.
 	It("should restore from the remaining backup", func(ctx SpecContext) {
 		// Act

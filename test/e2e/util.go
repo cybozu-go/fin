@@ -478,6 +478,8 @@ func DeleteFinRestoreAndRestorePVC(
 	return DeleteFinRestore(ctx, c, restore)
 }
 
+// VerifyDataInRestorePVC verifies that the first `len(expected)`
+// bytes of restore PVC matches `expected`.
 func VerifyDataInRestorePVC(
 	ctx context.Context,
 	k8sClient kubernetes.Interface,
@@ -509,7 +511,7 @@ func VerifyDataInRestorePVC(
 	By("verifying the data in the restore PVC")
 	restoredData, stderr, err := kubectl("exec", "-n",
 		restore.Spec.PVCNamespace, pod.Name, "--",
-		"dd", "if=/restore", "bs=1K", "count=1")
+		"dd", "if=/restore", fmt.Sprintf("bs=%d", len(expected)), "count=1")
 	Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
 	Expect(restoredData).To(Equal(expected),
 		"Data in restore PVC does not match the expected data")
