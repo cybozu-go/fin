@@ -21,6 +21,7 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
@@ -62,9 +63,6 @@ const (
 )
 
 var (
-	cleanupJobRequeueAfter  = 5 * time.Second
-	deletionJobRequeueAfter = 1 * time.Minute
-
 	errNonRetryableReconcile = errors.New("non retryable reconciliation error; " +
 		"reconciliation must not keep going nor be retried")
 )
@@ -410,6 +408,10 @@ func (r *FinBackupReconciler) createSnapshot(ctx context.Context, backup *finv1.
 }
 
 func (r *FinBackupReconciler) reconcileDelete(ctx context.Context, backup *finv1.FinBackup) (ctrl.Result, error) {
+	if !controllerutil.ContainsFinalizer(backup, FinBackupFinalizerName) {
+		return ctrl.Result{}, nil
+	}
+
 	logger := log.FromContext(ctx)
 
 	// Delete the backup job if it exists
@@ -456,7 +458,7 @@ func (r *FinBackupReconciler) reconcileDelete(ctx context.Context, backup *finv1
 			return ctrl.Result{}, err
 		}
 		if !done {
-			return ctrl.Result{RequeueAfter: cleanupJobRequeueAfter}, nil
+			return ctrl.Result{}, nil
 		}
 
 		err = r.createOrUpdateDeletionJob(ctx, backup)
@@ -475,7 +477,7 @@ func (r *FinBackupReconciler) reconcileDelete(ctx context.Context, backup *finv1
 			return ctrl.Result{}, err
 		}
 		if !done {
-			return ctrl.Result{RequeueAfter: deletionJobRequeueAfter}, nil
+			return ctrl.Result{}, nil
 		}
 
 		propagationPolicy := metav1.DeletePropagationBackground
@@ -503,6 +505,45 @@ func (r *FinBackupReconciler) reconcileDelete(ctx context.Context, backup *finv1
 	controllerutil.RemoveFinalizer(backup, FinBackupFinalizerName)
 	if err = r.Update(ctx, backup); err != nil {
 		logger.Error(err, "failed to remove finalizer")
+		return ctrl.Result{}, err
+	}
+	/*
+		The following Get loop is to make the deletion
+		of the resource or the non-existence of the finalizer
+		visible to the final reconciliation kicked by updating
+		finalizers. Without this change, an extra cleanup job is
+		created and this resource won't be deleted forever.
+
+		Here is the steps I observed:
+
+		1. reconciler: Remove finalizer.
+		2. k8s: Kick the reconciler because `finalizers` was updated.
+		3. reconciler: Can't detect the removal of finalizer
+		   because the resource in the client cahe is old
+		   and still have finalizer.
+		4. reconciler: Create another cleanup job(!)
+		5. reconciler: Fail to get cleanup job just after job creation.
+		   Then reconciler fails with error.
+		6. FinBackup is removed completely. The extra cleanup
+		   job will exist forever.
+	*/
+	err = wait.PollUntilContextTimeout(ctx, 1*time.Second, 5*time.Second, false,
+		wait.ConditionWithContextFunc(func(ctx context.Context) (bool, error) {
+			err := r.Get(ctx, client.ObjectKey{Namespace: backup.Namespace, Name: backup.Name}, backup)
+			if err != nil {
+				if k8serrors.IsNotFound(err) {
+					return true, nil
+				}
+				logger.Error(err, "failed to get FinBackup after removing finalizer")
+				return false, err
+			}
+			if !controllerutil.ContainsFinalizer(backup, FinBackupFinalizerName) {
+				return true, nil
+			}
+			return false, nil
+		}))
+	if err != nil {
+		logger.Error(err, "failed to confirm FinBackup deletion or finalizer removal")
 		return ctrl.Result{}, err
 	}
 	return ctrl.Result{}, nil
@@ -884,6 +925,14 @@ func (r *FinBackupReconciler) createOrUpdateDeletionJob(ctx context.Context, bac
 		labels["app.kubernetes.io/component"] = labelComponentDeletionJob
 		job.SetLabels(labels)
 
+		annotations := job.GetAnnotations()
+		if annotations == nil {
+			annotations = map[string]string{}
+		}
+		annotations[annotationFinBackupName] = backup.GetName()
+		annotations[annotationFinBackupNamespace] = backup.GetNamespace()
+		job.SetAnnotations(annotations)
+
 		// Up to this point, we modify the mutable fields. From here on, we
 		// modify the immutable fields, which cannot be changed after creation.
 		if !job.CreationTimestamp.IsZero() {
@@ -974,6 +1023,14 @@ func (r *FinBackupReconciler) createOrUpdateCleanupJob(ctx context.Context, back
 		labels["app.kubernetes.io/name"] = labelAppNameValue
 		labels["app.kubernetes.io/component"] = labelComponentCleanupJob
 		job.SetLabels(labels)
+
+		annotations := job.GetAnnotations()
+		if annotations == nil {
+			annotations = map[string]string{}
+		}
+		annotations[annotationFinBackupName] = backup.GetName()
+		annotations[annotationFinBackupNamespace] = backup.GetNamespace()
+		job.SetAnnotations(annotations)
 
 		// Up to this point, we modify the mutable fields. From here on, we
 		// modify the immutable fields, which cannot be changed after creation.

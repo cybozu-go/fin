@@ -31,11 +31,6 @@ var (
 	defaultMaxPartSize = resource.MustParse("100Mi")
 )
 
-func init() {
-	cleanupJobRequeueAfter = 1 * time.Second
-	deletionJobRequeueAfter = 1 * time.Second
-}
-
 func makeJobFailWithExitCode2(ctx SpecContext, jobName string) {
 	GinkgoHelper()
 	Eventually(func(g Gomega, ctx SpecContext) {
