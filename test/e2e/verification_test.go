@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"path"
 	"time"
 
 	"github.com/cybozu-go/fin/test/utils"
@@ -16,7 +17,8 @@ import (
 func verificationTestSuite() {
 	var ns *corev1.Namespace
 	var pvc *corev1.PersistentVolumeClaim
-	var expectedWrittenData []byte
+	var writtenData []byte
+	var dataSize int64 = 4 * 1024
 	var err error
 
 	BeforeEach(func(ctx SpecContext) {
@@ -25,84 +27,34 @@ func verificationTestSuite() {
 		err = CreateNamespace(ctx, k8sClient, ns)
 		Expect(err).NotTo(HaveOccurred())
 
-		By("creating a PVC")
-		pvc, err = NewPVC(
-			ns.Name,
-			utils.GetUniqueName("test-pvc-"),
-			"Filesystem",
-			rookStorageClass,
-			"ReadWriteOnce",
-			"100Mi",
-		)
-		Expect(err).NotTo(HaveOccurred())
-		err = CreatePVC(ctx, k8sClient, pvc)
-		Expect(err).NotTo(HaveOccurred())
-
-		By("creating a pod")
-		pod := NewPodMountingFilesystem(ns.Name, utils.GetUniqueName("test-pod-"),
-			pvc.Name, "ghcr.io/cybozu/ubuntu:24.04", "/data")
-		err = CreatePod(ctx, k8sClient, pod)
-		Expect(err).NotTo(HaveOccurred())
-		err = WaitForPodReady(ctx, k8sClient, pod, 2*time.Minute)
-		Expect(err).NotTo(HaveOccurred())
-
-		By("writing data to the pvc")
-		_, _, err = kubectl("exec", "-n", ns.Name, pod.Name, "--",
-			"dd", "if=/dev/urandom", "of=/data/test", "bs=4K", "count=1")
-		Expect(err).NotTo(HaveOccurred())
-		_, _, err = kubectl("exec", "-n", ns.Name, pod.Name, "--", "sync")
-		Expect(err).NotTo(HaveOccurred())
-
-		By("reading the data from the pvc")
-		expectedWrittenData, _, err = kubectl("exec", "-n", pod.Namespace, pod.Name, "--", "cat", "/data/test")
-		Expect(err).NotTo(HaveOccurred())
+		pvc = CreateBackupTargetPVC(ctx, k8sClient, ns, "Filesystem", rookStorageClass, "ReadWriteOnce", "100Mi")
+		pod := CreatePodForFilesystemPVC(ctx, k8sClient, pvc)
+		writtenData = WriteRandomDataToPVC(ctx, pod, path.Join(mountPathInPodForFSPVC, "test"), dataSize)
 	})
 
 	// Description:
 	//   Ensure that verification and restoration of backup data works correctly
 	//   when the backup target PVC is a filesystem.
 	//
-	// Arrange (1) (in BeforeEach):
+	// Precondition:
 	//   - Create a filesystem PVC.
 	//   - Create a pod mounting the PVC and write some data to it.
 	//
-	// Act (1):
+	// Arrange:
 	//   Create a FinBackup resource referring the target filesystem PVC.
 	//
-	// Assert (1):
-	//   The FinBackup becomes StoredToNode=True and Verified=True.
-	//
-	// Arrange (2):
-	//   (No action required)
-	//
-	// Act (2):
+	// Act:
 	//   Create a FinRestore resource referring the FinBackup.
 	//
-	// Assert (2):
+	// Assert:
 	//   - The FinRestore becomes ReadyToUse=True.
 	//   - A restored PVC is created.
 	//   - The data in the restored PVC is identical to the data written in the Arrange (1).
 	It("should verify and restore backup data", func(ctx SpecContext) {
-		// Arrange (1)
-		// nothing to do.
+		// Arrange
+		finbackup := CreateBackup(ctx, ctrlClient, rookNamespace, pvc, "minikube-worker")
 
-		// Act (1)
-		By("creating a backup")
-		finbackup, err := NewFinBackup(ns.Name, utils.GetUniqueName("test-finbackup-"),
-			pvc, "minikube-worker")
-		Expect(err).NotTo(HaveOccurred())
-		err = CreateFinBackup(ctx, ctrlClient, finbackup)
-		Expect(err).NotTo(HaveOccurred())
-
-		// Assert (1)
-		err = WaitForFinBackupStoredToNodeAndVerified(
-			ctx, ctrlClient, finbackup, 2*time.Minute)
-		Expect(err).NotTo(HaveOccurred())
-
-		// Arrange (2)
-		// nothing to do.
-
-		// Act (2)
+		// Act
 		By("restoring from the backup")
 		finRestoreName := utils.GetUniqueName("test-finrestore-")
 		finrestore, err := NewFinRestore(
@@ -137,7 +89,7 @@ func verificationTestSuite() {
 		restoredData, _, err := kubectl(
 			"exec", "-n", restorePod.Namespace, restorePod.Name, "--", "cat", "/restored/test")
 		Expect(err).NotTo(HaveOccurred())
-		Expect(restoredData).To(Equal(expectedWrittenData))
+		Expect(restoredData).To(Equal(writtenData))
 	})
 
 	// Description:

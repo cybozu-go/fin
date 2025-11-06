@@ -24,9 +24,11 @@ import (
 )
 
 const (
-	rookNamespace    = "rook-ceph"
-	rookStorageClass = "rook-ceph-block"
-	poolName         = "rook-ceph-block-pool"
+	rookNamespace          = "rook-ceph"
+	rookStorageClass       = "rook-ceph-block"
+	poolName               = "rook-ceph-block-pool"
+	devicePathInPodForPVC  = "/data"
+	mountPathInPodForFSPVC = "/data"
 )
 
 var (
@@ -517,4 +519,95 @@ func VerifyDataInRestorePVC(
 		"Data in restore PVC does not match the expected data")
 
 	Expect(DeletePod(context.Background(), k8sClient, pod)).NotTo(HaveOccurred())
+}
+
+func CreateBackupTargetPVC(
+	ctx context.Context,
+	k8sClient kubernetes.Interface,
+	namespace *corev1.Namespace,
+	volumeMode, storageClassName, accessModes, size string,
+) *corev1.PersistentVolumeClaim {
+	By("creating a backup target PVC")
+	pvc, err := NewPVC(namespace.Name, utils.GetUniqueName("test-pvc-"),
+		volumeMode, storageClassName, accessModes, size)
+	Expect(err).NotTo(HaveOccurred())
+	Expect(CreatePVC(ctx, k8sClient, pvc)).NotTo(HaveOccurred())
+
+	return pvc
+}
+
+func CreatePodForBlockPVC(
+	ctx context.Context,
+	k8sClient kubernetes.Interface,
+	pvc *corev1.PersistentVolumeClaim,
+) *corev1.Pod {
+	By("creating a pod for block PVC")
+	pod, err := NewPod(
+		pvc.Namespace,
+		utils.GetUniqueName("test-pod-for-block-pvc-"),
+		pvc.Name,
+		"ghcr.io/cybozu/ubuntu:24.04",
+		"/data",
+	)
+	Expect(err).NotTo(HaveOccurred())
+	Expect(CreatePod(ctx, k8sClient, pod)).NotTo(HaveOccurred())
+	Expect(WaitForPodReady(ctx, k8sClient, pod, 2*time.Minute)).NotTo(HaveOccurred())
+	return pod
+}
+
+func CreatePodForFilesystemPVC(
+	ctx context.Context,
+	k8sClient kubernetes.Interface,
+	pvc *corev1.PersistentVolumeClaim,
+) *corev1.Pod {
+	By("creating a pod for filesystem PVC")
+	pod := NewPodMountingFilesystem(pvc.Namespace, utils.GetUniqueName("test-pod-"),
+		pvc.Name, "ghcr.io/cybozu/ubuntu:24.04", "/data")
+	err := CreatePod(ctx, k8sClient, pod)
+	Expect(err).NotTo(HaveOccurred())
+	err = WaitForPodReady(ctx, k8sClient, pod, 2*time.Minute)
+	Expect(err).NotTo(HaveOccurred())
+	return pod
+}
+
+// WriteRandomDataToBlockPVC writes random data to the block PVC
+// consumed by the given pod and return the written data.
+func WriteRandomDataToPVC(
+	ctx context.Context,
+	pod *corev1.Pod,
+	path string,
+	length int64,
+) []byte {
+	By("writing random data to the block PVC")
+	_, stderr, err := kubectl("exec", "-n", pod.Namespace, pod.Name, "--",
+		"dd", "if=/dev/urandom", fmt.Sprintf("of=%s", path),
+		fmt.Sprintf("bs=%d", length), "count=1")
+	Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
+	_, stderr, err = kubectl("exec", "-n", pod.Namespace, pod.Name, "--", "sync")
+	Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
+
+	By("reading the data from the PVC")
+	var writtenData []byte
+	writtenData, stderr, err = kubectl("exec", "-n", pod.Namespace, pod.Name, "--",
+		"dd", fmt.Sprintf("if=%s", path), "bs=4K", "count=1")
+	Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
+
+	return writtenData
+}
+
+func CreateBackup(
+	ctx context.Context,
+	ctrlClient client.Client,
+	namespace string,
+	pvc *corev1.PersistentVolumeClaim,
+	node string,
+) *finv1.FinBackup {
+	By("creating a backup")
+	backup, err := NewFinBackup(rookNamespace, utils.GetUniqueName("test-finbackup-"),
+		pvc, node)
+	Expect(err).NotTo(HaveOccurred())
+	Expect(CreateFinBackup(ctx, ctrlClient, backup)).NotTo(HaveOccurred())
+	Expect(WaitForFinBackupStoredToNodeAndVerified(ctx, ctrlClient, backup, 1*time.Minute)).
+		NotTo(HaveOccurred())
+	return backup
 }
