@@ -10,10 +10,12 @@ import (
 	"time"
 
 	finv1 "github.com/cybozu-go/fin/api/v1"
-	g "github.com/onsi/ginkgo/v2"
-	"github.com/onsi/gomega"
+	"github.com/cybozu-go/fin/test/utils"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
@@ -65,10 +67,10 @@ func checkDeploymentReady(namespace, name string) error {
 }
 
 func waitEnvironment() {
-	g.It("wait for fin-controller to be ready", func() {
-		gomega.Eventually(func() error {
+	It("wait for fin-controller to be ready", func() {
+		Eventually(func() error {
 			return checkDeploymentReady(rookNamespace, "fin-controller-manager")
-		}).Should(gomega.Succeed())
+		}).Should(Succeed())
 	})
 }
 
@@ -440,4 +442,79 @@ func WaitForPVCDeletion(ctx context.Context, k8sClient kubernetes.Interface, pvc
 		_, err := k8sClient.CoreV1().PersistentVolumeClaims(pvc.GetNamespace()).Get(ctx, pvc.GetName(), metav1.GetOptions{})
 		return err
 	})
+}
+
+func VerifySizeOfRestorePVC(ctx context.Context, c client.Client, restore *finv1.FinRestore, backup *finv1.FinBackup) {
+	GinkgoHelper()
+
+	By("verifying the size of the restore PVC")
+	var ret []byte
+	ret, stderr, err := kubectl("get", "pvc", "-n",
+		restore.Spec.PVCNamespace,
+		restore.Spec.PVC,
+		"-o", "jsonpath={.spec.resources.requests.storage}")
+	Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
+
+	var size resource.Quantity
+	size, err = resource.ParseQuantity(string(ret))
+	Expect(err).NotTo(HaveOccurred())
+	sizeBytes, ok := size.AsInt64()
+	Expect(ok).To(BeTrue())
+
+	fb := &finv1.FinBackup{}
+	err = c.Get(ctx, client.ObjectKeyFromObject(backup), fb)
+	Expect(err).NotTo(HaveOccurred())
+	Expect(sizeBytes).To(Equal(*fb.Status.SnapSize),
+		"Size of restore PVC does not match the snapshot size")
+}
+
+func DeleteFinRestoreAndRestorePVC(
+	ctx context.Context,
+	c client.Client,
+	k8sClient kubernetes.Interface,
+	restore *finv1.FinRestore,
+) error {
+	_ = DeleteRestorePVC(ctx, k8sClient, restore)
+	return DeleteFinRestore(ctx, c, restore)
+}
+
+// VerifyDataInRestorePVC verifies that the first `len(expected)`
+// bytes of restore PVC matches `expected`.
+func VerifyDataInRestorePVC(
+	ctx context.Context,
+	k8sClient kubernetes.Interface,
+	restore *finv1.FinRestore,
+	expected []byte,
+) {
+	GinkgoHelper()
+
+	By("verifying the existence of the restore PVC")
+	_, stderr, err := kubectl("wait", "pvc", "-n",
+		restore.Spec.PVCNamespace, restore.Name,
+		"--for=jsonpath={.status.phase}=Bound", "--timeout=2m")
+	Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
+
+	By("creating a pod to verify the contents in the restore PVC")
+	pod, err := NewPod(
+		restore.Spec.PVCNamespace,
+		utils.GetUniqueName("test-restore-pod-"),
+		restore.Spec.PVC,
+		"ghcr.io/cybozu/ubuntu:24.04",
+		"/restore",
+	)
+	Expect(err).NotTo(HaveOccurred())
+	err = CreatePod(ctx, k8sClient, pod)
+	Expect(err).NotTo(HaveOccurred())
+	err = WaitForPodReady(ctx, k8sClient, pod, 2*time.Minute)
+	Expect(err).NotTo(HaveOccurred())
+
+	By("verifying the data in the restore PVC")
+	restoredData, stderr, err := kubectl("exec", "-n",
+		restore.Spec.PVCNamespace, pod.Name, "--",
+		"dd", "if=/restore", fmt.Sprintf("bs=%d", len(expected)), "count=1")
+	Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
+	Expect(restoredData).To(Equal(expected),
+		"Data in restore PVC does not match the expected data")
+
+	Expect(DeletePod(context.Background(), k8sClient, pod)).NotTo(HaveOccurred())
 }

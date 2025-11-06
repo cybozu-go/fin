@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/cybozu-go/fin/internal/infrastructure/ceph"
 	"github.com/cybozu-go/fin/internal/infrastructure/db"
 	"github.com/cybozu-go/fin/internal/infrastructure/nlv"
 	rvol "github.com/cybozu-go/fin/internal/infrastructure/restore"
@@ -57,6 +58,8 @@ func restoreJobMain() error {
 	defer func() { _ = finRepo.Close() }()
 	restoreVol := rvol.NewRestoreVolume(rvol.VolumePath)
 
+	rbdRepo := ceph.NewRBDRepository()
+
 	actionUID := os.Getenv("ACTION_UID")
 	if actionUID == "" {
 		return fmt.Errorf("ACTION_UID environment variable is not set")
@@ -82,6 +85,7 @@ func restoreJobMain() error {
 
 	r := restore.NewRestore(&input.Restore{
 		Repo:                finRepo,
+		RBDRepo:             rbdRepo,
 		NodeLocalVolumeRepo: nlvRepo,
 		ActionUID:           actionUID,
 		TargetSnapshotID:    targetSnapshotID,

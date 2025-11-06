@@ -48,7 +48,7 @@ func verificationTestSuite() {
 
 		By("writing data to the pvc")
 		_, _, err = kubectl("exec", "-n", ns.Name, pod.Name, "--",
-			"dd", "if=/dev/urandom", "of=/data/test", "bs=1K", "count=1")
+			"dd", "if=/dev/urandom", "of=/data/test", "bs=4K", "count=1")
 		Expect(err).NotTo(HaveOccurred())
 		_, _, err = kubectl("exec", "-n", ns.Name, pod.Name, "--", "sync")
 		Expect(err).NotTo(HaveOccurred())
