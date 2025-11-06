@@ -15,10 +15,12 @@ import (
 func fullBackupTestSuite() {
 	var ns *corev1.Namespace
 	var pvc *corev1.PersistentVolumeClaim
-	var pod *corev1.Pod
+	var podForBackupTargetPVC *corev1.Pod
 	var finbackup *finv1.FinBackup
 	finrestores := make([]*finv1.FinRestore, 3)
 	var err error
+	var writtenData []byte
+	var dataSize int64 = 4 * 1024
 
 	BeforeAll(func(ctx SpecContext) {
 		By("creating a namespace")
@@ -26,35 +28,21 @@ func fullBackupTestSuite() {
 		err = CreateNamespace(ctx, k8sClient, ns)
 		Expect(err).NotTo(HaveOccurred())
 
-		By("creating a PVC")
-		pvc, err = NewPVC(ns.Name, utils.GetUniqueName("test-pvc-"), "Block", rookStorageClass, "ReadWriteOnce", "100Mi")
-		Expect(err).NotTo(HaveOccurred())
-		err = CreatePVC(ctx, k8sClient, pvc)
-		Expect(err).NotTo(HaveOccurred())
-
-		By("creating a pod")
-		pod, err = NewPod(ns.Name, utils.GetUniqueName("test-pod-"), pvc.Name, "ghcr.io/cybozu/ubuntu:24.04", "/data")
-		Expect(err).NotTo(HaveOccurred())
-		err = CreatePod(ctx, k8sClient, pod)
-		Expect(err).NotTo(HaveOccurred())
-		err = WaitForPodReady(ctx, k8sClient, pod, 2*time.Minute)
-		Expect(err).NotTo(HaveOccurred())
-
-		By("writing data to the pvc")
-		_, stderr, err := kubectl("exec", "-n", ns.Name, pod.Name, "--",
-			"dd", "if=/dev/urandom", "of=/data", "bs=4K", "count=1")
-		Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
-		_, stderr, err = kubectl("exec", "-n", ns.Name, pod.Name, "--", "sync")
-		Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
+		pvc = CreateBackupTargetPVC(ctx, k8sClient, ns, "Block", rookStorageClass, "ReadWriteOnce", "100Mi")
+		podForBackupTargetPVC = CreatePodForBlockPVC(ctx, k8sClient, pvc)
+		writtenData = WriteRandomDataToPVC(ctx, podForBackupTargetPVC, devicePathInPodForPVC, dataSize)
 	})
 
 	// CSATEST-1551
 	// Description:
 	//   Create a full backup with no error.
 	//
-	// Arrange:
+	// Precondition:
 	//   - An RBD PVC exists.
 	//   - The first 4KiB of the PVC is filled with random data.
+	//
+	// Arrange:
+	//   - Nothing.
 	// Act:
 	//   Create FinBackup, referring the PVC.
 	//
@@ -63,26 +51,14 @@ func fullBackupTestSuite() {
 	//   - the first 4KiB of the raw.img in the PVC's directory is filled
 	//     with the same data as the first 4KiB of the PVC.
 	It("should create full backup", func(ctx SpecContext) {
-		By("reading the data from the pvc")
-		expectedWrittenData, stderr, err := kubectl("exec", "-n", ns.Name, pod.Name, "--",
-			"dd", "if=/data", "bs=4K", "count=1")
-		Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
-
-		By("creating a backup")
-		finbackup, err = NewFinBackup(rookNamespace, utils.GetUniqueName("test-finbackup-"),
-			pvc, "minikube-worker")
-		Expect(err).NotTo(HaveOccurred())
-		err = CreateFinBackup(ctx, ctrlClient, finbackup)
-		Expect(err).NotTo(HaveOccurred())
-		err = WaitForFinBackupStoredToNodeAndVerified(ctx, ctrlClient, finbackup, 1*time.Minute)
-		Expect(err).NotTo(HaveOccurred())
+		finbackup = CreateBackup(ctx, ctrlClient, rookNamespace, pvc, "minikube-worker")
 
 		By("verifying the data in raw.img")
 		// `--native-ssh=false` is used to avoid issues of conversion from LF to CRLF.
 		actualWrittenData, stderr, err := execWrapper(minikube, nil, "ssh", "--native-ssh=false", "--",
 			"dd", fmt.Sprintf("if=/fin/%s/%s/raw.img", ns.Name, pvc.Name), "bs=4K", "count=1", "status=none")
 		Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
-		Expect(actualWrittenData).To(Equal(expectedWrittenData), "Data in raw.img does not match the expected data")
+		Expect(actualWrittenData).To(Equal(writtenData), "Data in raw.img does not match the expected data")
 	})
 
 	// CSATEST-1559
@@ -94,7 +70,7 @@ func fullBackupTestSuite() {
 	//   - A FinBackup corresponding to the RBD PVC exists and is ready to use.
 	//
 	// Arrange:
-	//   - Reading the data from the PVC.
+	//   - Nothing.
 	//
 	// Act:
 	//   Create FinRestore, referring the FinBackup.
@@ -105,12 +81,6 @@ func fullBackupTestSuite() {
 	//     as the first 4KiB of the PVC.
 	//   - The size of the restore PVC is the same as that of the backup target PVC.
 	It("should restore from full backup", func(ctx SpecContext) {
-		// Arrange
-		By("reading the data from the pvc")
-		expectedWrittenData, stderr, err := kubectl("exec", "-n", ns.Name, pod.Name, "--",
-			"dd", "if=/data", "bs=4K", "count=1")
-		Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
-
 		// Act
 		By("restoring from the backup")
 		finRestoreName0 := utils.GetUniqueName("test-finrestore-")
@@ -123,7 +93,7 @@ func fullBackupTestSuite() {
 		Expect(err).NotTo(HaveOccurred())
 
 		// Assert
-		VerifyDataInRestorePVC(ctx, k8sClient, finrestores[0], expectedWrittenData)
+		VerifyDataInRestorePVC(ctx, k8sClient, finrestores[0], writtenData)
 		VerifySizeOfRestorePVC(ctx, ctrlClient, finrestores[0], finbackup)
 	})
 
@@ -280,7 +250,7 @@ func fullBackupTestSuite() {
 		}
 
 		By("deleting the pod to write data to the PVC")
-		err = DeletePod(ctx, k8sClient, pod)
+		err = DeletePod(ctx, k8sClient, podForBackupTargetPVC)
 		Expect(err).NotTo(HaveOccurred())
 
 		By("deleting the PVC")

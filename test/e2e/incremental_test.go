@@ -18,68 +18,35 @@ import (
 func incrementalBackupTestSuite() {
 	var ns *corev1.Namespace
 	var pvc *corev1.PersistentVolumeClaim
-	var podForPVC *corev1.Pod
+	var podForBackupTargetPVC *corev1.Pod
 	var finbackup1 *finv1.FinBackup
 	var finbackup2 *finv1.FinBackup
 	var dataOnFullBackup, dataOnIncrementalBackup []byte
 	var volumePath string
-	var devicePath string
 	var err error
+	var dataSize int64 = 4 * 1024
 
 	BeforeAll(func(ctx SpecContext) {
 		By("creating a namespace")
 		ns = NewNamespace(utils.GetUniqueName("test-ns-"))
 		Expect(CreateNamespace(ctx, k8sClient, ns)).NotTo(HaveOccurred())
 
-		By("creating a PVC")
-		pvc, err = NewPVC(ns.Name, utils.GetUniqueName("test-pvc-"), "Block", rookStorageClass, "ReadWriteOnce", "100Mi")
-		Expect(err).NotTo(HaveOccurred())
-		Expect(CreatePVC(ctx, k8sClient, pvc)).NotTo(HaveOccurred())
+		pvc = CreateBackupTargetPVC(ctx, k8sClient, ns, "Block", rookStorageClass, "ReadWriteOnce", "100Mi")
+		podForBackupTargetPVC = CreatePodForBlockPVC(ctx, k8sClient, pvc)
+		dataOnFullBackup = WriteRandomDataToPVC(ctx, podForBackupTargetPVC, devicePathInPodForPVC, dataSize)
 
-		By("creating a Pod")
-		devicePath = "/data"
-		podForPVC, err = NewPod(ns.Name, utils.GetUniqueName("test-pod-"),
-			pvc.Name, "ghcr.io/cybozu/ubuntu:24.04", devicePath)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(CreatePod(ctx, k8sClient, podForPVC)).NotTo(HaveOccurred())
-		Expect(WaitForPodReady(ctx, k8sClient, podForPVC, 2*time.Minute)).NotTo(HaveOccurred())
-
-		By("writing data to the PVC")
-		var stderr []byte
-		_, stderr, err = kubectl("exec", "-n", ns.Name, podForPVC.Name, "--",
-			"dd", "if=/dev/urandom", fmt.Sprintf("of=%s", devicePath), "bs=4K", "count=1")
-		Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
-		_, stderr, err = kubectl("exec", "-n", ns.Name, podForPVC.Name, "--", "sync")
-		Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
-
-		By("reading the data from the PVC")
-		dataOnFullBackup, stderr, err = kubectl("exec", "-n", ns.Name, podForPVC.Name, "--",
-			"dd", fmt.Sprintf("if=%s", devicePath), "bs=4K", "count=1")
-		Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
-
-		By("creating a full backup")
-		finbackup1, err = NewFinBackup(rookNamespace, utils.GetUniqueName("test-finbackup-"),
-			pvc, "minikube-worker")
-		Expect(err).NotTo(HaveOccurred())
-		Expect(CreateFinBackup(ctx, ctrlClient, finbackup1)).NotTo(HaveOccurred())
-		Expect(WaitForFinBackupStoredToNodeAndVerified(ctx, ctrlClient, finbackup1, 1*time.Minute)).
-			NotTo(HaveOccurred())
+		finbackup1 = CreateBackup(ctx, ctrlClient, rookNamespace, pvc, "minikube-worker")
 
 		By("verifying the data in raw.img from the full backup")
 		volumePath = filepath.Join("/fin", ns.Name, pvc.Name)
 		// `--native-ssh=false` is used to avoid issues of conversion from LF to CRLF.
-		var rawImageData []byte
+		var rawImageData, stderr []byte
 		rawImageData, stderr, err = execWrapper(minikube, nil, "ssh", "--native-ssh=false", "--",
 			"dd", fmt.Sprintf("if=%s/raw.img", volumePath), "bs=4K", "count=1", "status=none")
 		Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
 		Expect(rawImageData).To(Equal(dataOnFullBackup), "Data in raw.img does not match the expected data")
 
-		By("writing incremental data on the pvc")
-		_, stderr, err = kubectl("exec", "-n", ns.Name, podForPVC.Name, "--",
-			"dd", "if=/dev/urandom", fmt.Sprintf("of=%s", devicePath), "bs=4K", "count=1")
-		Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
-		_, stderr, err = kubectl("exec", "-n", ns.Name, podForPVC.Name, "--", "sync")
-		Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
+		dataOnIncrementalBackup = WriteRandomDataToPVC(ctx, podForBackupTargetPVC, devicePathInPodForPVC, dataSize)
 	})
 
 	AfterAll(func(ctx SpecContext) {
@@ -91,7 +58,7 @@ func incrementalBackupTestSuite() {
 			_ = DeleteFinBackup(ctx, ctrlClient, fb)
 			Expect(WaitForFinBackupDeletion(ctx, ctrlClient, fb, 2*time.Minute)).NotTo(HaveOccurred())
 		}
-		Expect(DeletePod(ctx, k8sClient, podForPVC)).NotTo(HaveOccurred())
+		Expect(DeletePod(ctx, k8sClient, podForBackupTargetPVC)).NotTo(HaveOccurred())
 		Expect(DeletePVC(ctx, k8sClient, pvc)).NotTo(HaveOccurred())
 		Expect(DeleteNamespace(ctx, k8sClient, ns)).NotTo(HaveOccurred())
 	})
@@ -118,13 +85,7 @@ func incrementalBackupTestSuite() {
 	//     2. A diff file under the diff directory for the incremental backup.
 	It("should create an incremental backup", func(ctx SpecContext) {
 		// Act
-		By("creating an incremental backup")
-		finbackup2, err = NewFinBackup(rookNamespace, utils.GetUniqueName("test-finbackup-"),
-			pvc, "minikube-worker")
-		Expect(err).NotTo(HaveOccurred())
-		Expect(CreateFinBackup(ctx, ctrlClient, finbackup2)).NotTo(HaveOccurred())
-		Expect(WaitForFinBackupStoredToNodeAndVerified(ctx, ctrlClient, finbackup2, 1*time.Minute)).
-			NotTo(HaveOccurred())
+		finbackup2 = CreateBackup(ctx, ctrlClient, rookNamespace, pvc, "minikube-worker")
 
 		// Assert
 		By("verifying the data in raw.img as full backup")
@@ -151,7 +112,7 @@ func incrementalBackupTestSuite() {
 	//     for both full backup and incremental backup and are ready to use.
 	//
 	// Arrange:
-	//   - Reading the data from the PVC.
+	//   - Noting.
 	//
 	// Act:
 	//   Create FinRestore, referring the FinBackup corresponding to the incremental backup.
@@ -162,13 +123,6 @@ func incrementalBackupTestSuite() {
 	//     as the first 4KiB of the PVC.
 	//   - The size of the restore PVC is the same as the snapshot.
 	It("should restore from incremental backup", func(ctx SpecContext) {
-		// Arrange
-		By("reading the data from the pvc")
-		var stderr []byte
-		dataOnIncrementalBackup, stderr, err = kubectl("exec", "-n", ns.Name, podForPVC.Name, "--",
-			"dd", "if=/data", "bs=4K", "count=1")
-		Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
-
 		// Act
 		By("restoring from the incremental backup")
 		finRestoreName := utils.GetUniqueName("test-finrestore-")
