@@ -514,12 +514,12 @@ func (r *FinBackupReconciler) reconcileDelete(ctx context.Context, backup *finv1
 		finalizers. Without this change, an extra cleanup job is
 		created and this resource won't be deleted forever.
 
-		Here is the steps I observed:
+		Here is the mechanism:
 
 		1. reconciler: Remove finalizer.
 		2. k8s: Kick the reconciler because `finalizers` was updated.
 		3. reconciler: Can't detect the removal of finalizer
-		   because the resource in the client cahe is old
+		   because the resource in the client cache is old
 		   and still have finalizer.
 		4. reconciler: Create another cleanup job(!)
 		5. reconciler: Fail to get cleanup job just after job creation.
