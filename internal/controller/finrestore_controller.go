@@ -517,6 +517,10 @@ func (r *FinRestoreReconciler) createOrUpdateRestoreJobPVC(
 }
 
 func (r *FinRestoreReconciler) reconcileDelete(ctx context.Context, restore *finv1.FinRestore) (ctrl.Result, error) {
+	if !controllerutil.ContainsFinalizer(restore, FinRestoreFinalizerName) {
+		return ctrl.Result{}, nil
+	}
+
 	logger := log.FromContext(ctx)
 
 	var restoreJob batchv1.Job

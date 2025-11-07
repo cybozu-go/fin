@@ -29,11 +29,6 @@ const (
 	rbdImageName = "test-image"
 )
 
-func init() {
-	cleanupJobRequeueAfter = 1 * time.Second
-	deletionJobRequeueAfter = 1 * time.Second
-}
-
 func makeJobSucceeded(job *batchv1.Job) {
 	job.Status.Conditions = []batchv1.JobCondition{
 		{
