@@ -41,9 +41,19 @@ var _ = BeforeSuite(func() {
 	Expect(os.Setenv(controller.EnvRawImgExpansionUnitSize, "4096")).NotTo(HaveOccurred())
 })
 
+// Labelling policies for test scenarios(suites):
+//   - One label for each scenario.
+//   - Run short scenarios together in one GitHub runner
+//     by specifying extra "misc" label. It's to avoid
+//     rate limiting of GitHub Actions API caused
+//     by too many runners.
+//
+// NOTE: This policy would be revised later when e2e tests are more established.
 var _ = Describe("Fin", func() {
 	Context("wait environment", waitEnvironment)
 	Context("full backup", Label("full-backup"), Ordered, fullBackupTestSuite)
 	Context("incremental backup", Label("incremental-backup"), Ordered, incrementalBackupTestSuite)
-	Context("verification", Label("verification"), Ordered, verificationTestSuite)
+	Context("verification", Label("verification"), Label("misc"), Ordered, verificationTestSuite)
+	Context("delete incremental backup", Label("delete-incremental-backup"), Label("misc"), Ordered,
+		deleteIncrementalBackupTestSuite)
 })

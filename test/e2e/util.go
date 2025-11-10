@@ -13,6 +13,7 @@ import (
 	"github.com/cybozu-go/fin/test/utils"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -610,4 +611,20 @@ func CreateBackup(
 	Expect(WaitForFinBackupStoredToNodeAndVerified(ctx, ctrlClient, backup, 1*time.Minute)).
 		NotTo(HaveOccurred())
 	return backup
+}
+
+func jobCompleted(job *batchv1.Job) (done bool, err error) {
+	for _, c := range job.Status.Conditions {
+		switch c.Type {
+		case batchv1.JobComplete:
+			if c.Status == corev1.ConditionTrue {
+				return true, nil
+			}
+		case batchv1.JobFailed:
+			if c.Status == corev1.ConditionTrue {
+				return false, fmt.Errorf("job %s/%s failed: %s", job.Namespace, job.Name, c.Message)
+			}
+		}
+	}
+	return false, nil
 }
