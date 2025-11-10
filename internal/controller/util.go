@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -10,6 +11,7 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
+	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -17,6 +19,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
@@ -141,4 +144,31 @@ func patchFinBackupCondition(
 		return fmt.Errorf("failed to update FinBackup condition: %w", err)
 	}
 	return nil
+}
+
+func getBackupTargetPVCFromSpecOrStatus(
+	ctx context.Context,
+	r client.Client,
+	backup *finv1.FinBackup,
+) (*corev1.PersistentVolumeClaim, bool, error) {
+	logger := log.FromContext(ctx)
+
+	var pvc corev1.PersistentVolumeClaim
+	var gotFromStatus bool
+	err := r.Get(ctx, client.ObjectKey{Namespace: backup.Spec.PVCNamespace, Name: backup.Spec.PVC}, &pvc)
+	if err != nil {
+		if !k8serrors.IsNotFound(err) {
+			logger.Error(err, "failed to get backup target PVC")
+			return nil, false, err
+		}
+		pvcYaml := backup.Status.PVCManifest
+		err = json.Unmarshal([]byte(pvcYaml), &pvc)
+		if err != nil {
+			logger.Error(err, "failed to get PVC manifest stored in FinBackup")
+			return nil, false, err
+		}
+		gotFromStatus = true
+	}
+
+	return &pvc, gotFromStatus, nil
 }
