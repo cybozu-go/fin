@@ -5,12 +5,13 @@ BINDIR := $(shell pwd)/bin
 CURL := curl -sSfL
 GINKGO := $(BINDIR)/ginkgo-$(GINKGO_VERSION)
 GINKGO_FLAGS :=
-MINIKUBE := $(BINDIR)/minikube-$(MINIKUBE_VERSION)
+MINIKUBE_PROFILE_NAME := fin-test
+MINIKUBE_BIN := $(BINDIR)/minikube-$(MINIKUBE_VERSION)
+MINIKUBE := $(MINIKUBE_BIN) --profile=$(MINIKUBE_PROFILE_NAME)
 KUBECTL := $(BINDIR)/kubectl-$(KUBERNETES_VERSION)
 HELM := $(BINDIR)/helm-$(HELM_VERSION)
 MINIKUBE_HOME := $(BINDIR)
 NS := rook-ceph
-NODE_NAME := minikube-worker
 LOOP_FILE := loop.img
 LOOP_DEV := /dev/loop0
 FIN_VOLUME_LOOP_DEV := /dev/loop1
@@ -46,7 +47,7 @@ $(KUBECTL): | $(BINDIR)
 	$(CURL) -o $@ https://dl.k8s.io/release/v$(KUBERNETES_VERSION)/bin/linux/amd64/kubectl
 	chmod a+x $@
 
-$(MINIKUBE): | $(BINDIR)
+$(MINIKUBE_BIN): | $(BINDIR)
 	$(CURL) -o $@ https://github.com/kubernetes/minikube/releases/download/$(MINIKUBE_VERSION)/minikube-linux-amd64
 	chmod a+x $@
 
@@ -56,7 +57,7 @@ $(HELM): | $(BINDIR)
 	mv $(BINDIR)/helm $@
 
 .PHONY: launch-minikube
-launch-minikube: $(MINIKUBE) $(KUBECTL)
+launch-minikube: $(MINIKUBE_BIN) $(KUBECTL)
 	HOST_STATUS=$$($(MINIKUBE) status -f "{{.Host}}"); \
 	if [ "$${HOST_STATUS}" = "Running" ]; then \
 		echo "minikube is already running"; \
@@ -65,13 +66,14 @@ launch-minikube: $(MINIKUBE) $(KUBECTL)
 			--kubernetes-version="v$(KUBERNETES_VERSION)" \
 			--driver=kvm2 \
 			--memory 6g \
-			--cpus=2 \
-			--extra-config=kubeadm.node-name=$(NODE_NAME) \
-			--extra-config=kubelet.hostname-override=$(NODE_NAME); \
+			--cpus=2; \
 	fi
 
+launch-multinode-minikube:
+	LAUNCH_MINIKUBE_EXTRA_ARGS=--nodes=2 $(MAKE) launch-minikube
+
 .PHONY: delete-minikube
-delete-minikube: $(MINIKUBE)
+delete-minikube: $(MINIKUBE_BIN)
 	$(MINIKUBE) stop || true
 	$(MINIKUBE) delete || true
 
@@ -82,7 +84,7 @@ create-loop-dev:
 	$(MINIKUBE) ssh -- lsblk
 
 .PHONY: setup-fin-volume
-setup-fin-volume: $(MINIKUBE) $(KUBECTL)
+setup-fin-volume: $(MINIKUBE_BIN) $(KUBECTL)
 	$(MINIKUBE) ssh -- sudo dd if=/dev/zero of=fin-volume.img bs=1G seek=1 count=0
 	$(MINIKUBE) ssh -- sudo losetup $(FIN_VOLUME_LOOP_DEV) fin-volume.img || :
 	$(MINIKUBE) ssh -- sudo mkfs.xfs $(FIN_VOLUME_LOOP_DEV) || :
@@ -118,7 +120,7 @@ launch-rook-ceph: create-loop-dev $(KUBECTL) $(HELM)
 		--create-namespace --namespace $(NS) rook-ceph rook-ceph -f testdata/values.yaml --wait
 	sed \
 		-e "s%{LOOP_DEV}%$(LOOP_DEV)%" \
-		-e "s%{NODE_NAME}%$(NODE_NAME)%" \
+		-e "s%{NODE_NAME}%$(MINIKUBE_PROFILE_NAME)%" \
 		testdata/persistentvolumes-template.yaml | \
 		$(KUBECTL) apply -f -
 	$(HELM) upgrade --install --version $(ROOK_CHART_VERSION) --repo https://charts.rook.io/release --namespace $(NS) rook-ceph-cluster rook-ceph-cluster -f testdata/values-cluster.yaml --wait
@@ -147,7 +149,7 @@ setup-components:
 	$(KUBECTL) patch deploy -n $(NS) fin-controller-manager --type='json' -p='[{"op": "add", "path": "/spec/template/spec/containers/0/args/-", "value":"--raw-img-expansion-unit-size=10485760"}]'
 
 .PHONY: do-test
-do-test: $(GINKGO) $(KUBECTL) $(MINIKUBE)
+do-test: $(GINKGO) $(KUBECTL) $(MINIKUBE_BIN)
 	env \
 	PATH=${PATH} \
 	E2ETEST=1 \

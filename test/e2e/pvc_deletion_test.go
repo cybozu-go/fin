@@ -26,7 +26,7 @@ func pvcDeletionTestSuite() {
 		pod := CreatePodForBlockPVC(ctx, k8sClient, pvc)
 		writtenData = WriteRandomDataToPVC(ctx, pod, devicePathInPodForPVC, dataSize)
 		Expect(DeletePod(ctx, k8sClient, pod)).NotTo(HaveOccurred())
-		finbackup = CreateBackup(ctx, ctrlClient, rookNamespace, pvc, "minikube-worker")
+		finbackup = CreateBackup(ctx, ctrlClient, rookNamespace, pvc, nodes[0])
 	})
 
 	AfterAll(func(ctx SpecContext) {

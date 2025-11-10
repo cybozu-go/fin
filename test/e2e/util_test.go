@@ -57,6 +57,12 @@ func execWrapper(cmd string, input []byte, args ...string) ([]byte, []byte, erro
 	return stdout.Bytes(), stderr.Bytes(), err
 }
 
+func minikubeSSH(node string, input []byte, args ...string) ([]byte, []byte, error) {
+	args = append([]string{"--profile", minikubeProfile,
+		"ssh", "--native-ssh=false", "--node", node, "--"}, args...)
+	return execWrapper(minikube, nil, args...)
+}
+
 func kubectl(args ...string) ([]byte, []byte, error) {
 	return execWrapper("kubectl", nil, args...)
 }
@@ -656,4 +662,17 @@ func CreateRestore(
 	Expect(WaitForFinRestoreReady(ctx, ctrlClient, restore, 1*time.Minute)).
 		NotTo(HaveOccurred())
 	return restore
+}
+
+func GetNodeNames(ctx context.Context, k8sClient kubernetes.Interface) ([]string, error) {
+	nodes, err := k8sClient.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, err
+	}
+
+	nodeNames := make([]string, 0, len(nodes.Items))
+	for _, node := range nodes.Items {
+		nodeNames = append(nodeNames, node.Name)
+	}
+	return nodeNames, nil
 }

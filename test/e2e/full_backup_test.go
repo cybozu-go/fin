@@ -51,11 +51,11 @@ func fullBackupTestSuite() {
 	//   - the first 4KiB of the raw.img in the PVC's directory is filled
 	//     with the same data as the first 4KiB of the PVC.
 	It("should create full backup", func(ctx SpecContext) {
-		finbackup = CreateBackup(ctx, ctrlClient, rookNamespace, pvc, "minikube-worker")
+		finbackup = CreateBackup(ctx, ctrlClient, rookNamespace, pvc, nodes[0])
 
 		By("verifying the data in raw.img")
 		// `--native-ssh=false` is used to avoid issues of conversion from LF to CRLF.
-		actualWrittenData, stderr, err := execWrapper(minikube, nil, "ssh", "--native-ssh=false", "--",
+		actualWrittenData, stderr, err := minikubeSSH(nodes[0], nil,
 			"dd", fmt.Sprintf("if=/fin/%s/%s/raw.img", ns.Name, pvc.Name), "bs=4K", "count=1", "status=none")
 		Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
 		Expect(actualWrittenData).To(Equal(writtenData), "Data in raw.img does not match the expected data")
@@ -213,7 +213,7 @@ func fullBackupTestSuite() {
 
 		By("verifying the deletion of raw.img")
 		rawImgPath := filepath.Join("/fin", ns.Name, pvc.Name, "raw.img")
-		stdout, stderr, err := execWrapper(minikube, nil, "ssh", "--native-ssh=false", "--", "test", "!", "-e", rawImgPath)
+		stdout, stderr, err := minikubeSSH(nodes[0], nil, "test", "!", "-e", rawImgPath)
 		Expect(err).NotTo(HaveOccurred(), "raw.img file should be deleted. stdout: %s, stderr: %s", stdout, stderr)
 
 		By("verifying the deletion of jobs")

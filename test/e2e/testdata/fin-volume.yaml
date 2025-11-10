@@ -2,7 +2,7 @@
 apiVersion: v1
 kind: PersistentVolume
 metadata:
-  name: fin-minikube-worker
+  name: fin-fin-test
 spec:
   capacity:
     storage: 200Mi
@@ -17,7 +17,7 @@ spec:
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: fin-minikube-worker
+  name: fin-fin-test
   namespace: rook-ceph
 spec:
   accessModes:
@@ -26,4 +26,4 @@ spec:
   resources:
     requests:
       storage: 200Mi
-  volumeName: fin-minikube-worker
+  volumeName: fin-fin-test
