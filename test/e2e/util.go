@@ -628,3 +628,20 @@ func jobCompleted(job *batchv1.Job) (done bool, err error) {
 	}
 	return false, nil
 }
+
+func CreateRestore(
+	ctx context.Context,
+	ctrlClient client.Client,
+	finbackup *finv1.FinBackup,
+	namespace *corev1.Namespace,
+	name string,
+) *finv1.FinRestore {
+	By("creating a restore")
+	restore, err := NewFinRestore(name, finbackup,
+		namespace.Name, name)
+	Expect(err).NotTo(HaveOccurred())
+	Expect(CreateFinRestore(ctx, ctrlClient, restore)).NotTo(HaveOccurred())
+	Expect(WaitForFinRestoreReady(ctx, ctrlClient, restore, 1*time.Minute)).
+		NotTo(HaveOccurred())
+	return restore
+}

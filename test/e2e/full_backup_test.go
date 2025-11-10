@@ -83,13 +83,8 @@ func fullBackupTestSuite() {
 	It("should restore from full backup", func(ctx SpecContext) {
 		// Act
 		By("restoring from the backup")
-		finRestoreName0 := utils.GetUniqueName("test-finrestore-")
-		finrestores[0], err = NewFinRestore(
-			finRestoreName0, finbackup, ns.Name, finRestoreName0)
-		Expect(err).NotTo(HaveOccurred())
-		err = CreateFinRestore(ctx, ctrlClient, finrestores[0])
-		Expect(err).NotTo(HaveOccurred())
-		err = WaitForFinRestoreReady(ctx, ctrlClient, finrestores[0], 2*time.Minute)
+		finrestores[0] = CreateRestore(ctx, ctrlClient,
+			finbackup, ns, utils.GetUniqueName("test-finrestore-"))
 		Expect(err).NotTo(HaveOccurred())
 
 		// Assert
@@ -162,28 +157,20 @@ func fullBackupTestSuite() {
 	It("should delete the FinRestore and create another one successfully", func(ctx SpecContext) {
 		// Act
 		By("creating the first FinRestore targeting the FinBackup")
-		finRestoreName1 := utils.GetUniqueName("test-finrestore-")
-		finrestores[1], err = NewFinRestore(
-			finRestoreName1, finbackup, ns.Name, finRestoreName1)
-		Expect(err).NotTo(HaveOccurred())
-		err = CreateFinRestore(ctx, ctrlClient, finrestores[1])
-		Expect(err).NotTo(HaveOccurred())
+		finrestores[1] = CreateRestore(ctx, ctrlClient,
+			finbackup, ns, utils.GetUniqueName("test-finrestore-"))
 
 		By("deleting the first FinRestore after starting the restore process")
 		_, stderr, err := kubectl("wait",
 			"--for=jsonpath={.metadata.finalizers[?(@==\"finrestore.fin.cybozu.io/finalizer\")]}",
-			"finrestore", "-n", rookNamespace, finRestoreName1, "--timeout=2m")
+			"finrestore", "-n", rookNamespace, finrestores[1].Name, "--timeout=2m")
 		Expect(err).NotTo(HaveOccurred(), string(stderr))
 		err = DeleteFinRestore(ctx, ctrlClient, finrestores[1])
 		Expect(err).NotTo(HaveOccurred())
 
 		By("creating the second FinRestore targeting the same FinBackup")
-		finRestoreName2 := utils.GetUniqueName("test-finrestore-")
-		finrestores[2], err = NewFinRestore(
-			finRestoreName2, finbackup, ns.Name, finRestoreName2)
-		Expect(err).NotTo(HaveOccurred())
-		err = CreateFinRestore(ctx, ctrlClient, finrestores[2])
-		Expect(err).NotTo(HaveOccurred())
+		finrestores[2] = CreateRestore(ctx, ctrlClient,
+			finbackup, ns, utils.GetUniqueName("test-finrestore-"))
 
 		// Assert
 		By("checking that the first FinRestore is deleted successfully")

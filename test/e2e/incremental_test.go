@@ -125,12 +125,8 @@ func incrementalBackupTestSuite() {
 	It("should restore from incremental backup", func(ctx SpecContext) {
 		// Act
 		By("restoring from the incremental backup")
-		finRestoreName := utils.GetUniqueName("test-finrestore-")
-		restore, err := NewFinRestore(
-			finRestoreName, finbackup2, ns.Name, finRestoreName)
-		Expect(err).NotTo(HaveOccurred())
-		err = CreateFinRestore(ctx, ctrlClient, restore)
-		Expect(err).NotTo(HaveOccurred())
+		restore := CreateRestore(ctx, ctrlClient,
+			finbackup2, ns, utils.GetUniqueName("test-finrestore-"))
 		DeferCleanup(func() {
 			_ = DeleteFinRestoreAndRestorePVC(context.Background(), ctrlClient, k8sClient, restore)
 		})
@@ -165,12 +161,8 @@ func incrementalBackupTestSuite() {
 	It("should restore from full backup", func(ctx SpecContext) {
 		// Act
 		By("restoring from full backup")
-		finRestoreName := utils.GetUniqueName("test-finrestore-")
-		restore, err := NewFinRestore(
-			finRestoreName, finbackup1, ns.Name, finRestoreName)
-		Expect(err).NotTo(HaveOccurred())
-		err = CreateFinRestore(ctx, ctrlClient, restore)
-		Expect(err).NotTo(HaveOccurred())
+		restore := CreateRestore(ctx, ctrlClient,
+			finbackup1, ns, utils.GetUniqueName("test-finrestore-"))
 		DeferCleanup(func() {
 			_ = DeleteFinRestoreAndRestorePVC(context.Background(), ctrlClient, k8sClient, restore)
 		})
@@ -269,12 +261,8 @@ func incrementalBackupTestSuite() {
 	It("should restore from the remaining backup", func(ctx SpecContext) {
 		// Act
 		By("restoring from the remaining backup")
-		finRestoreName := utils.GetUniqueName("test-finrestore-")
-		restore, err := NewFinRestore(
-			finRestoreName, finbackup2, ns.Name, finRestoreName)
-		Expect(err).NotTo(HaveOccurred())
-		err = CreateFinRestore(ctx, ctrlClient, restore)
-		Expect(err).NotTo(HaveOccurred())
+		restore := CreateRestore(ctx, ctrlClient,
+			finbackup2, ns, utils.GetUniqueName("test-finrestore-"))
 		DeferCleanup(func() {
 			_ = DeleteFinRestoreAndRestorePVC(context.Background(), ctrlClient, k8sClient, restore)
 		})
