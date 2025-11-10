@@ -13,6 +13,8 @@ import (
 	"unsafe"
 
 	"github.com/cybozu-go/fin/internal/diffgenerator"
+	"github.com/cybozu-go/fin/internal/pkg/csumreader"
+	"github.com/cybozu-go/fin/internal/pkg/csumwriter"
 	"github.com/cybozu-go/fin/internal/pkg/zeroreader"
 	"github.com/cybozu-go/fin/test/utils"
 	"github.com/stretchr/testify/assert"
@@ -41,14 +43,16 @@ func TestApplyDiffToRawImage_success(t *testing.T) {
 	require.NoError(t, err)
 
 	gotFilePath := filepath.Join(tempDir, "test-raw.img")
-	err = applyDiffToRawImage(gotFilePath, openGZFile(t, "testdata/full.gz"), "", "snap20", 8*1024*1024)
+	fullReader := openGZFileWithChecksum(t, "testdata/full.gz", "testdata/full.csum", 2*1024*1024, false)
+	err = applyDiffToRawImage(gotFilePath, fullReader, "", "snap20", 8*1024*1024, 64*1024, 2*1024*1024, false)
 	assert.NoError(t, err)
 	fileInfo, err := os.Stat(gotFilePath)
 	assert.NoError(t, err)
 	assert.Equal(t, int64(16*1024*1024), fileInfo.Size())
 	utils.CompareReaders(t, openFileResized(t, gotFilePath, 100*1024*1024), openGZFile(t, "testdata/full-raw-img.gz"))
 
-	err = applyDiffToRawImage(gotFilePath, openGZFile(t, "testdata/diff.gz"), "snap20", "snap21", 8*1024*1024)
+	diffReader := openGZFileWithChecksum(t, "testdata/diff.gz", "testdata/diff.csum", 2*1024*1024, false)
+	err = applyDiffToRawImage(gotFilePath, diffReader, "snap20", "snap21", 8*1024*1024, 64*1024, 2*1024*1024, false)
 	assert.NoError(t, err)
 	utils.CompareReaders(t, openFileResized(t, gotFilePath, 100*1024*1024), openGZFile(t, "testdata/diff-raw-img.gz"))
 }
@@ -148,7 +152,7 @@ func TestApplyDiffToRawImage_success_MissingRawImage(t *testing.T) {
 	rawImageFilePath := getRawImagePathForTest(t)
 
 	// Act
-	err = applyDiffToRawImage(rawImageFilePath, reader, "", "toSnap", 7)
+	err = applyDiffToRawImage(rawImageFilePath, reader, "", "toSnap", 7, 64*1024, 2*1024*1024, false)
 
 	// Assert
 	assert.NoError(t, err)
@@ -202,9 +206,10 @@ func TestApplyDiffToRawImage_success_ExistentRawImage(t *testing.T) {
 	rawImageFilePath := getRawImagePathForTest(t)
 	err = os.WriteFile(rawImageFilePath, bytes.Repeat([]byte{0xff}, 35), 0644)
 	require.NoError(t, err)
+	createRawChecksumFileForTest(t, rawImageFilePath, 64*1024)
 
 	// Act
-	err = applyDiffToRawImage(rawImageFilePath, reader, "fromSnap", "toSnap", 7)
+	err = applyDiffToRawImage(rawImageFilePath, reader, "fromSnap", "toSnap", 7, 64*1024, 2*1024*1024, false)
 
 	// Assert
 	assert.NoError(t, err)
@@ -246,7 +251,16 @@ func TestApplyDiffToRawImage_success_EmptyDataRecords(t *testing.T) {
 	rawImageFilePath := getRawImagePathForTest(t)
 
 	// Act
-	err = applyDiffToRawImage(rawImageFilePath, reader, "fromSnap", "toSnap", uint64(expansionUnitSize))
+	err = applyDiffToRawImage(
+		rawImageFilePath,
+		reader,
+		"fromSnap",
+		"toSnap",
+		uint64(expansionUnitSize),
+		64*1024,
+		2*1024*1024,
+		false,
+	)
 
 	// Assert
 	assert.NoError(t, err)
@@ -284,9 +298,10 @@ func TestApplyDiffToRawImage_success_RawImageExpansion(t *testing.T) {
 	rawImageFilePath := getRawImagePathForTest(t)
 	err = os.WriteFile(rawImageFilePath, bytes.Repeat([]byte{0xff}, 1*1024), 0644)
 	require.NoError(t, err)
+	createRawChecksumFileForTest(t, rawImageFilePath, 64*1024)
 
 	// Act
-	err = applyDiffToRawImage(rawImageFilePath, reader, "fromSnap", "toSnap", 1*1024)
+	err = applyDiffToRawImage(rawImageFilePath, reader, "fromSnap", "toSnap", 1*1024, 64*1024, 2*1024*1024, false)
 
 	// Assert
 	require.NoError(t, err)
@@ -332,6 +347,7 @@ func TestApplyDiffToRawImage_success_LengthZero(t *testing.T) {
 			rawImageFilePath := getRawImagePathForTest(t)
 			err := os.WriteFile(rawImageFilePath, bytes.Repeat([]byte{0xff}, 10), 0644)
 			require.NoError(t, err)
+			createRawChecksumFileForTest(t, rawImageFilePath, 64*1024)
 
 			reader, err := diffgenerator.Run(
 				diffgenerator.WithFromSnapName("fromSnap"),
@@ -344,7 +360,7 @@ func TestApplyDiffToRawImage_success_LengthZero(t *testing.T) {
 			require.NoError(t, err)
 
 			// Act
-			err = applyDiffToRawImage(rawImageFilePath, reader, "fromSnap", "toSnap", 10)
+			err = applyDiffToRawImage(rawImageFilePath, reader, "fromSnap", "toSnap", 10, 64*1024, 2*1024*1024, false)
 
 			// Assert
 			assert.NoError(t, err)
@@ -352,6 +368,94 @@ func TestApplyDiffToRawImage_success_LengthZero(t *testing.T) {
 			got, err := os.ReadFile(rawImageFilePath)
 			require.NoError(t, err)
 			assert.Equal(t, bytes.Repeat([]byte{0xff}, 10), got)
+		})
+	}
+}
+
+func TestApplyDiffToRawImage_ChecksumVerification(t *testing.T) {
+	// Description:
+	// Check that checksum verification detects raw image corruption and fails, while disabling
+	// verification allows the same corrupted data to pass through.
+	//
+	// Arrange:
+	// - Prepare a raw image file with valid checksum data
+	// - Corrupt raw image contents after the checksum file is generated
+	//
+	// Act:
+	// - Apply a simple diff with checksum verification enabled or disabled
+	//
+	// Assert:
+	// - Verification enabled: diff application fails with corruption error
+	// - Verification disabled: diff application succeeds and writes diff data
+	const (
+		rawChecksumChunkSize  = 64 * 1024
+		diffChecksumChunkSize = 2 * 1024 * 1024
+	)
+
+	testCases := []struct {
+		name            string
+		disableChecksum bool
+		expectError     bool
+	}{
+		{
+			name:            "VerificationEnabled",
+			disableChecksum: false,
+			expectError:     true,
+		},
+		{
+			name:            "VerificationDisabled",
+			disableChecksum: true,
+			expectError:     false,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Arrange
+			rawImageFilePath := getRawImagePathForTest(t)
+
+			originalData := bytes.Repeat([]byte{0xaa}, rawChecksumChunkSize)
+			require.NoError(t, os.WriteFile(rawImageFilePath, originalData, 0644))
+			createRawChecksumFileForTest(t, rawImageFilePath, rawChecksumChunkSize)
+
+			rawImgFile, err := os.OpenFile(rawImageFilePath, os.O_WRONLY, 0644)
+			require.NoError(t, err)
+			_, err = rawImgFile.Write(bytes.Repeat([]byte{0xcc}, 16))
+			require.NoError(t, err)
+			require.NoError(t, rawImgFile.Close())
+
+			diffReader, err := diffgenerator.Run(
+				diffgenerator.WithFromSnapName("fromSnap"),
+				diffgenerator.WithToSnapName("toSnap"),
+				diffgenerator.WithImageSize(rawChecksumChunkSize),
+				diffgenerator.WithRecords([]*diffgenerator.DataRecord{
+					diffgenerator.NewUpdatedDataRecord(0, 4, []byte("ABCD")),
+				}),
+			)
+			require.NoError(t, err)
+
+			// Act
+			err = applyDiffToRawImage(
+				rawImageFilePath,
+				diffReader,
+				"fromSnap",
+				"toSnap",
+				rawChecksumChunkSize,
+				rawChecksumChunkSize,
+				diffChecksumChunkSize,
+				tc.disableChecksum,
+			)
+
+			// Assert
+			if tc.expectError {
+				assert.Error(t, err)
+				assert.ErrorContains(t, err, "corrupted")
+			} else {
+				require.NoError(t, err)
+				got, err := os.ReadFile(rawImageFilePath)
+				require.NoError(t, err)
+				assert.Equal(t, []byte("ABCD"), got[:4])
+			}
 		})
 	}
 }
@@ -379,7 +483,7 @@ func TestApplyDiffToRawImage_error_InvalidHeader(t *testing.T) {
 	require.NoError(t, err)
 
 	// Act
-	err = applyDiffToRawImage(getRawImagePathForTest(t), reader, "", "toSnap", 10)
+	err = applyDiffToRawImage(getRawImagePathForTest(t), reader, "", "toSnap", 10, 64*1024, 2*1024*1024, true)
 
 	// Assert
 	assert.Error(t, err)
@@ -405,7 +509,7 @@ func TestApplyDiffToRawImage_error_MissingToSnap(t *testing.T) {
 	require.NoError(t, err)
 
 	// Act
-	err = applyDiffToRawImage(getRawImagePathForTest(t), reader, "", "toSnap", 10)
+	err = applyDiffToRawImage(getRawImagePathForTest(t), reader, "", "toSnap", 10, 64*1024, 2*1024*1024, true)
 
 	// Assert
 	assert.Error(t, err)
@@ -461,7 +565,16 @@ func TestApplyDiffToRawImage_error_MissingToSnapNameArg(t *testing.T) {
 	require.NoError(t, err)
 
 	// Act
-	err = applyDiffToRawImage(getRawImagePathForTest(t), reader, "", "" /* missing to-snap */, 10)
+	err = applyDiffToRawImage(
+		getRawImagePathForTest(t),
+		reader,
+		"",
+		"", /* missing to-snap */
+		10,
+		64*1024,
+		2*1024*1024,
+		true,
+	)
 
 	// Assert
 	assert.Error(t, err)
@@ -488,7 +601,15 @@ func TestApplyDiffToRawImage_error_ExpansionUnitSizeNonPositive(t *testing.T) {
 	require.NoError(t, err)
 
 	// Act
-	err = applyDiffToRawImage(getRawImagePathForTest(t), reader, "", "toSnap", 0 /* non positive expansion unit size */)
+	err = applyDiffToRawImage(
+		getRawImagePathForTest(t),
+		reader,
+		"",
+		"toSnap",
+		0, /* non positive expansion unit size */
+		64*1024, 2*1024*1024,
+		false,
+	)
 
 	// Assert
 	assert.Error(t, err)
@@ -517,7 +638,7 @@ func TestApplyDiffToRawImage_error_FromSnapNameMismatch(t *testing.T) {
 	require.NoError(t, err)
 
 	// Act
-	err = applyDiffToRawImage(getRawImagePathForTest(t), reader, "fromSnap2", "toSnap", 10)
+	err = applyDiffToRawImage(getRawImagePathForTest(t), reader, "fromSnap2", "toSnap", 10, 64*1024, 2*1024*1024, false)
 
 	// Assert
 	assert.Error(t, err)
@@ -547,7 +668,7 @@ func TestApplyDiffToRawImage_error_ToSnapNameMismatch(t *testing.T) {
 	require.NoError(t, err)
 
 	// Act
-	err = applyDiffToRawImage(getRawImagePathForTest(t), reader, "fromSnap", "toSnap2", 10)
+	err = applyDiffToRawImage(getRawImagePathForTest(t), reader, "fromSnap", "toSnap2", 10, 64*1024, 2*1024*1024, false)
 
 	// Assert
 	assert.Error(t, err)
@@ -581,7 +702,7 @@ func TestApplyDiffToRawImage_error_UnsortedDataRecords(t *testing.T) {
 	require.NoError(t, err)
 
 	// Act
-	err = applyDiffToRawImage(getRawImagePathForTest(t), reader, "", "toSnap", 10)
+	err = applyDiffToRawImage(getRawImagePathForTest(t), reader, "", "toSnap", 10, 64*1024, 2*1024*1024, false)
 
 	// Assert
 	assert.Error(t, err)
@@ -615,7 +736,7 @@ func TestApplyDiffToRawImage_error_OverlappedDataRecords(t *testing.T) {
 	require.NoError(t, err)
 
 	// Act
-	err = applyDiffToRawImage(getRawImagePathForTest(t), reader, "", "toSnap", 10)
+	err = applyDiffToRawImage(getRawImagePathForTest(t), reader, "", "toSnap", 10, 64*1024, 2*1024*1024, false)
 
 	// Assert
 	assert.Error(t, err)
@@ -1206,6 +1327,54 @@ func TestApplyDiffToBlockDevice_error_OverlappedDataRecords(t *testing.T) {
 	assert.Error(t, err)
 }
 
+//nolint:unparam // chunkSize is kept as a parameter for future flexibility
+func createRawChecksumFileForTest(t *testing.T, rawImagePath string, chunkSize uint64) {
+	t.Helper()
+
+	rawFile := openFile(t, rawImagePath)
+	defer func() { _ = rawFile.Close() }()
+
+	checksumFilePath := getChecksumFilePath(rawImagePath)
+	checksumFile, err := os.OpenFile(checksumFilePath, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0644)
+	require.NoError(t, err)
+	defer func() { _ = checksumFile.Close() }()
+
+	if chunkSize == 0 {
+		return
+	}
+
+	chunkLen := int(chunkSize)
+	cw := csumwriter.NewChecksumWriter(io.Discard, checksumFile, chunkLen)
+	defer func() { require.NoError(t, cw.Close()) }()
+
+	chunkBuf := make([]byte, chunkLen)
+
+	for {
+		n, readErr := io.ReadFull(rawFile, chunkBuf)
+		if readErr != nil && !errors.Is(readErr, io.EOF) && !errors.Is(readErr, io.ErrUnexpectedEOF) {
+			require.NoError(t, readErr)
+		}
+		if n == 0 {
+			break
+		}
+
+		if n < chunkLen {
+			for i := n; i < chunkLen; i++ {
+				chunkBuf[i] = 0
+			}
+		}
+		_, err = cw.Write(chunkBuf)
+		require.NoError(t, err)
+
+		if readErr != nil {
+			break
+		}
+	}
+
+	_, err = rawFile.Seek(0, io.SeekStart)
+	require.NoError(t, err)
+}
+
 func getRawImagePathForTest(t *testing.T) string {
 	t.Helper()
 	return filepath.Join(t.TempDir(), "raw.img")
@@ -1330,6 +1499,33 @@ func openGZFile(t *testing.T, path string) io.Reader {
 	})
 
 	return uncompressed
+}
+
+func openGZFileWithChecksum(
+	t *testing.T,
+	gzFilePath,
+	csumFilePath string,
+	chunkSize int,
+	disableVerify bool,
+) io.Reader {
+	t.Helper()
+
+	gzFile, err := os.Open(gzFilePath)
+	require.NoError(t, err)
+
+	gzReader, err := gzip.NewReader(gzFile)
+	require.NoError(t, err)
+
+	csumFile, err := os.Open(csumFilePath)
+	require.NoError(t, err)
+
+	t.Cleanup(func() {
+		_ = csumFile.Close()
+		_ = gzReader.Close()
+		_ = gzFile.Close()
+	})
+
+	return csumreader.NewChecksumReader(gzReader, csumFile, chunkSize, disableVerify)
 }
 
 func zerooutWholeBlockDevice(t *testing.T, path string) {
