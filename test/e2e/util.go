@@ -528,6 +528,8 @@ func CreateBackupTargetPVC(
 	namespace *corev1.Namespace,
 	volumeMode, storageClassName, accessModes, size string,
 ) *corev1.PersistentVolumeClaim {
+	GinkgoHelper()
+
 	By("creating a backup target PVC")
 	pvc, err := NewPVC(namespace.Name, utils.GetUniqueName("test-pvc-"),
 		volumeMode, storageClassName, accessModes, size)
@@ -542,6 +544,8 @@ func CreatePodForBlockPVC(
 	k8sClient kubernetes.Interface,
 	pvc *corev1.PersistentVolumeClaim,
 ) *corev1.Pod {
+	GinkgoHelper()
+
 	By("creating a pod for block PVC")
 	pod, err := NewPod(
 		pvc.Namespace,
@@ -561,6 +565,8 @@ func CreatePodForFilesystemPVC(
 	k8sClient kubernetes.Interface,
 	pvc *corev1.PersistentVolumeClaim,
 ) *corev1.Pod {
+	GinkgoHelper()
+
 	By("creating a pod for filesystem PVC")
 	pod := NewPodMountingFilesystem(pvc.Namespace, utils.GetUniqueName("test-pod-"),
 		pvc.Name, "ghcr.io/cybozu/ubuntu:24.04", "/data")
@@ -579,6 +585,8 @@ func WriteRandomDataToPVC(
 	path string,
 	length int64,
 ) []byte {
+	GinkgoHelper()
+
 	By("writing random data to the block PVC")
 	_, stderr, err := kubectl("exec", "-n", pod.Namespace, pod.Name, "--",
 		"dd", "if=/dev/urandom", fmt.Sprintf("of=%s", path),
@@ -603,6 +611,8 @@ func CreateBackup(
 	pvc *corev1.PersistentVolumeClaim,
 	node string,
 ) *finv1.FinBackup {
+	GinkgoHelper()
+
 	By("creating a backup")
 	backup, err := NewFinBackup(rookNamespace, utils.GetUniqueName("test-finbackup-"),
 		pvc, node)
@@ -636,6 +646,8 @@ func CreateRestore(
 	namespace *corev1.Namespace,
 	name string,
 ) *finv1.FinRestore {
+	GinkgoHelper()
+
 	By("creating a restore")
 	restore, err := NewFinRestore(name, finbackup,
 		namespace.Name, name)
