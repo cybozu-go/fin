@@ -152,14 +152,13 @@ func (r *FinRestoreReconciler) reconcileCreateOrUpdate(
 		return ctrl.Result{}, err
 	}
 
-	var pvc corev1.PersistentVolumeClaim
-	err = r.Get(ctx, client.ObjectKey{Namespace: backup.Spec.PVCNamespace, Name: backup.Spec.PVC}, &pvc)
+	pvc, _, err := getBackupTargetPVCFromSpecOrStatus(ctx, r.Client, &backup)
 	if err != nil {
 		logger.Error(err, "failed to get backup target PVC")
 		return ctrl.Result{}, err
 	}
 
-	ok, err := checkCephCluster(ctx, r, &pvc, r.cephClusterNamespace)
+	ok, err := checkCephCluster(ctx, r, pvc, r.cephClusterNamespace)
 	if err != nil {
 		return ctrl.Result{}, err
 	}

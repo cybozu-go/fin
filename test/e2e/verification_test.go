@@ -56,17 +56,10 @@ func verificationTestSuite() {
 
 		// Act
 		By("restoring from the backup")
-		finRestoreName := utils.GetUniqueName("test-finrestore-")
-		finrestore, err := NewFinRestore(
-			finRestoreName, finbackup, pvc.Namespace, finRestoreName)
-		Expect(err).NotTo(HaveOccurred())
-		err = CreateFinRestore(ctx, ctrlClient, finrestore)
-		Expect(err).NotTo(HaveOccurred())
+		finrestore := CreateRestore(ctx, ctrlClient,
+			finbackup, ns, utils.GetUniqueName("test-finrestore-"))
 
 		// Assert (2)
-		err = WaitForFinRestoreReady(ctx, ctrlClient, finrestore, 2*time.Minute)
-		Expect(err).NotTo(HaveOccurred())
-
 		By("verifying the existence of the restore PVC")
 		_, _, err = kubectl("wait", "pvc", "-n", finrestore.Spec.PVCNamespace, finrestore.Spec.PVC,
 			"--for=jsonpath={.status.phase}=Bound", "--timeout=2m")

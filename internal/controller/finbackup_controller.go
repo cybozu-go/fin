@@ -127,14 +127,13 @@ func (r *FinBackupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, err
 	}
 
-	var pvc corev1.PersistentVolumeClaim
-	err = r.Get(ctx, client.ObjectKey{Namespace: backup.Spec.PVCNamespace, Name: backup.Spec.PVC}, &pvc)
+	pvc, gotFromStatus, err := getBackupTargetPVCFromSpecOrStatus(ctx, r.Client, &backup)
 	if err != nil {
 		logger.Error(err, "failed to get backup target PVC")
 		return ctrl.Result{}, err
 	}
 
-	ok, err := checkCephCluster(ctx, r, &pvc, r.cephClusterNamespace)
+	ok, err := checkCephCluster(ctx, r, pvc, r.cephClusterNamespace)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -146,7 +145,12 @@ func (r *FinBackupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 
 	if !backup.DeletionTimestamp.IsZero() {
-		return r.reconcileDelete(ctx, &backup)
+		return r.reconcileDelete(ctx, &backup, gotFromStatus)
+	}
+
+	if gotFromStatus {
+		logger.Info("backup target PVC has already been deleted; skip reconciling")
+		return ctrl.Result{}, nil
 	}
 
 	if backup.IsStoredToNode() {
@@ -154,7 +158,7 @@ func (r *FinBackupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			return ctrl.Result{}, nil
 		}
 	} else {
-		result, err := r.reconcileBackup(ctx, backup, pvc)
+		result, err := r.reconcileBackup(ctx, backup, *pvc)
 		if errors.Is(err, errNonRetryableReconcile) {
 			return ctrl.Result{}, nil
 		}
@@ -163,12 +167,12 @@ func (r *FinBackupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		}
 	}
 
-	verifResult, err := r.reconcileVerification(ctx, backup, pvc)
+	verifResult, err := r.reconcileVerification(ctx, backup, *pvc)
 	if err != nil || !verifResult.IsZero() {
 		return verifResult, err
 	}
 
-	if err := r.deleteOldFinBackup(ctx, &backup, &pvc); err != nil {
+	if err := r.deleteOldFinBackup(ctx, &backup, pvc); err != nil {
 		logger.Error(err, "failed to perform automatic deletion of FinBackup")
 		return ctrl.Result{}, err
 	}
@@ -407,7 +411,11 @@ func (r *FinBackupReconciler) createSnapshot(ctx context.Context, backup *finv1.
 	return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 }
 
-func (r *FinBackupReconciler) reconcileDelete(ctx context.Context, backup *finv1.FinBackup) (ctrl.Result, error) {
+func (r *FinBackupReconciler) reconcileDelete(
+	ctx context.Context,
+	backup *finv1.FinBackup,
+	pvcDeleted bool,
+) (ctrl.Result, error) {
 	if !controllerutil.ContainsFinalizer(backup, FinBackupFinalizerName) {
 		return ctrl.Result{}, nil
 	}
@@ -498,8 +506,10 @@ func (r *FinBackupReconciler) reconcileDelete(ctx context.Context, backup *finv1
 			return ctrl.Result{}, err
 		}
 	}
-	if err := r.removeSnapshot(ctx, backup); err != nil {
-		return ctrl.Result{}, err
+	if !pvcDeleted {
+		if err := r.removeSnapshot(ctx, backup); err != nil {
+			return ctrl.Result{}, err
+		}
 	}
 
 	controllerutil.RemoveFinalizer(backup, FinBackupFinalizerName)
