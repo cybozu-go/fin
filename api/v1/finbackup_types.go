@@ -51,6 +51,7 @@ type FinBackupStatus struct {
 }
 
 const (
+	BackupConditionBackupInProgress    = "BackupInProgress"
 	BackupConditionStoredToNode        = "StoredToNode"
 	BackupConditionVerified            = "Verified"
 	BackupConditionVerificationSkipped = "VerificationSkipped"
