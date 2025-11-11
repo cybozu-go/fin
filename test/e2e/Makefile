@@ -65,6 +65,7 @@ launch-minikube: $(MINIKUBE_BIN) $(KUBECTL)
 		$(MINIKUBE) start \
 			--kubernetes-version="v$(KUBERNETES_VERSION)" \
 			--driver=kvm2 \
+			--nodes=2 \
 			--memory 6g \
 			--cpus=2; \
 	fi
