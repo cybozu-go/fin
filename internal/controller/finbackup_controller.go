@@ -12,6 +12,7 @@ import (
 	finv1 "github.com/cybozu-go/fin/api/v1"
 	"github.com/cybozu-go/fin/internal/infrastructure/nlv"
 	"github.com/cybozu-go/fin/internal/model"
+	"github.com/cybozu-go/fin/internal/pkg/metrics"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
@@ -167,7 +168,7 @@ func (r *FinBackupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		}
 	}
 
-	verifResult, err := r.reconcileVerification(ctx, backup, *pvc)
+	verifResult, err := r.reconcileVerification(ctx, &backup, *pvc)
 	if err != nil || !verifResult.IsZero() {
 		return verifResult, err
 	}
@@ -310,6 +311,19 @@ func (r *FinBackupReconciler) reconcileBackup(
 		return ctrl.Result{}, err
 	}
 
+	if !meta.IsStatusConditionTrue(backup.Status.Conditions, finv1.BackupConditionBackupInProgress) {
+		updatedBackup := backup.DeepCopy()
+		meta.SetStatusCondition(&updatedBackup.Status.Conditions, metav1.Condition{
+			Type:   finv1.BackupConditionBackupInProgress,
+			Reason: "BackupJobCreated",
+			Status: metav1.ConditionTrue,
+		})
+		err = r.Status().Patch(ctx, updatedBackup, client.MergeFrom(&backup))
+		if err != nil {
+			logger.Error(err, "failed to update FinBackup status")
+			return ctrl.Result{}, err
+		}
+	}
 	var job batchv1.Job
 	err = r.Get(ctx, client.ObjectKey{Namespace: r.cephClusterNamespace, Name: backupJobName(&backup)}, &job)
 	if err != nil {
@@ -1115,20 +1129,29 @@ func (r *FinBackupReconciler) createOrUpdateCleanupJob(ctx context.Context, back
 	return err
 }
 
+func isFullBackup(backup *finv1.FinBackup) bool {
+	diffFrom := backup.GetAnnotations()[annotationDiffFrom]
+	return diffFrom == ""
+}
+
 func (r *FinBackupReconciler) reconcileVerification(
 	ctx context.Context,
-	backup finv1.FinBackup,
+	backup *finv1.FinBackup,
 	pvc corev1.PersistentVolumeClaim,
 ) (ctrl.Result, error) {
-	if r.checkSkipVerificationCondition(&backup) {
-		return r.skipVerification(ctx, &backup)
+	logger := log.FromContext(ctx)
+	if r.checkSkipVerificationCondition(backup) {
+		logger.Info("Set metrics and skip verification as per condition")
+		metrics.SetBackupDurationSeconds(backup, finv1.BackupConditionStoredToNode, r.cephClusterNamespace, isFullBackup(backup))
+		return r.skipVerification(ctx, backup)
 	}
 
-	if err := r.createOrUpdateVerificationJob(ctx, &backup, &pvc); err != nil {
+	logger.Info("Create verification Job")
+	if err := r.createOrUpdateVerificationJob(ctx, backup, &pvc); err != nil {
 		return ctrl.Result{}, err
 	}
 
-	jobStatus, err := r.checkVerificationJobStatus(ctx, &backup)
+	jobStatus, err := r.checkVerificationJobStatus(ctx, backup)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to check verification job status: %w", err)
 	}
@@ -1138,7 +1161,7 @@ func (r *FinBackupReconciler) reconcileVerification(
 	case verificationJobStatusInProgress:
 		return ctrl.Result{}, nil
 	case verificationJobStatusFailedWithExitCode2:
-		if err := patchFinBackupCondition(ctx, r.Client, &backup, metav1.Condition{
+		if _, err := patchFinBackupCondition(ctx, r.Client, backup, metav1.Condition{
 			Type:    finv1.BackupConditionVerified,
 			Status:  metav1.ConditionFalse,
 			Reason:  "VerificationFailed",
@@ -1151,15 +1174,18 @@ func (r *FinBackupReconciler) reconcileVerification(
 		return ctrl.Result{}, fmt.Errorf("unknown verification job status: %d", jobStatus)
 	}
 
-	if err := patchFinBackupCondition(ctx, r.Client, &backup, metav1.Condition{
+	backup, err = patchFinBackupCondition(ctx, r.Client, backup, metav1.Condition{
 		Type:    finv1.BackupConditionVerified,
 		Status:  metav1.ConditionTrue,
 		Reason:  "VerificationComplete",
 		Message: "Backup verification completed successfully: fsck passed",
-	}); err != nil {
+	})
+	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to set FinBackup Verified condition to true: %w", err)
 	}
 
+	logger.Info("Verification completed successfully")
+	metrics.SetBackupDurationSeconds(backup, finv1.BackupConditionVerified, r.cephClusterNamespace, isFullBackup(backup))
 	return ctrl.Result{}, nil
 }
 
@@ -1176,7 +1202,7 @@ func (r *FinBackupReconciler) skipVerification(
 	backup *finv1.FinBackup,
 ) (ctrl.Result, error) {
 	// set the VerificationSkipped condition to True
-	if err := patchFinBackupCondition(ctx, r.Client, backup, metav1.Condition{
+	if _, err := patchFinBackupCondition(ctx, r.Client, backup, metav1.Condition{
 		Type:   finv1.BackupConditionVerificationSkipped,
 		Status: metav1.ConditionTrue,
 		Reason: "AnnotationSet",
