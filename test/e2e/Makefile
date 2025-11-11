@@ -86,14 +86,15 @@ create-loop-dev:
 
 .PHONY: setup-fin-volume
 setup-fin-volume: $(MINIKUBE_BIN) $(KUBECTL)
-	$(MINIKUBE) ssh -- sudo dd if=/dev/zero of=fin-volume.img bs=1G seek=1 count=0
-	$(MINIKUBE) ssh -- sudo losetup $(FIN_VOLUME_LOOP_DEV) fin-volume.img || :
-	$(MINIKUBE) ssh -- sudo mkfs.xfs $(FIN_VOLUME_LOOP_DEV) || :
-	$(MINIKUBE) ssh -- sudo mkdir -p /fin
-	$(MINIKUBE) ssh -- sudo umount $(FIN_VOLUME_LOOP_DEV) || :
-	$(MINIKUBE) ssh -- sudo mount $(FIN_VOLUME_LOOP_DEV) /fin
-	$(MINIKUBE) ssh -- sudo chown -R 10000:10000 /fin
-	$(MINIKUBE) ssh -- ls -ld /fin
+	for node in $(MINIKUBE_PROFILE_NAME) $(MINIKUBE_PROFILE_NAME)-m02; do \
+		$(MINIKUBE) ssh -n $$node -- sudo dd if=/dev/zero of=fin-volume.img bs=1G seek=1 count=0; \
+		$(MINIKUBE) ssh -n $$node -- sudo losetup /dev/loop1 fin-volume.img || :; \
+		$(MINIKUBE) ssh -n $$node -- sudo mkfs.xfs /dev/loop1 || :; \
+		$(MINIKUBE) ssh -n $$node -- sudo mkdir -p /fin; \
+		$(MINIKUBE) ssh -n $$node -- sudo mount /dev/loop1 /fin; \
+		$(MINIKUBE) ssh -n $$node -- sudo chown -R 10000:10000 /fin; \
+		$(MINIKUBE) ssh -n $$node -- ls -ld /fin; \
+	done
 	$(KUBECTL) apply -f testdata/fin-volume.yaml
 
 .PHONY: wait-deploy-ready

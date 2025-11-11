@@ -135,7 +135,7 @@ func incrementalBackupTestSuite() {
 
 		// Assert
 		VerifyDataInRestorePVC(ctx, k8sClient, restore, dataOnIncrementalBackup)
-		VerifySizeOfRestorePVC(ctx, ctrlClient, restore, finbackup2)
+		VerifySizeOfRestorePVC(ctx, ctrlClient, restore)
 	})
 
 	// CSATEST-1617
@@ -171,7 +171,7 @@ func incrementalBackupTestSuite() {
 
 		// Assert
 		VerifyDataInRestorePVC(ctx, k8sClient, restore, dataOnFullBackup)
-		VerifySizeOfRestorePVC(ctx, ctrlClient, restore, finbackup1)
+		VerifySizeOfRestorePVC(ctx, ctrlClient, restore)
 	})
 	// CSATEST-1605
 	// Description:
@@ -224,20 +224,8 @@ func incrementalBackupTestSuite() {
 		Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
 		Expect(rawImageData).To(Equal(dataOnIncrementalBackup), "Data in raw.img does not match the expected data")
 
-		By("verifying the deletion of jobs")
-		err = WaitForJobDeletion(ctx, k8sClient, rookNamespace,
-			fmt.Sprintf("fin-cleanup-%s", finbackup1.UID), 10*time.Second)
-		Expect(err).NotTo(HaveOccurred(), "Cleanup job should be deleted.")
-		err = WaitForJobDeletion(ctx, k8sClient, rookNamespace,
-			fmt.Sprintf("fin-deletion-%s", finbackup1.UID), 10*time.Second)
-		Expect(err).NotTo(HaveOccurred(), "Deletion job should be deleted.")
-
-		By("verifying the deletion of snapshot reference in FinBackup")
-		rbdImage := finbackup1.Annotations["fin.cybozu.io/backup-target-rbd-image"]
-		var stdout []byte
-		stdout, stderr, err = kubectl("exec", "-n", rookNamespace, "deploy/rook-ceph-tools", "--",
-			"rbd", "info", fmt.Sprintf("%s/%s@fin-backup-%s", poolName, rbdImage, finbackup1.UID))
-		Expect(err).To(HaveOccurred(), "Snapshot should be deleted. stdout: %s, stderr: %s", stdout, stderr)
+		VerifyDeletionOfJobsForBackup(ctx, k8sClient, finbackup1)
+		VerifyDeletionOfSnapshotInFinBackup(ctx, ctrlClient, finbackup1)
 	})
 
 	// Description:
@@ -271,6 +259,6 @@ func incrementalBackupTestSuite() {
 
 		// Assert
 		VerifyDataInRestorePVC(ctx, k8sClient, restore, dataOnIncrementalBackup)
-		VerifySizeOfRestorePVC(ctx, ctrlClient, restore, finbackup2)
+		VerifySizeOfRestorePVC(ctx, ctrlClient, restore)
 	})
 }
