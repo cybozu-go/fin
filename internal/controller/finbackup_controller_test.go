@@ -11,6 +11,7 @@ import (
 	finv1 "github.com/cybozu-go/fin/api/v1"
 	"github.com/cybozu-go/fin/internal/infrastructure/fake"
 	"github.com/cybozu-go/fin/internal/model"
+	"github.com/cybozu-go/fin/test/utils"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	batchv1 "k8s.io/api/batch/v1"
@@ -92,7 +93,7 @@ func makeJobFailWithExitCode2(ctx SpecContext, jobName string) {
 
 var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 	var reconciler *FinBackupReconciler
-	var rbdRepo *fake.RBDRepository
+	var rbdRepo *fake.RBDRepository2
 	var sc1 *storagev1.StorageClass
 	var stopFunc context.CancelFunc
 
@@ -100,11 +101,15 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 		sc1 = NewRBDStorageClass("integration", namespace, rbdPoolName)
 		Expect(k8sClient.Create(context.TODO(), sc1)).Should(Succeed())
 
-		rbdRepo = fake.NewRBDRepository(map[fake.PoolImageName][]*model.RBDSnapshot{
-			{PoolName: rbdPoolName, ImageName: rbdImageName}: {
-				{ID: 1, Name: "init-snap", Size: uint64(defaultMaxPartSize.Value())},
-			},
-		})
+		volumeInfo := &fake.VolumeInfo{
+			Namespace: utils.GetUniqueName("ns-"),
+			PVCName:   utils.GetUniqueName("pvc-"),
+			PVName:    utils.GetUniqueName("pv-"),
+			PoolName:  rbdPoolName,
+			ImageName: rbdImageName,
+		}
+		rbdRepo = fake.NewRBDRepository2(volumeInfo.PoolName, volumeInfo.ImageName)
+
 		mgr, err := ctrl.NewManager(cfg, ctrl.Options{Scheme: scheme.Scheme})
 		Expect(err).ToNot(HaveOccurred())
 		reconciler = &FinBackupReconciler{
@@ -691,7 +696,7 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 
 var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
 	var reconciler *FinBackupReconciler
-	var rbdRepo *fake.RBDRepository
+	var rbdRepo *fake.RBDRepository2
 	var sc *storagev1.StorageClass
 
 	BeforeAll(func(ctx SpecContext) {
@@ -704,9 +709,15 @@ var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
 	})
 
 	BeforeEach(func(ctx SpecContext) {
-		rbdRepo = fake.NewRBDRepository(map[fake.PoolImageName][]*model.RBDSnapshot{
-			{PoolName: rbdPoolName, ImageName: rbdImageName}: {{}},
-		})
+		volumeInfo := &fake.VolumeInfo{
+			Namespace: utils.GetUniqueName("ns-"),
+			PVCName:   utils.GetUniqueName("pvc-"),
+			PVName:    utils.GetUniqueName("pv-"),
+			PoolName:  rbdPoolName,
+			ImageName: rbdImageName,
+		}
+
+		rbdRepo = fake.NewRBDRepository2(volumeInfo.PoolName, volumeInfo.ImageName)
 		reconciler = &FinBackupReconciler{
 			Client:                  k8sClient,
 			Scheme:                  scheme.Scheme,

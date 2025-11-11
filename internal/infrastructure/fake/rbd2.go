@@ -2,10 +2,12 @@ package fake
 
 import (
 	cryptorand "crypto/rand"
+	"errors"
 	"fmt"
 	"io"
 	"math/rand/v2"
 	"os"
+	"slices"
 	"time"
 
 	"github.com/cybozu-go/fin/internal/diffgenerator"
@@ -34,6 +36,7 @@ type RBDRepository2 struct {
 }
 
 var _ model.RBDRepository = &RBDRepository2{}
+var _ model.RBDSnapshotRepository = &RBDRepository2{}
 
 func NewRBDRepository2(poolName, imageName string) *RBDRepository2 {
 	s := make([]byte, 32)
@@ -53,6 +56,19 @@ func NewRBDRepository2(poolName, imageName string) *RBDRepository2 {
 		snapshots:        []*model.RBDSnapshot{},
 		writtenHistories: []*writtenHistory{},
 	}
+}
+
+func (r *RBDRepository2) CreateSnapshot(poolName, imageName, snapName string) error {
+	if poolName != r.poolName || imageName != r.imageName {
+		return errors.New("invalid pool or image")
+	}
+
+	size := r.divideSize * 4
+	if len(r.snapshots) > 0 {
+		size += r.snapshots[len(r.snapshots)-1].Size + r.divideSize*2
+	}
+	_, _, err := r.CreateSnapshotWithRandomData(snapName, size)
+	return err
 }
 
 func (r *RBDRepository2) CreateSnapshotWithRandomData(snapName string, volumeSize uint64) (
@@ -104,6 +120,20 @@ func (r *RBDRepository2) ListSnapshots(poolName, imageName string) ([]*model.RBD
 		return nil, model.ErrNotFound
 	}
 	return r.snapshots, nil
+}
+
+func (r *RBDRepository2) RemoveSnapshot(poolName, imageName, snapName string) error {
+	if poolName != r.poolName || imageName != r.imageName {
+		return errors.New("invalid pool or image")
+	}
+	i := slices.IndexFunc(r.snapshots, func(snapshot *model.RBDSnapshot) bool {
+		return snapshot.Name == snapName
+	})
+	if i == -1 {
+		return model.ErrNotFound
+	}
+	r.snapshots = slices.Delete(r.snapshots, i, i+1)
+	return nil
 }
 
 func (r *RBDRepository2) ExportDiff(input *model.ExportDiffInput) error {
