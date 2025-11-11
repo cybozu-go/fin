@@ -350,6 +350,7 @@ func (r *FinBackupReconciler) reconcileBackup(
 		Reason:  "BackupCompleted",
 		Message: "Backup completed successfully",
 	})
+	updatedBackup.Status.SuccessfulTime = metav1.Now()
 	err = r.Status().Patch(ctx, updatedBackup, client.MergeFrom(&backup))
 	if err != nil {
 		logger.Error(err, "failed to update FinBackup status")

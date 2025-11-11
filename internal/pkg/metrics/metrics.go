@@ -2,6 +2,7 @@ package metrics
 
 import (
 	"sync"
+	"time"
 
 	finv1 "github.com/cybozu-go/fin/api/v1"
 	"github.com/prometheus/client_golang/prometheus"
@@ -37,6 +38,15 @@ var (
 			Help:      "Information about FinBackupConfig",
 		},
 		[]string{cephNSLabel, pvcLabel, pvcNSLabel, nsLabel, fbcLabel, nodeLabel},
+	)
+
+	finbackupconfigLastSuccessfulTimestamp = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: metricNamespace,
+			Name:      "finbackupconfig_last_successful_timestamp",
+			Help:      "Timestamp of the last successful backup",
+		},
+		[]string{nsLabel, fbcLabel},
 	)
 
 	backupDurationSeconds = prometheus.NewHistogramVec(
@@ -174,10 +184,18 @@ func DeleteRestoreMetrics(fr *finv1.FinRestore, cephNamespace, pvcNamespace, pvc
 	restoreCreationTimeStamp.DeleteLabelValues(fr.Namespace, fr.Name)
 }
 
+func SetLastSuccessfulTimestamp(ns, fbc string, t time.Time) {
+	finbackupconfigLastSuccessfulTimestamp.WithLabelValues(ns, fbc).Set(float64(t.Unix()))
+}
+
+// Register registers all metrics with the controller-runtime metrics registry.
+// This should be called during application startup.
+// It is safe to call multiple times; registration will only happen once.
 func Register() {
 	registerOnce.Do(func() {
 		metrics.Registry.MustRegister(
 			finbackupconfigInfo,
+			finbackupconfigLastSuccessfulTimestamp,
 			backupCreateStatus,
 			backupDurationSeconds,
 			restoreInfo,

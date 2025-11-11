@@ -9,13 +9,16 @@ import (
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
 // FinBackupConfigReconciler reconciles a FinBackupConfig object
@@ -36,7 +39,7 @@ func NewFinBackupConfigReconciler(
 	podImage string,
 	serviceAccountName string,
 ) *FinBackupConfigReconciler {
-	return &FinBackupConfigReconciler{
+	fbcr := &FinBackupConfigReconciler{
 		Client:               client,
 		Scheme:               scheme,
 		managedCephClusterID: managedCephClusterID,
@@ -44,6 +47,7 @@ func NewFinBackupConfigReconciler(
 		podImage:             podImage,
 		serviceAccountName:   serviceAccountName,
 	}
+	return fbcr
 }
 
 //+kubebuilder:rbac:groups=fin.cybozu.io,resources=finbackupconfigs,verbs=get;list;watch;create;update;patch;delete
@@ -91,7 +95,32 @@ func (r *FinBackupConfigReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		return ctrl.Result{}, fmt.Errorf("failed to create or update CronJob: %w", err)
 	}
 
+	if err := r.syncLastSuccessfulTime(ctx, &fbc); err != nil {
+		return ctrl.Result{}, fmt.Errorf("failed to sync last successful time: %w", err)
+	}
+
 	return ctrl.Result{}, nil
+}
+
+func (r *FinBackupConfigReconciler) syncLastSuccessfulTime(ctx context.Context, fbc *finv1.FinBackupConfig) error {
+	var backups finv1.FinBackupList
+	fbSelector := labels.SelectorFromSet(map[string]string{LabelFinBackupConfigUID: string(fbc.UID)})
+	if err := r.List(ctx, &backups, &client.ListOptions{Namespace: fbc.Namespace, LabelSelector: fbSelector}); err != nil {
+		return err
+	}
+	if len(backups.Items) == 0 {
+		return nil
+	}
+	if len(backups.Items) > 1 {
+		return fmt.Errorf("multiple FinBackups found for FinBackupConfig %s/%s", fbc.Namespace, fbc.Name)
+	}
+	for _, backup := range backups.Items {
+		if backup.Status.SuccessfulTime.After(fbc.Status.LastSuccessfulTime.Time) {
+			fbc.Status.LastSuccessfulTime = backup.Status.SuccessfulTime
+			metrics.SetLastSuccessfulTimestamp(fbc.Namespace, fbc.Name, fbc.Status.LastSuccessfulTime.Time)
+		}
+	}
+	return r.Status().Update(ctx, fbc)
 }
 
 // SetupWithManager sets up the controller with the Manager.
@@ -99,7 +128,34 @@ func (r *FinBackupConfigReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&finv1.FinBackupConfig{}).
 		Owns(&batchv1.CronJob{}).
+		Watches(
+			&finv1.FinBackup{},
+			handler.EnqueueRequestsFromMapFunc(r.mapFinBackupToFinBackupConfig),
+		).
 		Complete(r)
+}
+
+func (r *FinBackupConfigReconciler) mapFinBackupToFinBackupConfig(ctx context.Context, obj client.Object) []reconcile.Request {
+	fb, ok := obj.(*finv1.FinBackup)
+	if !ok {
+		return nil
+	}
+	fbcUID, ok := fb.GetLabels()[LabelFinBackupConfigUID]
+	if !ok {
+		return nil
+	}
+
+	var fbcList finv1.FinBackupConfigList
+	if err := r.List(ctx, &fbcList, &client.ListOptions{Namespace: fb.Namespace}); err != nil {
+		return nil
+	}
+
+	for _, fbc := range fbcList.Items {
+		if string(fbc.UID) == fbcUID {
+			return []reconcile.Request{{NamespacedName: client.ObjectKeyFromObject(&fbc)}}
+		}
+	}
+	return nil
 }
 
 func (r *FinBackupConfigReconciler) createOrUpdateCronJob(

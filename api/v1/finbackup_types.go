@@ -48,6 +48,9 @@ type FinBackupStatus struct {
 
 	// 'conditions' specifies current backup conditions
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
+
+	// 'successfulTime' specifies the timestamp of the successful backup
+	SuccessfulTime metav1.Time `json:"successfulTime,omitempty"`
 }
 
 const (
