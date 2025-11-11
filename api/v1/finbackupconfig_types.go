@@ -31,6 +31,12 @@ type FinBackupConfigSpec struct {
 type FinBackupConfigStatus struct {
 	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
+
+	// 'cephClusterID' specifies the CephClusterID where the backup target PVC reside
+	CephClusterID string `json:"cephClusterID,omitempty"`
+
+	// 'LastSuccessfulTime' specifies the timestamp of the last successful backup
+	LastSuccessfulTime metav1.Time `json:"lastSuccessfulTime,omitempty"`
 }
 
 //+kubebuilder:object:root=true
