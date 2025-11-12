@@ -255,14 +255,15 @@ func (b *Backup) loopExportDiff(
 	for i := privateData.NextStorePart; i < partCount; i++ {
 		diffPartPath := b.nodeLocalVolumeRepo.GetDiffPartPath(b.targetSnapshotID, i)
 		if err := b.rbdRepo.ExportDiff(&model.ExportDiffInput{
-			PoolName:       b.targetRBDPool,
-			ReadOffset:     b.maxPartSize * uint64(i),
-			ReadLength:     b.maxPartSize,
-			FromSnap:       sourceSnapshotName,
-			MidSnapPrefix:  targetSnapshot.Name,
-			ImageName:      b.targetRBDImageName,
-			TargetSnapName: targetSnapshot.Name,
-			OutputFile:     diffPartPath,
+			PoolName:              b.targetRBDPool,
+			ReadOffset:            b.maxPartSize * uint64(i),
+			ReadLength:            b.maxPartSize,
+			FromSnap:              sourceSnapshotName,
+			MidSnapPrefix:         targetSnapshot.Name,
+			ImageName:             b.targetRBDImageName,
+			TargetSnapName:        targetSnapshot.Name,
+			OutputFile:            diffPartPath,
+			DiffChecksumChunkSize: b.diffChecksumChunkSize,
 		}); err != nil {
 			return fmt.Errorf("failed to export diff: %w", err)
 		}

@@ -115,7 +115,7 @@ func (r *RBDRepository) ExportDiff(input *model.ExportDiffInput) error {
 	}
 	defer func() { _ = checksumFile.Close() }()
 
-	cw := csumwriter.NewChecksumWriter(outputFile, checksumFile, defaultDiffChecksumChunkSize)
+	cw := csumwriter.NewChecksumWriter(outputFile, checksumFile, int(input.DiffChecksumChunkSize))
 	if _, err := io.Copy(cw, stream); err != nil {
 		return fmt.Errorf("failed to write diff to %s: %w", input.OutputFile, err)
 	}
