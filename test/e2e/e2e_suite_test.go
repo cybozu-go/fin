@@ -1,7 +1,9 @@
 package e2e
 
 import (
+	"context"
 	"os"
+	"regexp"
 	"testing"
 
 	finv1 "github.com/cybozu-go/fin/api/v1"
@@ -16,6 +18,13 @@ import (
 
 var k8sClient kubernetes.Interface
 var ctrlClient client.Client
+var nodes []string
+var minikubeProfile string
+
+// Multi-node minikube has the following nodes.
+// - <profile-name>
+// - <profile-name>-m[0-9]+
+var regexpForExtraNode = regexp.MustCompile(`.*-m[0-9]+$`)
 
 // Run e2e tests using the Ginkgo runner.
 func TestE2E(t *testing.T) {
@@ -39,6 +48,18 @@ var _ = BeforeSuite(func() {
 	Expect(err).NotTo(HaveOccurred())
 
 	Expect(os.Setenv(controller.EnvRawImgExpansionUnitSize, "4096")).NotTo(HaveOccurred())
+
+	nodes, err = GetNodeNames(context.Background(), k8sClient)
+	Expect(err).NotTo(HaveOccurred())
+	var found bool
+	for _, node := range nodes {
+		if !regexpForExtraNode.MatchString(node) {
+			minikubeProfile = node
+			found = true
+			break
+		}
+	}
+	Expect(found).To(BeTrue(), "failed to find minikube profile")
 })
 
 // Labelling policies for test scenarios(suites):

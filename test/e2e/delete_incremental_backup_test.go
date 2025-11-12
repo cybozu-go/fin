@@ -61,8 +61,8 @@ func deleteIncrementalBackupTestSuite() {
 	//   - Both full backup and incremental backup remain.
 	It("should create an incremental backup", func(ctx SpecContext) {
 		// Arrange
-		finbackup1 = CreateBackup(ctx, ctrlClient, rookNamespace, pvc, "minikube-worker")
-		finbackup2 = CreateBackup(ctx, ctrlClient, rookNamespace, pvc, "minikube-worker")
+		finbackup1 = CreateBackup(ctx, ctrlClient, rookNamespace, pvc, nodes[0])
+		finbackup2 = CreateBackup(ctx, ctrlClient, rookNamespace, pvc, nodes[0])
 
 		// Act
 		Expect(DeleteFinBackup(ctx, ctrlClient, finbackup2)).NotTo(HaveOccurred())

@@ -52,7 +52,7 @@ func verificationTestSuite() {
 	//   - The data in the restored PVC is identical to the data written in the Arrange (1).
 	It("should verify and restore backup data", func(ctx SpecContext) {
 		// Arrange
-		finbackup := CreateBackup(ctx, ctrlClient, rookNamespace, pvc, "minikube-worker")
+		finbackup := CreateBackup(ctx, ctrlClient, rookNamespace, pvc, nodes[0])
 
 		// Act
 		By("restoring from the backup")
@@ -201,7 +201,7 @@ func verificationTestSuite() {
 		// Act
 		By("creating a FinBackup resource")
 		finbackup, err := NewFinBackup(ns.Name, utils.GetUniqueName("test-finbackup-"),
-			pvc, "minikube-worker")
+			pvc, nodes[0])
 		Expect(err).NotTo(HaveOccurred())
 		err = CreateFinBackup(ctx, ctrlClient, finbackup)
 		Expect(err).NotTo(HaveOccurred())
@@ -248,7 +248,7 @@ func verificationTestSuite() {
 			// Act (1)
 			By("creating a backup with annotation skip-verify")
 			finbackup, err := NewFinBackup(ns.Name, utils.GetUniqueName("test-finbackup-"),
-				pvc, "minikube-worker")
+				pvc, nodes[0])
 			Expect(err).NotTo(HaveOccurred())
 			finbackup.Annotations = map[string]string{
 				"fin.cybozu.io/skip-verify": "true",

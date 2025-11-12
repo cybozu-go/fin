@@ -35,13 +35,13 @@ func incrementalBackupTestSuite() {
 		podForBackupTargetPVC = CreatePodForBlockPVC(ctx, k8sClient, pvc)
 		dataOnFullBackup = WriteRandomDataToPVC(ctx, podForBackupTargetPVC, devicePathInPodForPVC, dataSize)
 
-		finbackup1 = CreateBackup(ctx, ctrlClient, rookNamespace, pvc, "minikube-worker")
+		finbackup1 = CreateBackup(ctx, ctrlClient, rookNamespace, pvc, nodes[0])
 
 		By("verifying the data in raw.img from the full backup")
 		volumePath = filepath.Join("/fin", ns.Name, pvc.Name)
 		// `--native-ssh=false` is used to avoid issues of conversion from LF to CRLF.
 		var rawImageData, stderr []byte
-		rawImageData, stderr, err = execWrapper(minikube, nil, "ssh", "--native-ssh=false", "--",
+		rawImageData, stderr, err = minikubeSSH(nodes[0], nil,
 			"dd", fmt.Sprintf("if=%s/raw.img", volumePath), "bs=4K", "count=1", "status=none")
 		Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
 		Expect(rawImageData).To(Equal(dataOnFullBackup), "Data in raw.img does not match the expected data")
@@ -85,19 +85,19 @@ func incrementalBackupTestSuite() {
 	//     2. A diff file under the diff directory for the incremental backup.
 	It("should create an incremental backup", func(ctx SpecContext) {
 		// Act
-		finbackup2 = CreateBackup(ctx, ctrlClient, rookNamespace, pvc, "minikube-worker")
+		finbackup2 = CreateBackup(ctx, ctrlClient, rookNamespace, pvc, nodes[0])
 
 		// Assert
 		By("verifying the data in raw.img as full backup")
 		var rawImageData, stderr []byte
-		rawImageData, stderr, err = execWrapper(minikube, nil, "ssh", "--native-ssh=false", "--",
+		rawImageData, stderr, err = minikubeSSH(nodes[0], nil,
 			"dd", fmt.Sprintf("if=%s/raw.img", volumePath), "bs=4K", "count=1", "status=none")
 		Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
 		Expect(rawImageData).To(Equal(dataOnFullBackup), "Data in raw.img does not match the expected data")
 
 		By("verifying the existence of the diff file")
 		Expect(ctrlClient.Get(ctx, client.ObjectKeyFromObject(finbackup2), finbackup2)).NotTo(HaveOccurred())
-		_, stderr, err = execWrapper(minikube, nil, "ssh", "--native-ssh=false", "--",
+		_, stderr, err = minikubeSSH(nodes[0], nil,
 			"ls", filepath.Join(volumePath, "diff", strconv.Itoa(*finbackup2.Status.SnapID), "part-0"))
 		Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr), "diff file does not exist")
 	})
@@ -135,7 +135,7 @@ func incrementalBackupTestSuite() {
 
 		// Assert
 		VerifyDataInRestorePVC(ctx, k8sClient, restore, dataOnIncrementalBackup)
-		VerifySizeOfRestorePVC(ctx, ctrlClient, restore, finbackup2)
+		VerifySizeOfRestorePVC(ctx, ctrlClient, restore)
 	})
 
 	// CSATEST-1617
@@ -171,7 +171,7 @@ func incrementalBackupTestSuite() {
 
 		// Assert
 		VerifyDataInRestorePVC(ctx, k8sClient, restore, dataOnFullBackup)
-		VerifySizeOfRestorePVC(ctx, ctrlClient, restore, finbackup1)
+		VerifySizeOfRestorePVC(ctx, ctrlClient, restore)
 	})
 	// CSATEST-1605
 	// Description:
@@ -213,31 +213,19 @@ func incrementalBackupTestSuite() {
 		By("verifying the non-existence of the diff file")
 		Expect(ctrlClient.Get(ctx, client.ObjectKeyFromObject(finbackup2), finbackup2)).NotTo(HaveOccurred())
 		var stderr []byte
-		_, stderr, err = execWrapper(minikube, nil, "ssh", "--native-ssh=false", "--",
+		_, stderr, err = minikubeSSH(nodes[0], nil,
 			"ls", filepath.Join(volumePath, "diff", strconv.Itoa(*finbackup2.Status.SnapID), "part-0"))
 		Expect(err).To(HaveOccurred(), "stderr: "+string(stderr), "diff file does not exist")
 
 		By("verifying the data in raw.img as incremental backup")
 		var rawImageData []byte
-		rawImageData, stderr, err = execWrapper(minikube, nil, "ssh", "--native-ssh=false", "--",
+		rawImageData, stderr, err = minikubeSSH(nodes[0], nil,
 			"dd", fmt.Sprintf("if=%s/raw.img", volumePath), "bs=4K", "count=1", "status=none")
 		Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
 		Expect(rawImageData).To(Equal(dataOnIncrementalBackup), "Data in raw.img does not match the expected data")
 
-		By("verifying the deletion of jobs")
-		err = WaitForJobDeletion(ctx, k8sClient, rookNamespace,
-			fmt.Sprintf("fin-cleanup-%s", finbackup1.UID), 10*time.Second)
-		Expect(err).NotTo(HaveOccurred(), "Cleanup job should be deleted.")
-		err = WaitForJobDeletion(ctx, k8sClient, rookNamespace,
-			fmt.Sprintf("fin-deletion-%s", finbackup1.UID), 10*time.Second)
-		Expect(err).NotTo(HaveOccurred(), "Deletion job should be deleted.")
-
-		By("verifying the deletion of snapshot reference in FinBackup")
-		rbdImage := finbackup1.Annotations["fin.cybozu.io/backup-target-rbd-image"]
-		var stdout []byte
-		stdout, stderr, err = kubectl("exec", "-n", rookNamespace, "deploy/rook-ceph-tools", "--",
-			"rbd", "info", fmt.Sprintf("%s/%s@fin-backup-%s", poolName, rbdImage, finbackup1.UID))
-		Expect(err).To(HaveOccurred(), "Snapshot should be deleted. stdout: %s, stderr: %s", stdout, stderr)
+		VerifyDeletionOfJobsForBackup(ctx, k8sClient, finbackup1)
+		VerifyDeletionOfSnapshotInFinBackup(ctx, ctrlClient, finbackup1)
 	})
 
 	// Description:
@@ -271,6 +259,6 @@ func incrementalBackupTestSuite() {
 
 		// Assert
 		VerifyDataInRestorePVC(ctx, k8sClient, restore, dataOnIncrementalBackup)
-		VerifySizeOfRestorePVC(ctx, ctrlClient, restore, finbackup2)
+		VerifySizeOfRestorePVC(ctx, ctrlClient, restore)
 	})
 }

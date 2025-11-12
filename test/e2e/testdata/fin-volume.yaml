@@ -1,8 +1,10 @@
+# fin volume for e2e test
+# Their names should be fin-<node name>
 ---
 apiVersion: v1
 kind: PersistentVolume
 metadata:
-  name: fin-minikube-worker
+  name: fin-fin-test
 spec:
   capacity:
     storage: 200Mi
@@ -10,6 +12,14 @@ spec:
     - ReadWriteOnce
   storageClassName: ""
   persistentVolumeReclaimPolicy: Retain
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+      - matchExpressions:
+        - key: kubernetes.io/hostname
+          operator: In
+          values:
+          - fin-test
   hostPath:
     path: /fin
     type: Directory
@@ -17,7 +27,7 @@ spec:
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: fin-minikube-worker
+  name: fin-fin-test
   namespace: rook-ceph
 spec:
   accessModes:
@@ -26,4 +36,41 @@ spec:
   resources:
     requests:
       storage: 200Mi
-  volumeName: fin-minikube-worker
+  volumeName: fin-fin-test
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: fin-fin-test-m02
+spec:
+  capacity:
+    storage: 200Mi
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: ""
+  persistentVolumeReclaimPolicy: Retain
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+      - matchExpressions:
+        - key: kubernetes.io/hostname
+          operator: In
+          values:
+          - fin-test-m02
+  hostPath:
+    path: /fin
+    type: Directory
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: fin-fin-test-m02
+  namespace: rook-ceph
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: ""
+  resources:
+    requests:
+      storage: 200Mi
+  volumeName: fin-fin-test-m02

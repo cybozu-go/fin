@@ -7,6 +7,7 @@ import (
 	"html/template"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"time"
 
 	finv1 "github.com/cybozu-go/fin/api/v1"
@@ -55,6 +56,13 @@ func execWrapper(cmd string, input []byte, args ...string) ([]byte, []byte, erro
 
 	err := command.Run()
 	return stdout.Bytes(), stderr.Bytes(), err
+}
+
+//nolint:unparam
+func minikubeSSH(node string, input []byte, args ...string) ([]byte, []byte, error) {
+	args = append([]string{"--profile", minikubeProfile,
+		"ssh", "--native-ssh=false", "--node", node, "--"}, args...)
+	return execWrapper(minikube, input, args...)
 }
 
 func kubectl(args ...string) ([]byte, []byte, error) {
@@ -447,7 +455,7 @@ func WaitForPVCDeletion(ctx context.Context, k8sClient kubernetes.Interface, pvc
 	})
 }
 
-func VerifySizeOfRestorePVC(ctx context.Context, c client.Client, restore *finv1.FinRestore, backup *finv1.FinBackup) {
+func VerifySizeOfRestorePVC(ctx context.Context, c client.Client, restore *finv1.FinRestore) {
 	GinkgoHelper()
 
 	By("verifying the size of the restore PVC")
@@ -465,7 +473,7 @@ func VerifySizeOfRestorePVC(ctx context.Context, c client.Client, restore *finv1
 	Expect(ok).To(BeTrue())
 
 	fb := &finv1.FinBackup{}
-	err = c.Get(ctx, client.ObjectKeyFromObject(backup), fb)
+	err = c.Get(ctx, client.ObjectKey{Namespace: restore.Namespace, Name: restore.Spec.Backup}, fb)
 	Expect(err).NotTo(HaveOccurred())
 	Expect(sizeBytes).To(Equal(*fb.Status.SnapSize),
 		"Size of restore PVC does not match the snapshot size")
@@ -528,6 +536,8 @@ func CreateBackupTargetPVC(
 	namespace *corev1.Namespace,
 	volumeMode, storageClassName, accessModes, size string,
 ) *corev1.PersistentVolumeClaim {
+	GinkgoHelper()
+
 	By("creating a backup target PVC")
 	pvc, err := NewPVC(namespace.Name, utils.GetUniqueName("test-pvc-"),
 		volumeMode, storageClassName, accessModes, size)
@@ -542,6 +552,8 @@ func CreatePodForBlockPVC(
 	k8sClient kubernetes.Interface,
 	pvc *corev1.PersistentVolumeClaim,
 ) *corev1.Pod {
+	GinkgoHelper()
+
 	By("creating a pod for block PVC")
 	pod, err := NewPod(
 		pvc.Namespace,
@@ -561,6 +573,8 @@ func CreatePodForFilesystemPVC(
 	k8sClient kubernetes.Interface,
 	pvc *corev1.PersistentVolumeClaim,
 ) *corev1.Pod {
+	GinkgoHelper()
+
 	By("creating a pod for filesystem PVC")
 	pod := NewPodMountingFilesystem(pvc.Namespace, utils.GetUniqueName("test-pod-"),
 		pvc.Name, "ghcr.io/cybozu/ubuntu:24.04", "/data")
@@ -579,6 +593,8 @@ func WriteRandomDataToPVC(
 	path string,
 	length int64,
 ) []byte {
+	GinkgoHelper()
+
 	By("writing random data to the block PVC")
 	_, stderr, err := kubectl("exec", "-n", pod.Namespace, pod.Name, "--",
 		"dd", "if=/dev/urandom", fmt.Sprintf("of=%s", path),
@@ -603,6 +619,8 @@ func CreateBackup(
 	pvc *corev1.PersistentVolumeClaim,
 	node string,
 ) *finv1.FinBackup {
+	GinkgoHelper()
+
 	By("creating a backup")
 	backup, err := NewFinBackup(rookNamespace, utils.GetUniqueName("test-finbackup-"),
 		pvc, node)
@@ -636,6 +654,8 @@ func CreateRestore(
 	namespace *corev1.Namespace,
 	name string,
 ) *finv1.FinRestore {
+	GinkgoHelper()
+
 	By("creating a restore")
 	restore, err := NewFinRestore(name, finbackup,
 		namespace.Name, name)
@@ -644,4 +664,72 @@ func CreateRestore(
 	Expect(WaitForFinRestoreReady(ctx, ctrlClient, restore, 1*time.Minute)).
 		NotTo(HaveOccurred())
 	return restore
+}
+
+func GetNodeNames(ctx context.Context, k8sClient kubernetes.Interface) ([]string, error) {
+	nodes, err := k8sClient.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, err
+	}
+
+	nodeNames := make([]string, 0, len(nodes.Items))
+	for _, node := range nodes.Items {
+		nodeNames = append(nodeNames, node.Name)
+	}
+	return nodeNames, nil
+}
+
+func VerifyRawImage(pvc *corev1.PersistentVolumeClaim, node string, expected []byte) {
+	GinkgoHelper()
+
+	By("verifying the data in raw.img")
+	expectedData, stderr, err := minikubeSSH(node, nil,
+		"dd", fmt.Sprintf("if=/fin/%s/%s/raw.img", pvc.Namespace, pvc.Name),
+		fmt.Sprintf("bs=%d", len(expected)), "count=1", "status=none")
+	Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
+	Expect(expectedData).To(Equal(expected), "Data in raw.img does not match the expected data")
+}
+
+func VerifyNonExistenceOfRawImage(pvc *corev1.PersistentVolumeClaim, node string) {
+	GinkgoHelper()
+
+	By("verifying the deletion of raw.img")
+	rawImgPath := filepath.Join("/fin", pvc.Namespace, pvc.Name, "raw.img")
+	stdout, stderr, err := minikubeSSH(node, nil, "test", "!", "-e", rawImgPath)
+	Expect(err).NotTo(HaveOccurred(), "raw.img file should be deleted. stdout: %s, stderr: %s", stdout, stderr)
+}
+
+func VerifyDeletionOfJobsForBackup(ctx context.Context, client kubernetes.Interface, finbackup *finv1.FinBackup) {
+	err := WaitForJobDeletion(ctx, k8sClient, rookNamespace, fmt.Sprintf("fin-cleanup-%s", finbackup.UID), 10*time.Second)
+	Expect(err).NotTo(HaveOccurred(), "Cleanup job should be deleted.")
+	err = WaitForJobDeletion(ctx, k8sClient, rookNamespace, fmt.Sprintf("fin-deletion-%s", finbackup.UID), 10*time.Second)
+	Expect(err).NotTo(HaveOccurred(), "Deletion job should be deleted.")
+}
+
+func VerifyDeletionOfSnapshotInFinBackup(ctx context.Context, ctrlClient client.Client, finbackup *finv1.FinBackup) {
+	GinkgoHelper()
+
+	rbdImage := finbackup.Annotations["fin.cybozu.io/backup-target-rbd-image"]
+	stdout, stderr, err := kubectl("exec", "-n", rookNamespace, "deploy/rook-ceph-tools", "--",
+		"rbd", "info", fmt.Sprintf("%s/%s@fin-backup-%s", poolName, rbdImage, finbackup.UID))
+	Expect(err).To(HaveOccurred(), "Snapshot should be deleted. stdout: %s, stderr: %s", stdout, stderr)
+}
+
+func VerifyDeletionOfResourcesForRestore(
+	ctx context.Context, k8sClient kubernetes.Interface, finrestore *finv1.FinRestore,
+) {
+	GinkgoHelper()
+
+	By("verifying the deletion of the restore job")
+	restoreJobName := fmt.Sprintf("fin-restore-%s", finrestore.UID)
+	err := WaitForJobDeletion(ctx, k8sClient, rookNamespace, restoreJobName, 10*time.Second)
+	Expect(err).NotTo(HaveOccurred())
+
+	By("verifying the deletion of the restore job PVC")
+	_, stderr, err := kubectl("wait", "pvc", "-n", rookNamespace, restoreJobName, "--for=delete", "--timeout=3m")
+	Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
+
+	By("verifying the deletion of the restore job PV")
+	_, stderr, err = kubectl("wait", "pv", restoreJobName, "--for=delete", "--timeout=3m")
+	Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
 }
