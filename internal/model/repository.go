@@ -77,14 +77,15 @@ type RBDSnapshot struct {
 }
 
 type ExportDiffInput struct {
-	PoolName       string
-	ReadOffset     uint64
-	ReadLength     uint64
-	FromSnap       *string
-	MidSnapPrefix  string
-	ImageName      string
-	TargetSnapName string
-	OutputFile     string
+	PoolName              string
+	ReadOffset            uint64
+	ReadLength            uint64
+	FromSnap              *string
+	MidSnapPrefix         string
+	ImageName             string
+	TargetSnapName        string
+	OutputFile            string
+	DiffChecksumChunkSize uint64
 }
 
 type RBDSnapshotCreateRepository interface {

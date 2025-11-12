@@ -35,6 +35,9 @@ type Backup struct {
 	targetPVCUID              string
 	maxPartSize               uint64
 	expansionUnitSize         uint64
+	rawChecksumChunkSize      uint64
+	diffChecksumChunkSize     uint64
+	disableChecksumVerify     bool
 }
 
 func NewBackup(in *input.Backup) *Backup {
@@ -53,6 +56,9 @@ func NewBackup(in *input.Backup) *Backup {
 		targetPVCUID:              in.TargetPVCUID,
 		maxPartSize:               in.MaxPartSize,
 		expansionUnitSize:         in.ExpansionUnitSize,
+		rawChecksumChunkSize:      in.RawChecksumChunkSize,
+		diffChecksumChunkSize:     in.DiffChecksumChunkSize,
+		disableChecksumVerify:     in.DisableChecksumVerify,
 	}
 }
 
