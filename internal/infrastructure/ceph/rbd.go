@@ -23,8 +23,7 @@ import (
 )
 
 var (
-	DefaultExpansionUnitSize     uint64 = 100 * 1024 * 1024 * 1024 // 100 GiB
-	defaultDiffChecksumChunkSize        = 2 * 1024 * 1024          // 2 MiB
+	DefaultExpansionUnitSize uint64 = 100 * 1024 * 1024 * 1024 // 100 GiB
 )
 
 type RBDRepository struct {
@@ -138,6 +137,7 @@ func (r *RBDRepository) startExportDiffStream(input *model.ExportDiffInput) (*co
 	}
 	args = append(args, "--mid-snap-prefix", input.MidSnapPrefix,
 		fmt.Sprintf("%s@%s", input.ImageName, input.TargetSnapName), "-")
+
 	cmd := exec.Command("rbd", args...)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
