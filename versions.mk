@@ -5,7 +5,7 @@ KUBERNETES_VERSION ?= 1.32.7
 # https://github.com/kubernetes/minikube/releases
 MINIKUBE_VERSION := v1.37.0
 # https://github.com/rook/rook/releases
-ROOK_CHART_VERSION := v1.17.8
+ROOK_CHART_VERSION := v1.18.6
 
 ENVTEST_K8S_VERSION := $(shell echo $(KUBERNETES_VERSION) | cut -d "." -f 1-2)
 
