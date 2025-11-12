@@ -2,6 +2,7 @@ package ceph
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -9,18 +10,21 @@ import (
 	"io"
 	"math"
 	"os"
+	"os/exec"
 	"strconv"
 	"unsafe"
 
 	"github.com/cespare/xxhash/v2"
 	"github.com/cybozu-go/fin/internal/model"
 	"github.com/cybozu-go/fin/internal/pkg/csumreader"
+	"github.com/cybozu-go/fin/internal/pkg/csumwriter"
 	"github.com/cybozu-go/fin/internal/pkg/zeroreader"
 	"golang.org/x/sys/unix"
 )
 
 var (
-	DefaultExpansionUnitSize uint64 = 100 * 1024 * 1024 * 1024 // 100 GiB
+	DefaultExpansionUnitSize     uint64 = 100 * 1024 * 1024 * 1024 // 100 GiB
+	defaultDiffChecksumChunkSize        = 2 * 1024 * 1024          // 2 MiB
 )
 
 type RBDRepository struct {
@@ -30,6 +34,29 @@ var _ model.RBDRepository = &RBDRepository{}
 
 func NewRBDRepository() *RBDRepository {
 	return &RBDRepository{}
+}
+
+type commandReadCloser struct {
+	io.ReadCloser
+	cmd    *exec.Cmd
+	op     string
+	stderr *bytes.Buffer
+}
+
+func (c *commandReadCloser) Close() error {
+	if c.ReadCloser != nil {
+		_ = c.ReadCloser.Close()
+		c.ReadCloser = nil
+	}
+	if c.cmd == nil {
+		return nil
+	}
+	err := c.cmd.Wait()
+	c.cmd = nil
+	if err != nil {
+		return fmt.Errorf("failed to %s: %w, stderr: %s", c.op, err, c.stderr.String())
+	}
+	return nil
 }
 
 func (r *RBDRepository) CreateSnapshot(poolName, imageName, snapName string) error {
@@ -69,6 +96,37 @@ func (r *RBDRepository) ListSnapshots(poolName, imageName string) ([]*model.RBDS
 }
 
 func (r *RBDRepository) ExportDiff(input *model.ExportDiffInput) error {
+	stream, err := r.startExportDiffStream(input)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = stream.Close() }()
+
+	outputFile, err := os.OpenFile(input.OutputFile, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	if err != nil {
+		return fmt.Errorf("failed to create output file %s: %w", input.OutputFile, err)
+	}
+	defer func() { _ = outputFile.Close() }()
+
+	checksumPath := getChecksumFilePath(input.OutputFile)
+	checksumFile, err := os.OpenFile(checksumPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	if err != nil {
+		return fmt.Errorf("failed to create checksum file %s: %w", checksumPath, err)
+	}
+	defer func() { _ = checksumFile.Close() }()
+
+	cw := csumwriter.NewChecksumWriter(outputFile, checksumFile, defaultDiffChecksumChunkSize)
+	if _, err := io.Copy(cw, stream); err != nil {
+		return fmt.Errorf("failed to write diff to %s: %w", input.OutputFile, err)
+	}
+	if err := cw.Close(); err != nil {
+		return fmt.Errorf("failed to finalize diff checksum: %w", err)
+	}
+
+	return nil
+}
+
+func (r *RBDRepository) startExportDiffStream(input *model.ExportDiffInput) (*commandReadCloser, error) {
 	args := []string{
 		"export-diff",
 		"-p", input.PoolName,
@@ -79,13 +137,24 @@ func (r *RBDRepository) ExportDiff(input *model.ExportDiffInput) error {
 		args = append(args, "--from-snap", *input.FromSnap)
 	}
 	args = append(args, "--mid-snap-prefix", input.MidSnapPrefix,
-		fmt.Sprintf("%s@%s", input.ImageName, input.TargetSnapName), input.OutputFile)
-
-	_, stderr, err := runRBDCommand(args...)
+		fmt.Sprintf("%s@%s", input.ImageName, input.TargetSnapName), "-")
+	cmd := exec.Command("rbd", args...)
+	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return fmt.Errorf("failed to export diff: %w, stderr: %s", err, string(stderr))
+		return nil, fmt.Errorf("failed to get export-diff stdout: %w", err)
 	}
-	return nil
+	stderrBuf := &bytes.Buffer{}
+	cmd.Stderr = stderrBuf
+	if err := cmd.Start(); err != nil {
+		_ = stdout.Close()
+		return nil, fmt.Errorf("failed to start export-diff: %w, stderr: %s", err, stderrBuf.String())
+	}
+	return &commandReadCloser{
+		ReadCloser: stdout,
+		cmd:        cmd,
+		op:         "export diff",
+		stderr:     stderrBuf,
+	}, nil
 }
 
 func (r *RBDRepository) ApplyDiffToBlockDevice(blockDevicePath, diffFilePath, fromSnapName, toSnapName string) error {
