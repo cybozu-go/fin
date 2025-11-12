@@ -7,10 +7,7 @@ import (
 	"io"
 
 	"github.com/cespare/xxhash/v2"
-)
-
-const (
-	ChecksumLen = 8
+	"github.com/cybozu-go/fin/internal/pkg/csum"
 )
 
 var (
@@ -54,26 +51,26 @@ func (cr *ChecksumReader) Read(p []byte) (int, error) {
 			return 0, fmt.Errorf("failed to read data block: %w", err)
 		}
 
-		if !cr.disableChecksumVerify {
-			checksumBytes := make([]byte, ChecksumLen)
+		if cr.disableChecksumVerify {
+			checksumBytes := make([]byte, csum.ChecksumLen)
+			_, err := io.ReadFull(cr.checksumFile, checksumBytes)
+			if err != nil && err != io.EOF {
+				return 0, fmt.Errorf("failed to skip checksum: %w", err)
+			}
+		} else {
+			checksumBytes := make([]byte, csum.ChecksumLen)
 			n2, err := io.ReadFull(cr.checksumFile, checksumBytes)
 			if err != nil {
 				return 0, fmt.Errorf("failed to read checksum: %w", err)
 			}
-			if n2 != ChecksumLen {
-				return 0, fmt.Errorf("invalid checksum length: expected %d, got %d", ChecksumLen, n2)
+			if n2 != csum.ChecksumLen {
+				return 0, fmt.Errorf("invalid checksum length: expected %d, got %d", csum.ChecksumLen, n2)
 			}
 
 			expected := binary.LittleEndian.Uint64(checksumBytes)
 			actual := xxhash.Sum64(block)
 			if expected != actual {
 				return 0, fmt.Errorf("%w: expected %016x, got %016x", ErrChecksumMismatch, expected, actual)
-			}
-		} else {
-			checksumBytes := make([]byte, ChecksumLen)
-			_, err := io.ReadFull(cr.checksumFile, checksumBytes)
-			if err != nil && err != io.EOF {
-				return 0, fmt.Errorf("failed to skip checksum: %w", err)
 			}
 		}
 

@@ -6,10 +6,7 @@ import (
 	"io"
 
 	"github.com/cespare/xxhash/v2"
-)
-
-const (
-	ChecksumLen = 8
+	"github.com/cybozu-go/fin/internal/pkg/csum"
 )
 
 type ChecksumWriter struct {
@@ -57,24 +54,21 @@ func (cw *ChecksumWriter) flushChunk() error {
 		return nil
 	}
 
-	n, err := cw.dataFile.Write(cw.buf)
+	_, err := cw.dataFile.Write(cw.buf)
 	if err != nil {
 		return fmt.Errorf("failed to write data chunk: %w", err)
 	}
-	if n != len(cw.buf) {
-		return fmt.Errorf("short write to data file: wrote %d, expected %d", n, len(cw.buf))
-	}
 
 	checksum := xxhash.Sum64(cw.buf)
-	checksumBytes := make([]byte, ChecksumLen)
+	checksumBytes := make([]byte, csum.ChecksumLen)
 	binary.LittleEndian.PutUint64(checksumBytes, checksum)
 
-	n, err = cw.checksumFile.Write(checksumBytes)
+	n, err := cw.checksumFile.Write(checksumBytes)
 	if err != nil {
 		return fmt.Errorf("failed to write checksum: %w", err)
 	}
-	if n != ChecksumLen {
-		return fmt.Errorf("short write to checksum file: wrote %d, expected %d", n, ChecksumLen)
+	if n != csum.ChecksumLen {
+		return fmt.Errorf("short write to checksum file: wrote %d, expected %d", n, csum.ChecksumLen)
 	}
 
 	cw.buf = cw.buf[:0]
