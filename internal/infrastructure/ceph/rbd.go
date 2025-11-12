@@ -14,6 +14,7 @@ import (
 
 	"github.com/cespare/xxhash/v2"
 	"github.com/cybozu-go/fin/internal/model"
+	"github.com/cybozu-go/fin/internal/pkg/csum"
 	"github.com/cybozu-go/fin/internal/pkg/csumreader"
 	"github.com/cybozu-go/fin/internal/pkg/zeroreader"
 	"golang.org/x/sys/unix"
@@ -21,6 +22,7 @@ import (
 
 var (
 	DefaultExpansionUnitSize uint64 = 100 * 1024 * 1024 * 1024 // 100 GiB
+	ErrChecksumMismatch             = errors.New("checksum mismatch")
 )
 
 type RBDRepository struct {
@@ -112,15 +114,19 @@ func (r *RBDRepository) ApplyDiffToRawImage(
 	}
 	defer func() { _ = f.Close() }()
 
+	var cf *os.File
 	var diffFile io.Reader = f
 
-	if cf, err := os.Open(getChecksumFilePath(diffFilePath)); err == nil {
+	if !disableChecksumVerify {
+		checksumFilePath := getChecksumFilePath(diffFilePath)
+		cf, err = os.Open(checksumFilePath)
+		if err != nil {
+			return fmt.Errorf("failed to open checksum file: %s: %w", checksumFilePath, err)
+		}
 		defer func() { _ = cf.Close() }()
-		diffFile = csumreader.NewChecksumReader(diffFile, cf, int(diffChecksumChunkSize), disableChecksumVerify)
-
-	} else if !os.IsNotExist(err) {
-		return fmt.Errorf("failed to open checksum file: %s: %w", diffFilePath+".csum", err)
 	}
+
+	diffFile = csumreader.NewChecksumReader(diffFile, cf, int(diffChecksumChunkSize), disableChecksumVerify)
 
 	return applyDiffToRawImage(
 		rawImageFilePath,
@@ -270,7 +276,6 @@ func applyDiffDataRecords(
 	rawChecksumChunkSize uint64,
 	rawChecksumFile *os.File,
 ) error {
-
 	// If the destination is a raw image and a checksum file exists
 	// (disableChecksumVerify == false), apply the diff while verifying
 	// checksums.
@@ -380,7 +385,7 @@ func applyDiffDataRecordsWithChecksumVerification(
 		tag, err := diffFileReader.ReadByte()
 		if err != nil {
 			if errors.Is(err, csumreader.ErrChecksumMismatch) {
-				return csumreader.ErrChecksumMismatch
+				return errors.Join(err, ErrChecksumMismatch)
 			}
 			return fmt.Errorf("failed to read tag byte: %w", err)
 		}
@@ -390,14 +395,14 @@ func applyDiffDataRecordsWithChecksumVerification(
 			offset, err := readLE64(diffFileReader)
 			if err != nil {
 				if errors.Is(err, csumreader.ErrChecksumMismatch) {
-					return csumreader.ErrChecksumMismatch
+					return errors.Join(err, ErrChecksumMismatch)
 				}
 				return fmt.Errorf("failed to read offset: %w", err)
 			}
 			length, err := readLE64(diffFileReader)
 			if err != nil {
 				if errors.Is(err, csumreader.ErrChecksumMismatch) {
-					return csumreader.ErrChecksumMismatch
+					return errors.Join(err, ErrChecksumMismatch)
 				}
 				return fmt.Errorf("failed to read length: %w", err)
 			}
@@ -493,7 +498,7 @@ func processEntireChunkWrite(
 		_, err := io.ReadFull(diffFileReader, chunkData)
 		if err != nil {
 			if errors.Is(err, csumreader.ErrChecksumMismatch) {
-				return csumreader.ErrChecksumMismatch
+				return errors.Join(err, ErrChecksumMismatch)
 			}
 			return fmt.Errorf("failed to read chunk data: %w", err)
 		}
@@ -568,7 +573,7 @@ func processPartialChunkWrite(
 		writeBuf := chunkBuf[bufOffset : bufOffset+writeSize]
 		if _, err := io.ReadFull(diffFileReader, writeBuf); err != nil {
 			if errors.Is(err, csumreader.ErrChecksumMismatch) {
-				return csumreader.ErrChecksumMismatch
+				return errors.Join(err, ErrChecksumMismatch)
 			}
 			if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
 				return fmt.Errorf(
@@ -611,8 +616,8 @@ func processPartialChunkWrite(
 	// Ensure the checksum is persisted to storage.
 	if err := unix.SyncFileRange(
 		int(rawChecksumFile.Fd()),
-		int64(chunkIndex*csumreader.ChecksumLen),
-		int64(csumreader.ChecksumLen),
+		int64(chunkIndex*csum.ChecksumLen),
+		int64(csum.ChecksumLen),
 		unix.SYNC_FILE_RANGE_WAIT_BEFORE|unix.SYNC_FILE_RANGE_WRITE|
 			unix.SYNC_FILE_RANGE_WAIT_AFTER,
 	); err != nil {
@@ -633,9 +638,9 @@ func processPartialChunkWrite(
 }
 
 func writeChecksumAtIndex(checksumFile *os.File, chunkIndex uint64, checksum uint64) error {
-	buf := make([]byte, csumreader.ChecksumLen)
+	buf := make([]byte, csum.ChecksumLen)
 	binary.LittleEndian.PutUint64(buf, checksum)
-	if _, err := checksumFile.Seek(int64(chunkIndex*csumreader.ChecksumLen), io.SeekStart); err != nil {
+	if _, err := checksumFile.Seek(int64(chunkIndex*csum.ChecksumLen), io.SeekStart); err != nil {
 		return fmt.Errorf("failed to seek in checksum file: %w", err)
 	}
 	if _, err := checksumFile.Write(buf); err != nil {
@@ -645,8 +650,8 @@ func writeChecksumAtIndex(checksumFile *os.File, chunkIndex uint64, checksum uin
 }
 
 func readChecksumAtIndex(checksumFile *os.File, chunkIndex uint64) (uint64, error) {
-	buf := make([]byte, csumreader.ChecksumLen)
-	if _, err := checksumFile.Seek(int64(chunkIndex*csumreader.ChecksumLen), io.SeekStart); err != nil {
+	buf := make([]byte, csum.ChecksumLen)
+	if _, err := checksumFile.Seek(int64(chunkIndex*csum.ChecksumLen), io.SeekStart); err != nil {
 		return 0, fmt.Errorf("failed to seek in checksum file: %w", err)
 	}
 	if _, err := io.ReadFull(checksumFile, buf); err != nil {
