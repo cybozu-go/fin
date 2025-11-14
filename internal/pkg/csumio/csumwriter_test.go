@@ -97,3 +97,226 @@ func TestWriter_Success(t *testing.T) {
 		})
 	}
 }
+
+// TestWriter_WriteFactorCoverage exhaustively validates csumio.Writer.Write.
+// The test matrix uses pairwise coverage across three factors:
+//
+//	Factor A: requested write length p relative to chunkSize (> chunk / == chunk / < chunk).
+//	Factor B: remaining buffer capacity before Write relative to p (> p / == p / < p).
+//	Factor C: offset state (no chunk flushed yet vs. at least one chunk flushed).
+//
+// These three factors yield nine cases. Each entry below lists one combination, drives chunkSize±1
+// boundary writes, and approximates “capacity > p” with an empty buffer when p > chunkSize.
+func TestWriter_WriteFactorCoverage(t *testing.T) {
+	chunkSize := csumio.MinimumChunkSize
+	require.Greater(t, chunkSize, 2, "chunkSize must exceed 2 for ±1 boundary writes")
+
+	pGreater := chunkSize + 1 // Represent p > chunkSize by overshooting by 1 byte.
+	pEqual := chunkSize       // Exact chunk boundary.
+	pSmaller := chunkSize - 1 // Represent p < chunkSize by undershooting by 1 byte.
+
+	almostFull := chunkSize - 1    // Leave only 1 byte of remaining capacity (capacity < p).
+	twoBytesShort := chunkSize - 2 // Expect chunk-2 tail during Close.
+	singleByte := 1                // Use single-byte writes to control remaining capacity precisely.
+
+	type matrixCase struct {
+		name              string
+		description       string
+		preLens           []int
+		targetLen         int
+		expectedChunkLens []int
+	}
+
+	cases := []matrixCase{
+		{
+			name:        "pGreater_capacityChunk_offsetZero",
+			description: "p > chunk, capacity == chunk, offset zero",
+			preLens:     nil,
+			targetLen:   pGreater,
+			expectedChunkLens: []int{
+				chunkSize,
+				singleByte,
+			},
+		},
+		{
+			name:        "pGreater_capacityChunk_offsetNonZero",
+			description: "p > chunk, capacity == chunk, offset non-zero",
+			preLens: []int{
+				chunkSize,
+			},
+			targetLen: pGreater,
+			expectedChunkLens: []int{
+				chunkSize,
+				chunkSize,
+				singleByte,
+			},
+		},
+		{
+			name:        "pGreater_capacityLess_offsetZero",
+			description: "p > chunk, capacity < p, offset zero",
+			preLens: []int{
+				almostFull,
+			},
+			targetLen: pGreater,
+			expectedChunkLens: []int{
+				chunkSize,
+				chunkSize,
+			},
+		},
+		{
+			name:        "pEqual_capacityChunk_offsetNonZero",
+			description: "p == chunk, capacity == chunk, offset non-zero",
+			preLens: []int{
+				chunkSize,
+			},
+			targetLen: pEqual,
+			expectedChunkLens: []int{
+				chunkSize,
+				chunkSize,
+			},
+		},
+		{
+			name:        "pEqual_capacityEqual_offsetZero",
+			description: "p == chunk, capacity == p, offset zero",
+			preLens:     nil,
+			targetLen:   pEqual,
+			expectedChunkLens: []int{
+				chunkSize,
+			},
+		},
+		{
+			name:        "pEqual_capacityLess_offsetNonZero",
+			description: "p == chunk, capacity < p, offset non-zero",
+			preLens: []int{
+				chunkSize,
+				almostFull,
+			},
+			targetLen: pEqual,
+			expectedChunkLens: []int{
+				chunkSize,
+				chunkSize,
+				almostFull,
+			},
+		},
+		{
+			name:        "pSmaller_capacityGreater_offsetZero",
+			description: "p < chunk, capacity > p, offset zero",
+			preLens:     nil,
+			targetLen:   pSmaller,
+			expectedChunkLens: []int{
+				pSmaller,
+			},
+		},
+		{
+			name:        "pSmaller_capacityEqual_offsetNonZero",
+			description: "p < chunk, capacity == p, offset non-zero",
+			preLens: []int{
+				chunkSize,
+				singleByte,
+			},
+			targetLen: pSmaller,
+			expectedChunkLens: []int{
+				chunkSize,
+				chunkSize,
+			},
+		},
+		{
+			name:        "pSmaller_capacityLess_offsetZero",
+			description: "p < chunk, capacity < p, offset zero",
+			preLens: []int{
+				almostFull,
+			},
+			targetLen: pSmaller,
+			expectedChunkLens: []int{
+				chunkSize,
+				twoBytesShort,
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			// Arrange
+			dataRecorder := &chunkRecorder{}
+			checksumBuffer := &bytes.Buffer{}
+			cw, err := csumio.NewWriter(dataRecorder, checksumBuffer, chunkSize)
+			require.NoError(t, err)
+
+			currentDataByte := 0
+			expectedData := make([]byte, 0)
+
+			write := func(length int) {
+				data := bytes.Repeat([]byte{byte(currentDataByte)}, length)
+				currentDataByte++
+				n, err := cw.Write(data)
+				require.NoError(t, err)
+				require.Equal(t, length, n)
+				expectedData = append(expectedData, data...)
+			}
+
+			for _, preLen := range tc.preLens {
+				write(preLen)
+			}
+
+			// Act
+			write(tc.targetLen)
+			err = cw.Close()
+			require.NoError(t, err)
+
+			// Assert
+			t.Log(tc.description)
+			require.Equal(t, expectedData, dataRecorder.Bytes())
+			assert.Equal(t, tc.expectedChunkLens, dataRecorder.Lengths())
+			assertChecksumsMatch(t, dataRecorder.Chunks(), checksumBuffer.Bytes())
+		})
+	}
+}
+
+type chunkRecorder struct {
+	writes [][]byte
+}
+
+func (cr *chunkRecorder) Write(p []byte) (int, error) {
+	chunk := make([]byte, len(p))
+	copy(chunk, p)
+	cr.writes = append(cr.writes, chunk)
+	return len(p), nil
+}
+
+func (cr *chunkRecorder) Bytes() []byte {
+	total := 0
+	for _, w := range cr.writes {
+		total += len(w)
+	}
+	merged := make([]byte, 0, total)
+	for _, w := range cr.writes {
+		merged = append(merged, w...)
+	}
+	return merged
+}
+
+func (cr *chunkRecorder) Lengths() []int {
+	lens := make([]int, len(cr.writes))
+	for i, w := range cr.writes {
+		lens[i] = len(w)
+	}
+	return lens
+}
+
+func (cr *chunkRecorder) Chunks() [][]byte {
+	out := make([][]byte, len(cr.writes))
+	copy(out, cr.writes)
+	return out
+}
+
+func assertChecksumsMatch(t *testing.T, chunks [][]byte, checksumBytes []byte) {
+	t.Helper()
+	require.Equal(t, len(chunks)*csumio.ChecksumLen, len(checksumBytes))
+	for i, chunk := range chunks {
+		expected := xxhash.Sum64(chunk)
+		offset := i * csumio.ChecksumLen
+		actual := binary.LittleEndian.Uint64(checksumBytes[offset : offset+csumio.ChecksumLen])
+		assert.Equal(t, expected, actual)
+	}
+}
