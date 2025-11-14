@@ -323,6 +323,7 @@ func (r *FinBackupReconciler) reconcileBackup(
 			logger.Error(err, "failed to update FinBackup status")
 			return ctrl.Result{}, err
 		}
+		metrics.SetBackupCreateStatus(updatedBackup, r.cephClusterNamespace, true, isFullBackup(updatedBackup))
 	}
 	var job batchv1.Job
 	err = r.Get(ctx, client.ObjectKey{Namespace: r.cephClusterNamespace, Name: backupJobName(&backup)}, &job)
@@ -354,6 +355,7 @@ func (r *FinBackupReconciler) reconcileBackup(
 		logger.Error(err, "failed to update FinBackup status")
 		return ctrl.Result{}, err
 	}
+	metrics.SetBackupCreateStatus(updatedBackup, r.cephClusterNamespace, false, isFullBackup(updatedBackup))
 	logger.Info("FinBackup has become ready to use")
 
 	return ctrl.Result{}, nil
@@ -430,6 +432,7 @@ func (r *FinBackupReconciler) reconcileDelete(
 	backup *finv1.FinBackup,
 	pvcDeleted bool,
 ) (ctrl.Result, error) {
+	metrics.SetBackupCreateStatus(backup, r.cephClusterNamespace, false, isFullBackup(backup))
 	if !controllerutil.ContainsFinalizer(backup, FinBackupFinalizerName) {
 		return ctrl.Result{}, nil
 	}
@@ -1127,11 +1130,6 @@ func (r *FinBackupReconciler) createOrUpdateCleanupJob(ctx context.Context, back
 		return nil
 	})
 	return err
-}
-
-func isFullBackup(backup *finv1.FinBackup) bool {
-	diffFrom := backup.GetAnnotations()[annotationDiffFrom]
-	return diffFrom == ""
 }
 
 func (r *FinBackupReconciler) reconcileVerification(

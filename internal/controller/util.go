@@ -172,3 +172,8 @@ func getBackupTargetPVCFromSpecOrStatus(
 
 	return &pvc, gotFromStatus, nil
 }
+
+func isFullBackup(backup *finv1.FinBackup) bool {
+	diffFrom := backup.GetAnnotations()[annotationDiffFrom]
+	return diffFrom == ""
+}
