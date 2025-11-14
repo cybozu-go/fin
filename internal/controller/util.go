@@ -137,13 +137,13 @@ func patchFinBackupCondition(
 	r client.Client,
 	backup *finv1.FinBackup,
 	condition metav1.Condition,
-) error {
+) (*finv1.FinBackup, error) {
 	updatedBackup := backup.DeepCopy()
 	meta.SetStatusCondition(&updatedBackup.Status.Conditions, condition)
 	if err := r.Status().Patch(ctx, updatedBackup, client.MergeFrom(backup)); err != nil {
-		return fmt.Errorf("failed to update FinBackup condition: %w", err)
+		return nil, fmt.Errorf("failed to update FinBackup condition: %w", err)
 	}
-	return nil
+	return updatedBackup, nil
 }
 
 func getBackupTargetPVCFromSpecOrStatus(
@@ -171,4 +171,9 @@ func getBackupTargetPVCFromSpecOrStatus(
 	}
 
 	return &pvc, gotFromStatus, nil
+}
+
+func isFullBackup(backup *finv1.FinBackup) bool {
+	diffFrom := backup.GetAnnotations()[annotationDiffFrom]
+	return diffFrom == ""
 }
