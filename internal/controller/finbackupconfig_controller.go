@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	finv1 "github.com/cybozu-go/fin/api/v1"
+	"github.com/cybozu-go/fin/internal/pkg/metrics"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -80,6 +81,7 @@ func (r *FinBackupConfigReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		logger.Info("the target pvc is not managed by this controller")
 		return ctrl.Result{}, nil
 	}
+	metrics.SetFinBackupConfigInfo(&fbc, r.managedCephClusterID)
 
 	image := r.podImage
 
