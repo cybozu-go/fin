@@ -26,6 +26,15 @@ const (
 )
 
 var (
+	finbackupconfigInfo = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: metricNamespace,
+			Name:      "finbackupconfig_info",
+			Help:      "Information about FinBackupConfig",
+		},
+		[]string{cephNSLabel, pvcLabel, pvcNSLabel, nsLabel, fbcLabel, nodeLabel},
+	)
+
 	backupDurationSeconds = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: metricNamespace,
@@ -47,6 +56,13 @@ var (
 
 	registerOnce sync.Once
 )
+
+func SetFinBackupConfigInfo(fbc *finv1.FinBackupConfig, cephNamespace string) {
+	if fbc == nil {
+		return
+	}
+	finbackupconfigInfo.WithLabelValues(cephNamespace, fbc.Spec.PVC, fbc.Spec.PVCNamespace, fbc.Namespace, fbc.Name, fbc.Spec.Node).Set(1)
+}
 
 func SetBackupDurationSeconds(fb *finv1.FinBackup, untilCondition, cephNamespace string, fullBackup bool) {
 	if fb == nil {
@@ -80,6 +96,7 @@ func SetBackupCreateStatus(fb *finv1.FinBackup, cephNamespace string, inProgress
 func Register() {
 	registerOnce.Do(func() {
 		metrics.Registry.MustRegister(
+			finbackupconfigInfo,
 			backupCreateStatus,
 			backupDurationSeconds,
 		)

@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	finv1 "github.com/cybozu-go/fin/api/v1"
+	"github.com/cybozu-go/fin/internal/pkg/metrics"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -66,6 +67,8 @@ func (r *FinBackupConfigReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	if err := r.Get(ctx, req.NamespacedName, &fbc); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
+
+	metrics.SetFinBackupConfigInfo(&fbc, r.managedCephClusterID)
 
 	var pvc corev1.PersistentVolumeClaim
 	if err := r.Get(ctx, types.NamespacedName{Namespace: fbc.Spec.PVCNamespace, Name: fbc.Spec.PVC}, &pvc); err != nil {
