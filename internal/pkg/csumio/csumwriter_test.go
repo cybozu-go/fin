@@ -29,12 +29,15 @@ func TestChecksumWriter(t *testing.T) {
 
 	chunkSize := 4096 // 4KiB
 	cases := []struct {
-		name string
-		data []byte
+		name      string
+		data      []byte
+		writeSize int // if > 0, write in multiple small chunks of this size
 	}{
 		{name: "chunk_aligned", data: bytes.Repeat([]byte("a"), 4096)},
 		{name: "non_aligned_one_less", data: bytes.Repeat([]byte("a"), 4095)},
 		{name: "non_aligned_one_more", data: bytes.Repeat([]byte("a"), 4097)},
+		{name: "two_chunks_aligned", data: bytes.Repeat([]byte("a"), 8192)},
+		{name: "small_writes_one_chunk", data: bytes.Repeat([]byte("a"), 4096), writeSize: 512},
 	}
 
 	for _, tc := range cases {
@@ -46,9 +49,25 @@ func TestChecksumWriter(t *testing.T) {
 			require.NoError(t, err)
 
 			// Act
-			n, err := cw.Write(tc.data)
-			require.NoError(t, err)
-			assert.Equal(t, len(tc.data), n)
+			totalWritten := 0
+			if tc.writeSize > 0 {
+				// Write in multiple small chunks
+				for offset := 0; offset < len(tc.data); offset += tc.writeSize {
+					end := offset + tc.writeSize
+					if end > len(tc.data) {
+						end = len(tc.data)
+					}
+					n, err := cw.Write(tc.data[offset:end])
+					require.NoError(t, err)
+					totalWritten += n
+				}
+			} else {
+				// Write all at once
+				n, err := cw.Write(tc.data)
+				require.NoError(t, err)
+				totalWritten = n
+			}
+			assert.Equal(t, len(tc.data), totalWritten)
 
 			err = cw.Close()
 			require.NoError(t, err)

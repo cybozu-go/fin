@@ -8,28 +8,31 @@ import (
 	"github.com/cespare/xxhash/v2"
 )
 
-const ChecksumLen = 8
+const (
+	ChecksumLen      = 8
+	minimumChunkSize = 4 * 1024 // 4 KiB
+)
 
-type ChecksumWriter struct {
-	dataFile     io.Writer
-	checksumFile io.Writer
-	chunkSize    int
-	buf          []byte
+type Writer struct {
+	dataWriter     io.Writer
+	checksumWriter io.Writer
+	chunkSize      int
+	buf            []byte
 }
 
-func NewChecksumWriter(dataFile, checksumFile io.Writer, chunkSize int) (*ChecksumWriter, error) {
-	if chunkSize <= 4*1024 && chunkSize%(4*1024) != 0 {
-		return nil, fmt.Errorf("chunksize must be at least 4 KiB and a multiple of 4 KiB when checksum verification is enabled")
+func NewChecksumWriter(dataFile, checksumFile io.Writer, chunkSize int) (*Writer, error) {
+	if chunkSize <= minimumChunkSize && chunkSize%(minimumChunkSize) != 0 {
+		return nil, fmt.Errorf("chunksize must be at least %d KiB and a multiple of %d KiB when checksum verification is enabled", minimumChunkSize/1024, minimumChunkSize/1024)
 	}
-	return &ChecksumWriter{
-		dataFile:     dataFile,
-		checksumFile: checksumFile,
-		chunkSize:    chunkSize,
-		buf:          make([]byte, 0, chunkSize),
+	return &Writer{
+		dataWriter:     dataFile,
+		checksumWriter: checksumFile,
+		chunkSize:      chunkSize,
+		buf:            make([]byte, 0, chunkSize),
 	}, nil
 }
 
-func (cw *ChecksumWriter) Write(p []byte) (int, error) {
+func (cw *Writer) Write(p []byte) (int, error) {
 	totalWritten := 0
 
 	for len(p) > 0 {
@@ -53,12 +56,12 @@ func (cw *ChecksumWriter) Write(p []byte) (int, error) {
 	return totalWritten, nil
 }
 
-func (cw *ChecksumWriter) flushChunk() error {
+func (cw *Writer) flushChunk() error {
 	if len(cw.buf) == 0 {
 		return nil
 	}
 
-	_, err := cw.dataFile.Write(cw.buf)
+	_, err := cw.dataWriter.Write(cw.buf)
 	if err != nil {
 		return fmt.Errorf("failed to write data chunk: %w", err)
 	}
@@ -67,19 +70,16 @@ func (cw *ChecksumWriter) flushChunk() error {
 	checksumBytes := make([]byte, ChecksumLen)
 	binary.LittleEndian.PutUint64(checksumBytes, checksum)
 
-	n, err := cw.checksumFile.Write(checksumBytes)
+	_, err = cw.checksumWriter.Write(checksumBytes)
 	if err != nil {
 		return fmt.Errorf("failed to write checksum: %w", err)
 	}
-	if n != ChecksumLen {
-		return fmt.Errorf("short write to checksum file: wrote %d, expected %d", n, ChecksumLen)
-	}
-
 	cw.buf = cw.buf[:0]
+
 	return nil
 }
 
-func (cw *ChecksumWriter) Close() error {
+func (cw *Writer) Close() error {
 	if len(cw.buf) > 0 {
 		if err := cw.flushChunk(); err != nil {
 			return err
