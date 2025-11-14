@@ -27,17 +27,17 @@ func TestChecksumWriter(t *testing.T) {
 	// - Data should be written correctly to data buffer
 	// - Checksums should be generated correctly for all chunks
 
-	chunkSize := 4096 // 4KiB
+	chunkSize := csumio.MinimumChunkSize
 	cases := []struct {
 		name      string
 		data      []byte
 		writeSize int // if > 0, write in multiple small chunks of this size
 	}{
-		{name: "chunk_aligned", data: bytes.Repeat([]byte("a"), 4096)},
-		{name: "non_aligned_one_less", data: bytes.Repeat([]byte("a"), 4095)},
-		{name: "non_aligned_one_more", data: bytes.Repeat([]byte("a"), 4097)},
-		{name: "two_chunks_aligned", data: bytes.Repeat([]byte("a"), 8192)},
-		{name: "small_writes_one_chunk", data: bytes.Repeat([]byte("a"), 4096), writeSize: 512},
+		{name: "chunk_aligned", data: bytes.Repeat([]byte("a"), chunkSize)},
+		{name: "non_aligned_one_less", data: bytes.Repeat([]byte("a"), chunkSize-1)},
+		{name: "non_aligned_one_more", data: bytes.Repeat([]byte("a"), chunkSize+1)},
+		{name: "two_chunks_aligned", data: bytes.Repeat([]byte("a"), chunkSize*2)},
+		{name: "small_writes_one_chunk", data: bytes.Repeat([]byte("a"), chunkSize), writeSize: 512},
 	}
 
 	for _, tc := range cases {
