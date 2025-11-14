@@ -20,7 +20,7 @@ type Writer struct {
 	buf            []byte
 }
 
-func NewChecksumWriter(dataFile, checksumFile io.Writer, chunkSize int) (*Writer, error) {
+func NewWriter(dataFile, checksumFile io.Writer, chunkSize int) (*Writer, error) {
 	if chunkSize <= MinimumChunkSize && chunkSize%(MinimumChunkSize) != 0 {
 		return nil, fmt.Errorf("chunksize must be at least %d KiB and a multiple of %d KiB when checksum verification is enabled", MinimumChunkSize/1024, MinimumChunkSize/1024)
 	}

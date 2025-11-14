@@ -11,17 +11,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestChecksumWriter(t *testing.T) {
+func TestWriter_Success(t *testing.T) {
 	// Description:
-	// Check that ChecksumWriter correctly writes data and generates checksums for various data lengths.
+	// Check that Writer correctly writes data and generates checksums for various data lengths.
 	// Tests multiple scenarios: chunk-aligned data and non-aligned data.
 	//
 	// Arrange:
 	// - Prepare test data of various lengths relative to the chunk size
-	// - Create a ChecksumWriter with buffers for data and checksums
+	// - Create a Writer with buffers for data and checksums
 	//
 	// Act:
-	// Write all data using ChecksumWriter, then close
+	// Write all data using Writer, then close
 	//
 	// Assert:
 	// - Data should be written correctly to data buffer
@@ -45,7 +45,7 @@ func TestChecksumWriter(t *testing.T) {
 			// Arrange
 			dataBuffer := &bytes.Buffer{}
 			checksumBuffer := &bytes.Buffer{}
-			cw, err := csumio.NewChecksumWriter(dataBuffer, checksumBuffer, chunkSize)
+			cw, err := csumio.NewWriter(dataBuffer, checksumBuffer, chunkSize)
 			require.NoError(t, err)
 
 			// Act
