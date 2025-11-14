@@ -10,7 +10,7 @@ import (
 
 const (
 	ChecksumLen      = 8
-	minimumChunkSize = 4 * 1024 // 4 KiB
+	MinimumChunkSize = 4 * 1024 // 4 KiB
 )
 
 type Writer struct {
@@ -21,8 +21,8 @@ type Writer struct {
 }
 
 func NewChecksumWriter(dataFile, checksumFile io.Writer, chunkSize int) (*Writer, error) {
-	if chunkSize <= minimumChunkSize && chunkSize%(minimumChunkSize) != 0 {
-		return nil, fmt.Errorf("chunksize must be at least %d KiB and a multiple of %d KiB when checksum verification is enabled", minimumChunkSize/1024, minimumChunkSize/1024)
+	if chunkSize <= MinimumChunkSize && chunkSize%(MinimumChunkSize) != 0 {
+		return nil, fmt.Errorf("chunksize must be at least %d KiB and a multiple of %d KiB when checksum verification is enabled", MinimumChunkSize/1024, MinimumChunkSize/1024)
 	}
 	return &Writer{
 		dataWriter:     dataFile,
