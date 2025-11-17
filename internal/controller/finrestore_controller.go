@@ -26,6 +26,7 @@ import (
 	finv1 "github.com/cybozu-go/fin/api/v1"
 	"github.com/cybozu-go/fin/internal/infrastructure/nlv"
 	rvol "github.com/cybozu-go/fin/internal/infrastructure/restore"
+	"github.com/cybozu-go/fin/internal/pkg/metrics"
 )
 
 const (
@@ -120,6 +121,9 @@ func (r *FinRestoreReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		logger.Error(err, "failed to get FinRestore")
 		return ctrl.Result{}, err
 	}
+
+	metrics.SetRestoreInfo(&restore, r.cephClusterNamespace, restorePVCNamespace(&restore), restorePVCName(&restore))
+	metrics.SetRestoreStatusCondition(&restore, r.cephClusterNamespace)
 
 	if restore.DeletionTimestamp.IsZero() {
 		return r.reconcileCreateOrUpdate(ctx, &restore)
@@ -254,6 +258,7 @@ func (r *FinRestoreReconciler) reconcileCreateOrUpdate(
 		logger.Error(err, "failed to update status", "status", restore.Status)
 		return ctrl.Result{}, err
 	}
+	metrics.SetRestoreStatusCondition(updatedRestore, r.cephClusterNamespace)
 
 	return ctrl.Result{}, nil
 }
@@ -590,6 +595,7 @@ func (r *FinRestoreReconciler) reconcileDelete(ctx context.Context, restore *fin
 	}
 
 	controllerutil.RemoveFinalizer(restore, FinRestoreFinalizerName)
+	metrics.DeleteRestoreMetrics(restore, r.cephClusterNamespace, restorePVCNamespace(restore), restorePVCName(restore))
 	if err = r.Update(ctx, restore); err != nil {
 		logger.Error(err, "failed to remove finalizer")
 		return ctrl.Result{}, err
