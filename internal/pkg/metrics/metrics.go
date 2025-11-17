@@ -6,6 +6,7 @@ import (
 	finv1 "github.com/cybozu-go/fin/api/v1"
 	"github.com/prometheus/client_golang/prometheus"
 	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/metrics"
 )
 
@@ -23,6 +24,9 @@ const (
 	cephNSLabel     = "ceph_namespace"
 	nodeLabel       = "node"
 	backupKindLabel = "backup_create_kind"
+	statusLabel     = "status"
+	restoreLabel    = "finrestore"
+	conditionLabel  = "condition"
 )
 
 var (
@@ -43,6 +47,33 @@ var (
 			Help:      "Current backup execution state per PVC and backup kind",
 		},
 		[]string{cephNSLabel, pvcNSLabel, pvcLabel, backupKindLabel},
+	)
+
+	restoreInfo = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: metricNamespace,
+			Name:      "restore_info",
+			Help:      "Information about FinRestore and associated PVC",
+		},
+		[]string{cephNSLabel, nsLabel, restoreLabel, pvcNSLabel, pvcLabel},
+	)
+
+	restoreStatusCondition = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: metricNamespace,
+			Name:      "restore_status_condition",
+			Help:      "Current restore status condition per FinRestore",
+		},
+		[]string{nsLabel, restoreLabel, conditionLabel, statusLabel},
+	)
+
+	restoreCreationTimeStamp = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: metricNamespace,
+			Name:      "restore_creation_timestamp",
+			Help:      "Creation timestamp of the FinRestore resource",
+		},
+		[]string{nsLabel, restoreLabel},
 	)
 
 	registerOnce sync.Once
@@ -77,11 +108,64 @@ func SetBackupCreateStatus(fb *finv1.FinBackup, cephNamespace string, inProgress
 	backupCreateStatus.WithLabelValues(cephNamespace, fb.Spec.PVCNamespace, fb.Spec.PVC, backupKindIncremental).Set(incrementalValue)
 }
 
+func SetRestoreInfo(fr *finv1.FinRestore, cephNamespace, pvcNamespace, pvcName string) {
+	if fr == nil {
+		return
+	}
+	restoreInfo.WithLabelValues(cephNamespace, fr.Namespace, fr.Name, pvcNamespace, pvcName).Set(1)
+}
+
+func SetRestoreStatusCondition(fr *finv1.FinRestore) {
+	if fr == nil {
+		return
+	}
+
+	statuses := []metav1.ConditionStatus{metav1.ConditionTrue, metav1.ConditionFalse, metav1.ConditionUnknown}
+	for _, cond := range fr.Status.Conditions {
+		for _, status := range statuses {
+			value := 0.0
+			if cond.Status == status {
+				value = 1.0
+			}
+			restoreStatusCondition.WithLabelValues(fr.Namespace, fr.Name, cond.Type, string(status)).Set(value)
+		}
+	}
+}
+
+func SetRestoreCreationTimestamp(fr *finv1.FinRestore) {
+	if fr == nil {
+		return
+	}
+	if fr.CreationTimestamp.IsZero() {
+		return
+	}
+	restoreCreationTimeStamp.WithLabelValues(fr.Namespace, fr.Name).Set(float64(fr.CreationTimestamp.Unix()))
+}
+
+func DeleteRestoreMetrics(fr *finv1.FinRestore, cephNamespace, pvcNamespace, pvcName string) {
+	if fr == nil {
+		return
+	}
+
+	restoreInfo.DeleteLabelValues(cephNamespace, fr.Namespace, fr.Name, pvcNamespace, pvcName)
+
+	statuses := []metav1.ConditionStatus{metav1.ConditionTrue, metav1.ConditionFalse, metav1.ConditionUnknown}
+	for _, cond := range fr.Status.Conditions {
+		for _, status := range statuses {
+			restoreStatusCondition.DeleteLabelValues(fr.Namespace, fr.Name, cond.Type, string(status))
+		}
+	}
+	restoreCreationTimeStamp.DeleteLabelValues(fr.Namespace, fr.Name)
+}
+
 func Register() {
 	registerOnce.Do(func() {
 		metrics.Registry.MustRegister(
 			backupCreateStatus,
 			backupDurationSeconds,
+			restoreInfo,
+			restoreStatusCondition,
+			restoreCreationTimeStamp,
 		)
 	})
 }
