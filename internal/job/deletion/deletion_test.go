@@ -204,7 +204,7 @@ func TestDelete_RawAndDiffCase_Success(t *testing.T) {
 	// Create multiple diff parts (ceil(2048/512) = 4 parts)
 	partCount := int(math.Ceil(float64(targetSnapshotSize) / float64(partSize)))
 	for i := range partCount {
-		err := rbdRepo.ExportDiff(&model.ExportDiffInput{
+		stream, err := rbdRepo.ExportDiff(&model.ExportDiffInput{
 			PoolName:       volumeInfo.PoolName,
 			ReadOffset:     uint64(i) * partSize,
 			ReadLength:     partSize,
@@ -212,8 +212,14 @@ func TestDelete_RawAndDiffCase_Success(t *testing.T) {
 			MidSnapPrefix:  "test-snap2",
 			ImageName:      volumeInfo.ImageName,
 			TargetSnapName: targetSnap.Name,
-			OutputFile:     nlvRepo.GetDiffPartPath(targetSnapshotID, i),
 		})
+		require.NoError(t, err)
+		err = backup.WriteDiffPartAndCloseStream(
+			stream,
+			nlvRepo.GetDiffPartPath(targetSnapshotID, i),
+			nlvRepo.GetDiffChecksumPath(targetSnapshotID, i),
+			testutil.DiffChecksumChunkSize,
+		)
 		require.NoError(t, err)
 	}
 	deletionJob := NewDeletion(&input.Deletion{

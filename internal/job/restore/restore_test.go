@@ -274,8 +274,9 @@ func TestRestore_ErrorBusy(t *testing.T) {
 	// Act:
 	//    Try to run the restore process.
 	restore := NewRestore(&input.Restore{
-		Repo:      finRepo,
-		ActionUID: actionUID,
+		Repo:                  finRepo,
+		ActionUID:             actionUID,
+		DiffChecksumChunkSize: testutil.DiffChecksumChunkSize,
 	})
 	err = restore.Perform()
 

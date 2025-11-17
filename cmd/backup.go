@@ -126,6 +126,7 @@ func backupJobMain() error {
 		TargetPVCUID:              pvcUID,
 		MaxPartSize:               maxPartSize,
 		ExpansionUnitSize:         expansionUnitSize,
+		DiffChecksumChunkSize:     defaultDiffChecksumChunkSize, // this could be configurable in the future
 	})
 	for {
 		err = b.Perform()

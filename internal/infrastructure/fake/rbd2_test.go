@@ -8,15 +8,18 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cybozu-go/fin/internal/infrastructure/nlv"
+	"github.com/cybozu-go/fin/internal/job/backup"
 	"github.com/cybozu-go/fin/internal/model"
 	"github.com/cybozu-go/fin/test/utils"
 	"github.com/stretchr/testify/require"
 )
 
 const (
-	poolName    = "testpool"
-	imageName   = "testimage"
-	midSnapName = "testmid-snap"
+	poolName              = "testpool"
+	imageName             = "testimage"
+	midSnapName           = "testmid-snap"
+	diffChecksumChunkSize = 2 * 1024 * 1024
 )
 
 func TestRBDRepository2_getSnapshotVolume(t *testing.T) {
@@ -214,58 +217,69 @@ func testRBDRepository2_exportDiff(t *testing.T, rbdRepo *RBDRepository2, volume
 			ReadLength:     5 * 1024,
 			FromSnap:       nil,
 			TargetSnapName: volumes[0].snapName,
-			OutputFile:     filepath.Join(workDir, "snap1-all.bin"),
 		},
 		{
 			ReadOffset:     0,
 			ReadLength:     3 * 1024,
 			FromSnap:       nil,
 			TargetSnapName: volumes[1].snapName,
-			OutputFile:     filepath.Join(workDir, "snap2-offset-0.bin"),
 		},
 		{
 			ReadOffset:     3 * 1024,
 			ReadLength:     3 * 1024,
 			FromSnap:       nil,
 			TargetSnapName: volumes[1].snapName,
-			OutputFile:     filepath.Join(workDir, "snap2-offset-3072.bin"),
 		},
 		{
 			ReadOffset:     0,
 			ReadLength:     3 * 1024,
 			FromSnap:       &volumes[1].snapName,
 			TargetSnapName: volumes[2].snapName,
-			OutputFile:     filepath.Join(workDir, "snap3-from2-offset-0.bin"),
 		},
 		{
 			ReadOffset:     3 * 1024,
 			ReadLength:     3 * 1024,
 			FromSnap:       &volumes[1].snapName,
 			TargetSnapName: volumes[2].snapName,
-			OutputFile:     filepath.Join(workDir, "snap3-from2-offset-3072.bin"),
 		},
 		{
 			ReadOffset:     6 * 1024,
 			ReadLength:     3 * 1024,
 			FromSnap:       &volumes[1].snapName,
 			TargetSnapName: volumes[2].snapName,
-			OutputFile:     filepath.Join(workDir, "snap3-from2-offset-6144.bin"),
 		},
 		{
 			ReadOffset:     0,
 			ReadLength:     8 * 1024,
 			FromSnap:       &volumes[0].snapName,
 			TargetSnapName: volumes[2].snapName,
-			OutputFile:     filepath.Join(workDir, "snap3-from1-all.bin"),
 		},
 	}
 
-	for _, e := range exportDiffs {
+	outputFiles := []string{
+		filepath.Join(workDir, "snap1-all.bin"),
+		filepath.Join(workDir, "snap2-offset-0.bin"),
+		filepath.Join(workDir, "snap2-offset-3072.bin"),
+		filepath.Join(workDir, "snap3-from2-offset-0.bin"),
+		filepath.Join(workDir, "snap3-from2-offset-3072.bin"),
+		filepath.Join(workDir, "snap3-from2-offset-6144.bin"),
+		filepath.Join(workDir, "snap3-from1-all.bin"),
+	}
+
+	for i, e := range exportDiffs {
 		e.PoolName = poolName
 		e.ImageName = imageName
 		e.MidSnapPrefix = midSnapName
-		err := rbdRepo.ExportDiff(e)
+		stream, err := rbdRepo.ExportDiff(e)
 		require.NoError(t, err, "failed to export diff for snapshot %s", e.TargetSnapName)
+
+		err = backup.WriteDiffPartAndCloseStream(
+			stream,
+			outputFiles[i],
+			nlv.ChecksumFilePath(outputFiles[i]),
+			diffChecksumChunkSize,
+		)
+		require.NoError(t, err, "failed to write diff part for snapshot %s", e.TargetSnapName)
 	}
 
 	type diffInfo struct {

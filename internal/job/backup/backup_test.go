@@ -320,7 +320,7 @@ func Test_FullBackup_Success_Resume(t *testing.T) {
 				err := cfg.nlvRepo.MakeDiffDir(cfg.fullSnapshot.ID)
 				require.NoError(t, err)
 				for i := 0; i < tc.nextStorePart; i++ {
-					err := cfg.rbdRepo.ExportDiff(&model.ExportDiffInput{
+					stream, err := cfg.rbdRepo.ExportDiff(&model.ExportDiffInput{
 						PoolName:       cfg.fullBackupInput.TargetRBDPoolName,
 						ReadOffset:     cfg.fullBackupInput.MaxPartSize * uint64(i),
 						ReadLength:     cfg.fullBackupInput.MaxPartSize,
@@ -328,8 +328,14 @@ func Test_FullBackup_Success_Resume(t *testing.T) {
 						MidSnapPrefix:  cfg.fullSnapshot.Name,
 						ImageName:      cfg.fullBackupInput.TargetRBDImageName,
 						TargetSnapName: cfg.fullSnapshot.Name,
-						OutputFile:     cfg.nlvRepo.GetDiffPartPath(cfg.fullBackupInput.TargetSnapshotID, i),
 					})
+					require.NoError(t, err)
+					err = WriteDiffPartAndCloseStream(
+						stream,
+						cfg.nlvRepo.GetDiffPartPath(cfg.fullBackupInput.TargetSnapshotID, i),
+						cfg.nlvRepo.GetDiffChecksumPath(cfg.fullBackupInput.TargetSnapshotID, i),
+						cfg.fullBackupInput.DiffChecksumChunkSize,
+					)
 					require.NoError(t, err)
 				}
 

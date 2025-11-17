@@ -8,7 +8,9 @@ import (
 	"os"
 	"os/exec"
 
+	"github.com/cybozu-go/fin/internal/infrastructure/nlv"
 	"github.com/cybozu-go/fin/internal/model"
+	"github.com/cybozu-go/fin/internal/pkg/csumio"
 )
 
 const (
@@ -49,12 +51,27 @@ func (r *RestoreVolume) ApplyDiff(diffPath string) error {
 	return errors.New("not implemented")
 }
 
-func (r *RestoreVolume) CopyChunk(rawPath string, index int, chunkSize uint64) error {
+func (r *RestoreVolume) CopyChunk(rawPath string, index int, chunkSize uint64, enableChecksumVerify bool) error {
+	if chunkSize == 0 {
+		return nil
+	}
+
 	rawFile, err := os.Open(rawPath)
 	if err != nil {
 		return fmt.Errorf("failed to open `%s`: %w", rawPath, err)
 	}
 	defer func() { _ = rawFile.Close() }()
+
+	var checksumFile *os.File
+	var checksumFilePath string
+	if enableChecksumVerify {
+		checksumFilePath = nlv.ChecksumFilePath(rawPath)
+		checksumFile, err = os.Open(checksumFilePath)
+		if err != nil {
+			return fmt.Errorf("failed to open `%s`: %w", checksumFilePath, err)
+		}
+		defer func() { _ = checksumFile.Close() }()
+	}
 
 	resVol, err := os.OpenFile(r.GetPath(), os.O_RDWR, 0600)
 	if err != nil {
@@ -62,17 +79,33 @@ func (r *RestoreVolume) CopyChunk(rawPath string, index int, chunkSize uint64) e
 	}
 	defer func() { _ = resVol.Close() }()
 
-	if _, err := rawFile.Seek(int64(index)*int64(chunkSize), io.SeekStart); err != nil {
+	offset := int64(index) * int64(chunkSize)
+	if _, err := rawFile.Seek(offset, io.SeekStart); err != nil {
 		return fmt.Errorf("failed to seek `%s` to %d: %w",
-			rawPath, int64(index)*int64(chunkSize), err)
+			rawPath, offset, err)
 	}
-	if _, err = resVol.Seek(int64(index)*int64(chunkSize), io.SeekStart); err != nil {
+	if _, err = resVol.Seek(offset, io.SeekStart); err != nil {
 		return fmt.Errorf("failed to seek `%s` to %d: %w",
-			r.GetPath(), int64(index)*int64(chunkSize), err)
+			r.GetPath(), offset, err)
+	}
+
+	var reader io.Reader = rawFile
+	if checksumFile != nil {
+		checksumOffset := int64(index) * int64(csumio.ChecksumLen)
+		if _, err := checksumFile.Seek(checksumOffset, io.SeekStart); err != nil {
+			return fmt.Errorf("failed to seek `%s` to %d: %w",
+				checksumFilePath, checksumOffset, err)
+		}
+		checksumReader := io.LimitReader(checksumFile, csumio.ChecksumLen)
+		cr, err := csumio.NewReader(reader, checksumReader, int(chunkSize), enableChecksumVerify)
+		if err != nil {
+			return fmt.Errorf("failed to create checksum reader: %w", err)
+		}
+		reader = cr
 	}
 
 	buf := make([]byte, chunkSize)
-	rn, err := rawFile.Read(buf)
+	rn, err := reader.Read(buf)
 	if err != nil {
 		if errors.Is(err, io.EOF) {
 			return nil

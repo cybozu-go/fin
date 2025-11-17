@@ -84,14 +84,15 @@ func restoreJobMain() error {
 	}
 
 	r := restore.NewRestore(&input.Restore{
-		Repo:                finRepo,
-		RBDRepo:             rbdRepo,
-		NodeLocalVolumeRepo: nlvRepo,
-		ActionUID:           actionUID,
-		TargetSnapshotID:    targetSnapshotID,
-		TargetPVCUID:        pvcUID,
-		RawImageChunkSize:   rawImageChunkSize,
-		RestoreVol:          restoreVol,
+		Repo:                  finRepo,
+		RBDRepo:               rbdRepo,
+		NodeLocalVolumeRepo:   nlvRepo,
+		ActionUID:             actionUID,
+		TargetSnapshotID:      targetSnapshotID,
+		TargetPVCUID:          pvcUID,
+		RawImageChunkSize:     rawImageChunkSize,
+		DiffChecksumChunkSize: defaultDiffChecksumChunkSize,
+		RestoreVol:            restoreVol,
 	})
 
 	for {
