@@ -25,6 +25,7 @@ import (
 	finv1 "github.com/cybozu-go/fin/api/v1"
 	"github.com/cybozu-go/fin/internal/controller"
 	"github.com/cybozu-go/fin/internal/infrastructure/ceph"
+	finmetrics "github.com/cybozu-go/fin/internal/pkg/metrics"
 	webhookv1 "github.com/cybozu-go/fin/internal/webhook/v1"
 	//+kubebuilder:scaffold:imports
 )
@@ -157,6 +158,9 @@ func controllerMain(args []string) error {
 	if err != nil {
 		return fmt.Errorf("unable to start manager: %w", err)
 	}
+
+	// Register custom metrics
+	finmetrics.Register()
 
 	snapRepo := ceph.NewRBDRepository()
 	maxPartSize, err := resource.ParseQuantity(os.Getenv("MAX_PART_SIZE"))

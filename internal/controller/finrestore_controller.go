@@ -523,10 +523,7 @@ func (r *FinRestoreReconciler) reconcileDelete(ctx context.Context, restore *fin
 	logger := log.FromContext(ctx)
 
 	var restoreJob batchv1.Job
-	if err := r.Get(ctx, client.ObjectKey{
-		Namespace: r.cephClusterNamespace,
-		Name:      restoreJobName(restore),
-	}, &restoreJob); err != nil {
+	if err := r.Get(ctx, client.ObjectKey{Namespace: r.cephClusterNamespace, Name: restoreJobName(restore)}, &restoreJob); err != nil {
 		if !k8serrors.IsNotFound(err) {
 			logger.Error(err, "failed to get restore job")
 			return ctrl.Result{}, err
