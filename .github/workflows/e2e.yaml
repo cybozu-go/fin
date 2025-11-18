@@ -49,16 +49,21 @@ jobs:
 
       - name: Setup minikube with kvm2 driver
         run: |
+            df -h /
             make -C test/e2e launch-minikube
 
       - name: Load image into minikube
         run: |
+            df -h /
             make -C test/e2e image-tar-load
 
       - name: Launch rook-ceph and deploy components
         run: |
+          df -h /
           make -C test/e2e launch-rook-ceph
+          df -h /
           make -C test/e2e setup-fin-volume
+          df -h /
           make -C test/e2e setup-components
 
       - name: Run e2e tests

@@ -137,10 +137,23 @@ image-build:
 
 .PHONY: image-tar-load
 image-tar-load:
+	df -h /
 	$(MAKE) -C ../.. docker-save
+	df -h /
 	$(MINIKUBE) image load ../../${IMG_TAR}
 	$(MINIKUBE) ssh -- docker images || true
+	for node in $$($(MINIKUBE) node list | awk '{print $$1}'); do \
+		df -h /
+		$(MINIKUBE) ssh -n "$(node)" -- "sudo df -h / /mnt/vda1"; \
+		$(MINIKUBE) ssh -n "$(node)" -- "sudo ls -lh /var/lib/minikube/images/${IMG_TAR}"; \
+		$(MINIKUBE) ssh -n "$(node)" -- "sudo rm -f  /var/lib/minikube/images/${IMG_TAR}"; \
+		$(MINIKUBE) ssh -n "$(node)" -- "sudo ls -lh /var/lib/minikube/images/${IMG_TAR}"; \
+		$(MINIKUBE) ssh -n "$(node)" -- "sudo df -h / /mnt/vda1"; \
+		df -h /
+	done
 	rm ../../${IMG_TAR} || true
+	df -h /
+	
 
 .PHONY: setup-components
 setup-components:
