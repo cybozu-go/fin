@@ -124,6 +124,7 @@ func (r *FinRestoreReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 
 	metrics.SetRestoreInfo(&restore, r.cephClusterNamespace, restorePVCNamespace(&restore), restorePVCName(&restore))
 	metrics.SetRestoreStatusCondition(&restore, r.cephClusterNamespace)
+	metrics.SetRestoreCreationTimestamp(&restore, r.cephClusterNamespace)
 
 	if restore.DeletionTimestamp.IsZero() {
 		return r.reconcileCreateOrUpdate(ctx, &restore)

@@ -65,6 +65,15 @@ var (
 		[]string{cephNSLabel, nsLabel, restoreLabel, conditionLabel, statusLabel},
 	)
 
+	restoreCreationTimeStamp = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: metricNamespace,
+			Name:      "restore_creation_timestamp",
+			Help:      "Creation timestamp of the FinRestore resource",
+		},
+		[]string{cephNSLabel, nsLabel, restoreLabel},
+	)
+
 	registerOnce sync.Once
 )
 
@@ -116,15 +125,19 @@ func SetRestoreStatusCondition(fr *finv1.FinRestore, cephNamespace string) {
 			if cond.Status == status {
 				value = 1.0
 			}
-			restoreStatusCondition.WithLabelValues(
-				cephNamespace,
-				fr.Namespace,
-				fr.Name,
-				string(cond.Type),
-				string(status),
-			).Set(value)
+			restoreStatusCondition.WithLabelValues(cephNamespace, fr.Namespace, fr.Name, string(cond.Type), string(status)).Set(value)
 		}
 	}
+}
+
+func SetRestoreCreationTimestamp(fr *finv1.FinRestore, cephNamespace string) {
+	if fr == nil {
+		return
+	}
+	if fr.CreationTimestamp.IsZero() {
+		return
+	}
+	restoreCreationTimeStamp.WithLabelValues(cephNamespace, fr.Namespace, fr.Name).Set(float64(fr.CreationTimestamp.Unix()))
 }
 
 func DeleteRestoreMetrics(fr *finv1.FinRestore, cephNamespace, pvcNamespace, pvcName string) {
@@ -146,6 +159,7 @@ func DeleteRestoreMetrics(fr *finv1.FinRestore, cephNamespace, pvcNamespace, pvc
 			)
 		}
 	}
+	restoreCreationTimeStamp.DeleteLabelValues(cephNamespace, fr.Namespace, fr.Name)
 }
 
 func Register() {
@@ -155,6 +169,7 @@ func Register() {
 			backupDurationSeconds,
 			restoreInfo,
 			restoreStatusCondition,
+			restoreCreationTimeStamp,
 		)
 	})
 }
