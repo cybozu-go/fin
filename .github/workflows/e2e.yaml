@@ -32,7 +32,7 @@ jobs:
       - name: Free up disk space
         run: |
           df -h /
-          sudo rm -rf /usr/share/dotnet /usr/local/.ghcup
+          sudo rm -rf /usr/share/dotnet /usr/local/.ghcup /usr/local/lib/android
           df -h /
 
       - uses: ./.github/actions/set-up-kvm-for-e2e-tests
@@ -54,6 +54,8 @@ jobs:
       - name: Load image into minikube
         run: |
             make -C test/e2e image-tar-load
+            # Display disk usage after loading image
+            df -h /
 
       - name: Launch rook-ceph and deploy components
         run: |
