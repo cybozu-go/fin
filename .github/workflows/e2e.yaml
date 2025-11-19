@@ -13,6 +13,10 @@ on:
     branches:
       - "main"
 
+env:
+  # Github runner's extra disk is mounted on the /mnt directory.
+  MINIKUBE_HOME: "/mnt/"
+
 jobs:
   build:
     runs-on: "ubuntu-22.04"
@@ -34,6 +38,10 @@ jobs:
           df -h /
           sudo rm -rf /usr/share/dotnet /usr/local/.ghcup
           df -h /
+
+      - name: Make /mnt accessible from `runner` user
+        run: |
+          sudo chown runner:runner /mnt
 
       - uses: ./.github/actions/set-up-kvm-for-e2e-tests
       - name: Set up Docker Buildx
