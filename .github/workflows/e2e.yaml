@@ -13,6 +13,10 @@ on:
     branches:
       - "main"
 
+env:
+  # Github runner's extra disk is mounted on the /mnt directory.
+  MINIKUBE_HOME: "/mnt/"
+
 jobs:
   build:
     runs-on: "ubuntu-22.04"
@@ -29,11 +33,22 @@ jobs:
         with:
           go-version-file: "go.mod"
 
+      - name: df just before freeing up disk space
+        run: |
+          df -h
+
       - name: Free up disk space
         run: |
           df -h /
           sudo rm -rf /usr/share/dotnet /usr/local/.ghcup
           df -h /
+
+      - name: Make /mnt accessible from `runner` user
+        run: |
+          sudo chown runner:runner /mnt
+      - name: df just after freeing up disk space
+        run: |
+          df -h
 
       - uses: ./.github/actions/set-up-kvm-for-e2e-tests
       - name: Set up Docker Buildx
@@ -47,21 +62,21 @@ jobs:
           cache-from: type=gha,scope=${{ github.ref_name }}
           cache-to: type=gha,mode=max,scope=${{ github.ref_name }}
 
+      - name: df before setup minikube
+        run: |
+          df -h
+
       - name: Setup minikube with kvm2 driver
         run: |
             make -C test/e2e launch-minikube
 
+      - name: df after setup minikube
+        run: |
+          df -h
       - name: Load image into minikube
         run: |
             make -C test/e2e image-tar-load
 
-      - name: Launch rook-ceph and deploy components
+      - name: df after loading image into minikube
         run: |
-          make -C test/e2e launch-rook-ceph
-          make -C test/e2e setup-fin-volume
-          make -C test/e2e setup-components
-
-      - name: Run e2e tests
-        run: |
-          make -C test/e2e do-test \
-          GINKGO_FLAGS=--label-filter='${{ matrix.label-filter }}'
+          df -h
