@@ -46,7 +46,7 @@ var (
 			Help:      "Duration of backup operations in seconds",
 			Buckets:   []float64{600, 1800, 3600, 10800, 21600, 43200, 86400, 172800}, // 10m, 30m, 1h, 3h, 6h, 12h, 24h, 48h
 		},
-		[]string{pvcLabel, pvcNSLabel, cephNSLabel},
+		[]string{cephNSLabel, pvcLabel, pvcNSLabel},
 	)
 
 	backupCreateStatus = prometheus.NewGaugeVec(
@@ -105,7 +105,7 @@ func SetBackupDurationSeconds(fb *finv1.FinBackup, untilCondition, cephNamespace
 		return
 	}
 	duration := end.LastTransitionTime.Sub(start.LastTransitionTime.Time)
-	backupDurationSeconds.WithLabelValues(fb.Spec.PVC, fb.Spec.PVCNamespace, cephNamespace).Observe(float64(duration.Seconds()))
+	backupDurationSeconds.WithLabelValues(cephNamespace, fb.Spec.PVC, fb.Spec.PVCNamespace).Observe(float64(duration.Seconds()))
 }
 
 func SetBackupCreateStatus(fb *finv1.FinBackup, cephNamespace string, inProgress, fullBackup bool) {
@@ -122,6 +122,15 @@ func SetBackupCreateStatus(fb *finv1.FinBackup, cephNamespace string, inProgress
 	}
 	backupCreateStatus.WithLabelValues(cephNamespace, fb.Spec.PVCNamespace, fb.Spec.PVC, backupKindFull).Set(fullValue)
 	backupCreateStatus.WithLabelValues(cephNamespace, fb.Spec.PVCNamespace, fb.Spec.PVC, backupKindIncremental).Set(incrementalValue)
+}
+
+func DeleteBackupMetrics(fb *finv1.FinBackup, cephNamespace string) {
+	if fb == nil {
+		return
+	}
+	backupCreateStatus.DeleteLabelValues(cephNamespace, fb.Spec.PVCNamespace, fb.Spec.PVC, backupKindFull)
+	backupCreateStatus.DeleteLabelValues(cephNamespace, fb.Spec.PVCNamespace, fb.Spec.PVC, backupKindIncremental)
+	backupDurationSeconds.DeleteLabelValues(cephNamespace, fb.Spec.PVC, fb.Spec.PVCNamespace)
 }
 
 func SetRestoreInfo(fr *finv1.FinRestore, cephNamespace, pvcNamespace, pvcName string) {

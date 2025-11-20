@@ -532,6 +532,8 @@ func (r *FinBackupReconciler) reconcileDelete(
 		logger.Error(err, "failed to remove finalizer")
 		return ctrl.Result{}, err
 	}
+	metrics.DeleteBackupMetrics(backup, r.cephClusterNamespace)
+
 	/*
 		The following Get loop is to make the deletion
 		of the resource or the non-existence of the finalizer
