@@ -311,13 +311,9 @@ func (r *FinBackupReconciler) reconcileBackup(
 		return ctrl.Result{}, err
 	}
 
-	if !meta.IsStatusConditionTrue(backup.Status.Conditions, finv1.BackupConditionBackupInProgress) {
+	if backup.Status.BackupStartTime.IsZero() {
 		updatedBackup := backup.DeepCopy()
-		meta.SetStatusCondition(&updatedBackup.Status.Conditions, metav1.Condition{
-			Type:   finv1.BackupConditionBackupInProgress,
-			Reason: "BackupJobCreated",
-			Status: metav1.ConditionTrue,
-		})
+		updatedBackup.Status.BackupStartTime = metav1.Now()
 		err = r.Status().Patch(ctx, updatedBackup, client.MergeFrom(&backup))
 		if err != nil {
 			logger.Error(err, "failed to update FinBackup status")

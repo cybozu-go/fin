@@ -48,10 +48,12 @@ type FinBackupStatus struct {
 
 	// 'conditions' specifies current backup conditions
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
+
+	// 'backupStartTime' specifies the timestamp of when the backup started
+	BackupStartTime metav1.Time `json:"backupStartTime,omitempty"`
 }
 
 const (
-	BackupConditionBackupInProgress    = "BackupInProgress"
 	BackupConditionStoredToNode        = "StoredToNode"
 	BackupConditionVerified            = "Verified"
 	BackupConditionVerificationSkipped = "VerificationSkipped"

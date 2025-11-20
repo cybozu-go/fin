@@ -73,6 +73,11 @@ spec:
           status:
             description: FinBackupStatus defines the observed state of FinBackup
             properties:
+              backupStartTime:
+                description: '''backupStartTime'' specifies the timestamp of when
+                  the backup started'
+                format: date-time
+                type: string
               conditions:
                 description: '''conditions'' specifies current backup conditions'
                 items:
