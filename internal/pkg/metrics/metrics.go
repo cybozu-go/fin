@@ -99,12 +99,12 @@ func SetBackupDurationSeconds(fb *finv1.FinBackup, untilCondition, cephNamespace
 	if fb == nil {
 		return
 	}
-	start := meta.FindStatusCondition(fb.Status.Conditions, finv1.BackupConditionBackupInProgress)
+	start := fb.Status.BackupStartTime
 	end := meta.FindStatusCondition(fb.Status.Conditions, untilCondition)
-	if start == nil || end == nil {
+	if start.IsZero() || end == nil {
 		return
 	}
-	duration := end.LastTransitionTime.Sub(start.LastTransitionTime.Time)
+	duration := end.LastTransitionTime.Sub(start.Time)
 	backupDurationSeconds.WithLabelValues(cephNamespace, fb.Spec.PVC, fb.Spec.PVCNamespace).Observe(float64(duration.Seconds()))
 }
 
