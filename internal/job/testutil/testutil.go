@@ -24,7 +24,10 @@ import (
 	"k8s.io/client-go/kubernetes"
 )
 
-const SnapshotTimeFormat = "Mon Jan  2 15:04:05 2006"
+const (
+	SnapshotTimeFormat    = "Mon Jan  2 15:04:05 2006"
+	DiffChecksumChunkSize = 2 * 1024 * 1024 // 2 MiB
+)
 
 // NewBackupInput creates a BackupInput for testing using a fake clientSet and a fake.VolumeInfo.
 func NewBackupInput(
@@ -54,6 +57,7 @@ func NewBackupInput(
 		TargetPVCUID:              string(pvc.UID),
 		MaxPartSize:               maxPartSize,
 		ExpansionUnitSize:         utils.RawImgExpansionUnitSize,
+		DiffChecksumChunkSize:     DiffChecksumChunkSize,
 	}
 }
 
@@ -62,13 +66,14 @@ func NewRestoreInputTemplate(bi *input.Backup,
 	return &input.Restore{
 		Repo: bi.Repo,
 		// Restore module uses only ApplyDiffToBlockDevice, so fake is not needed here.
-		RBDRepo:             ceph.NewRBDRepository(),
-		NodeLocalVolumeRepo: bi.NodeLocalVolumeRepo,
-		RestoreVol:          rVol,
-		RawImageChunkSize:   chunkSize,
-		TargetSnapshotID:    snapID,
-		ActionUID:           bi.ActionUID,
-		TargetPVCUID:        bi.TargetPVCUID,
+		RBDRepo:               ceph.NewRBDRepository(),
+		NodeLocalVolumeRepo:   bi.NodeLocalVolumeRepo,
+		RestoreVol:            rVol,
+		RawImageChunkSize:     chunkSize,
+		TargetSnapshotID:      snapID,
+		ActionUID:             bi.ActionUID,
+		TargetPVCUID:          bi.TargetPVCUID,
+		DiffChecksumChunkSize: DiffChecksumChunkSize,
 	}
 }
 

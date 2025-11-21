@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"math/rand/v2"
-	"os"
 	"slices"
 	"time"
 
@@ -136,34 +135,34 @@ func (r *RBDRepository2) RemoveSnapshot(poolName, imageName, snapName string) er
 	return nil
 }
 
-func (r *RBDRepository2) ExportDiff(input *model.ExportDiffInput) error {
+func (r *RBDRepository2) ExportDiff(input *model.ExportDiffInput) (io.ReadCloser, error) {
 	if input.PoolName != r.poolName {
-		return fmt.Errorf("pool name mismatch: expected %s, got %s", r.poolName, input.PoolName)
+		return nil, fmt.Errorf("pool name mismatch: expected %s, got %s", r.poolName, input.PoolName)
 	}
 	if input.ImageName != r.imageName {
-		return fmt.Errorf("image name mismatch: expected %s, got %s", r.imageName, input.ImageName)
+		return nil, fmt.Errorf("image name mismatch: expected %s, got %s", r.imageName, input.ImageName)
 	}
 	// This limitation exists to simplify the algorithm.
 	if input.ReadOffset%r.divideSize != 0 || input.ReadLength%r.divideSize != 0 {
-		return fmt.Errorf("read offset and length must be multiples of divide size (%d)", r.divideSize)
+		return nil, fmt.Errorf("read offset and length must be multiples of divide size (%d)", r.divideSize)
 	}
 
 	fromSnapshotID := 0
 	if input.FromSnap != nil {
 		fromSnapshot, err := r.getSnapshotByName(*input.FromSnap)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		fromSnapshotID = fromSnapshot.ID
 	}
 	targetSnapshot, err := r.getSnapshotByName(input.TargetSnapName)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	volume, volumeMap, err := r.getSnapshotVolume(targetSnapshot.ID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	fromSnapName := ""
@@ -206,29 +205,26 @@ func (r *RBDRepository2) ExportDiff(input *model.ExportDiffInput) error {
 		diffgenerator.WithRecords(records),
 	)
 	if err != nil {
-		return fmt.Errorf("failed to create diff reader: %w", err)
+		return nil, fmt.Errorf("failed to create diff reader: %w", err)
 	}
 
-	// Write the diff to the output file
-	f, err := os.Create(input.OutputFile)
-	if err != nil {
-		return fmt.Errorf("failed to create output file %s: %w", input.OutputFile, err)
-	}
-	defer func() {
-		if err := f.Close(); err != nil {
-			panic(fmt.Sprintf("failed to close output file %s: %v", input.OutputFile, err))
-		}
-	}()
-	_, err = io.Copy(f, diffReader)
-	if err != nil {
-		return fmt.Errorf("failed to write diff to output file %s: %w", input.OutputFile, err)
-	}
-
-	return nil
+	return io.NopCloser(diffReader), nil
 }
 
-func (r *RBDRepository2) ApplyDiffToBlockDevice(blockDevicePath, diffFilePath, fromSnapName, toSnapName string) error {
-	return ceph.NewRBDRepository().ApplyDiffToBlockDevice(blockDevicePath, diffFilePath, fromSnapName, toSnapName)
+func (r *RBDRepository2) ApplyDiffToBlockDevice(
+	blockDevicePath,
+	diffFilePath,
+	fromSnapName,
+	toSnapName string,
+	diffChecksumChunkSize uint64,
+) error {
+	return ceph.NewRBDRepository().ApplyDiffToBlockDevice(
+		blockDevicePath,
+		diffFilePath,
+		fromSnapName,
+		toSnapName,
+		diffChecksumChunkSize,
+	)
 }
 
 func (r *RBDRepository2) ApplyDiffToRawImage(

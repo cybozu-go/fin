@@ -20,6 +20,8 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+const diffChecksumChunkSize = 2 * 1024 * 1024
+
 func TestReadDiffHeaderAndMetadata_full_success(t *testing.T) {
 	header, err := readDiffHeaderAndMetadata(bufio.NewReader(openGZFile(t, "testdata/full.gz")))
 	assert.NoError(t, err)
@@ -1098,6 +1100,7 @@ func TestApplyDiffToBlockDevice_error_MissingDiffFileName(t *testing.T) {
 		"non existing file",
 		"fromSnap",
 		"toSnap",
+		diffChecksumChunkSize,
 	)
 
 	// Assert

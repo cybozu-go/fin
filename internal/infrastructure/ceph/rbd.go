@@ -2,16 +2,23 @@ package ceph
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
 	"os"
+	"os/exec"
+	"slices"
 	"strconv"
+	"strings"
 	"unsafe"
 
+	"github.com/cybozu-go/fin/internal/infrastructure/nlv"
 	"github.com/cybozu-go/fin/internal/model"
+	"github.com/cybozu-go/fin/internal/pkg/csumio"
 	"github.com/cybozu-go/fin/internal/pkg/zeroreader"
 	"golang.org/x/sys/unix"
 )
@@ -65,7 +72,7 @@ func (r *RBDRepository) ListSnapshots(poolName, imageName string) ([]*model.RBDS
 	return snapshots, nil
 }
 
-func (r *RBDRepository) ExportDiff(input *model.ExportDiffInput) error {
+func (r *RBDRepository) ExportDiff(input *model.ExportDiffInput) (io.ReadCloser, error) {
 	args := []string{
 		"export-diff",
 		"-p", input.PoolName,
@@ -76,23 +83,69 @@ func (r *RBDRepository) ExportDiff(input *model.ExportDiffInput) error {
 		args = append(args, "--from-snap", *input.FromSnap)
 	}
 	args = append(args, "--mid-snap-prefix", input.MidSnapPrefix,
-		fmt.Sprintf("%s@%s", input.ImageName, input.TargetSnapName), input.OutputFile)
+		fmt.Sprintf("%s@%s", input.ImageName, input.TargetSnapName), "-")
 
-	_, stderr, err := runRBDCommand(args...)
+	cmd := exec.Command("rbd", args...)
+	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return fmt.Errorf("failed to export diff: %w, stderr: %s", err, string(stderr))
+		return nil, fmt.Errorf("failed to get export-diff stdout: %w", err)
+	}
+	stderrBuf := &bytes.Buffer{}
+	cmd.Stderr = stderrBuf
+	if err := cmd.Start(); err != nil {
+		_ = stdout.Close()
+		return nil, fmt.Errorf("failed to start export-diff: %w, stderr: %s", err, stderrBuf.String())
+	}
+	return &commandReadCloser{
+		ReadCloser: stdout,
+		cmd:        cmd,
+		op:         strings.Join(slices.Concat([]string{"rbd"}, cmd.Args), " "),
+		stderr:     stderrBuf,
+	}, nil
+}
+
+type commandReadCloser struct {
+	io.ReadCloser
+	cmd    *exec.Cmd
+	op     string
+	stderr *bytes.Buffer
+}
+
+func (c *commandReadCloser) Close() error {
+	if c.ReadCloser != nil {
+		if _, err := io.Copy(io.Discard, c.ReadCloser); err != nil && !errors.Is(err, io.EOF) {
+			return fmt.Errorf("failed to drain %s output: %w", c.op, err)
+		}
+	}
+	err := c.cmd.Wait()
+	if err != nil {
+		return fmt.Errorf("failed to %s: %w, stderr: %s", c.op, err, c.stderr.String())
 	}
 	return nil
 }
 
-func (r *RBDRepository) ApplyDiffToBlockDevice(blockDevicePath, diffFilePath, fromSnapName, toSnapName string) error {
+func (r *RBDRepository) ApplyDiffToBlockDevice(blockDevicePath, diffFilePath, fromSnapName, toSnapName string, diffChecksumChunkSize uint64) error {
 	diffFile, err := os.Open(diffFilePath)
 	if err != nil {
 		return fmt.Errorf("failed to open diff file: %s: %w", diffFilePath, err)
 	}
 	defer func() { _ = diffFile.Close() }()
 
-	return applyDiffToBlockDevice(blockDevicePath, diffFile, fromSnapName, toSnapName)
+	diffChecksumPath := nlv.ChecksumFilePath(diffFilePath)
+	diffChecksumFile, err := os.Open(diffChecksumPath)
+	if err != nil {
+		return fmt.Errorf("failed to open checksum file: %s: %w", diffChecksumPath, err)
+	}
+	defer func() { _ = diffChecksumFile.Close() }()
+	diffReader, err := csumio.NewReader(diffFile, diffChecksumFile, int(diffChecksumChunkSize), false)
+	if err != nil {
+		return fmt.Errorf("failed to create checksum reader: %w", err)
+	}
+
+	if err := applyDiffToBlockDevice(blockDevicePath, diffReader, fromSnapName, toSnapName); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (r *RBDRepository) ApplyDiffToRawImage(

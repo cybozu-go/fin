@@ -12,26 +12,28 @@ import (
 )
 
 type Restore struct {
-	repo                model.FinRepository
-	rbdRepo             model.RBDRepository
-	nodeLocalVolumeRepo model.NodeLocalVolumeRepository
-	restoreVol          model.RestoreVolume
-	actionUID           string
-	targetSnapshotID    int
-	rawImageChunkSize   uint64
-	targetPVCUID        string
+	repo                  model.FinRepository
+	rbdRepo               model.RBDRepository
+	nodeLocalVolumeRepo   model.NodeLocalVolumeRepository
+	restoreVol            model.RestoreVolume
+	actionUID             string
+	targetSnapshotID      int
+	rawImageChunkSize     uint64
+	diffChecksumChunkSize uint64
+	targetPVCUID          string
 }
 
 func NewRestore(in *input.Restore) *Restore {
 	return &Restore{
-		repo:                in.Repo,
-		rbdRepo:             in.RBDRepo,
-		nodeLocalVolumeRepo: in.NodeLocalVolumeRepo,
-		restoreVol:          in.RestoreVol,
-		actionUID:           in.ActionUID,
-		targetSnapshotID:    in.TargetSnapshotID,
-		rawImageChunkSize:   in.RawImageChunkSize,
-		targetPVCUID:        in.TargetPVCUID,
+		repo:                  in.Repo,
+		rbdRepo:               in.RBDRepo,
+		nodeLocalVolumeRepo:   in.NodeLocalVolumeRepo,
+		restoreVol:            in.RestoreVol,
+		actionUID:             in.ActionUID,
+		targetSnapshotID:      in.TargetSnapshotID,
+		rawImageChunkSize:     in.RawImageChunkSize,
+		diffChecksumChunkSize: in.DiffChecksumChunkSize,
+		targetPVCUID:          in.TargetPVCUID,
 	}
 }
 
@@ -146,7 +148,7 @@ func (r *Restore) loopCopyChunk(privateData *restorePrivateData, rawImageSize ui
 	for i := privateData.NextRawImageChunk; i < chunkCount; i++ {
 		rawImagePath := r.nodeLocalVolumeRepo.GetRawImagePath()
 		restoreVolPath := r.restoreVol.GetPath()
-		if err := r.restoreVol.CopyChunk(rawImagePath, i, r.rawImageChunkSize); err != nil {
+		if err := r.restoreVol.CopyChunk(rawImagePath, i, r.rawImageChunkSize, false); err != nil {
 			return fmt.Errorf("failed to copy chunk %d: %w", i, err)
 		}
 
@@ -194,9 +196,14 @@ func (r *Restore) loopApplyDiff(
 			job.CalcSnapshotNamesWithOffset(source.SnapName, target.SnapName, i, partCount, target.PartSize)
 		diffPartPath := r.nodeLocalVolumeRepo.GetDiffPartPath(target.SnapID, i)
 		restoreVolPath := r.restoreVol.GetPath()
-		if err := r.rbdRepo.ApplyDiffToBlockDevice(restoreVolPath,
-			diffPartPath, sourceSnapshotName, targetSnapshotName); err != nil {
-			return fmt.Errorf("failed to apply diff: %w", err)
+		if err := r.rbdRepo.ApplyDiffToBlockDevice(
+			restoreVolPath,
+			diffPartPath,
+			sourceSnapshotName,
+			targetSnapshotName,
+			r.diffChecksumChunkSize,
+		); err != nil {
+			return fmt.Errorf("failed to apply diff part %d: %w", i, err)
 		}
 
 		if err := job.SyncData(restoreVolPath); err != nil {

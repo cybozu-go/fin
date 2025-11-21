@@ -2,6 +2,7 @@ package model
 
 import (
 	"errors"
+	"io"
 	"strings"
 	"time"
 
@@ -84,7 +85,6 @@ type ExportDiffInput struct {
 	MidSnapPrefix  string
 	ImageName      string
 	TargetSnapName string
-	OutputFile     string
 }
 
 type RBDSnapshotCreateRepository interface {
@@ -114,10 +114,10 @@ type RBDRepository interface {
 
 	// ExportDiff exports the difference between the source snapshot and the target snapshot.
 	// If the source snapshot is not specified, it exports the difference from the empty image.
-	ExportDiff(input *ExportDiffInput) error
+	ExportDiff(input *ExportDiffInput) (io.ReadCloser, error)
 
 	// ApplyDiffToBlockDevice applies the difference from the diff file to the block device.
-	ApplyDiffToBlockDevice(blockDevicePath, diffFilePath, fromSnapName, toSnapName string) error
+	ApplyDiffToBlockDevice(blockDevicePath, diffFilePath, fromSnapName, toSnapName string, diffChecksumChunkSize uint64) error
 
 	// ApplyDiffToRawImage applies the difference from the diff file to the raw image file.
 	ApplyDiffToRawImage(rawImageFilePath, diffFilePath, fromSnapName, toSnapName string, expansionUnitSize uint64) error
@@ -129,8 +129,14 @@ type NodeLocalVolumeRepository interface {
 	// GetDiffPartPath returns the diff part path.
 	GetDiffPartPath(snapshotID, partIndex int) string
 
+	// GetDiffChecksumPath returns the checksum path for a diff part.
+	GetDiffChecksumPath(snapshotID, partIndex int) string
+
 	// GetRawImagePath returns the path of raw.img
 	GetRawImagePath() string
+
+	// GetRawImageChecksumPath returns the checksum path for raw.img
+	GetRawImageChecksumPath() string
 
 	// GetInstantVerifyImagePath returns the path of instant_verify.img
 	GetInstantVerifyImagePath() string

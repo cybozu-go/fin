@@ -21,6 +21,7 @@ const (
 	imageFilePath              = "raw.img"
 	instantVerifyImageFilePath = "instant_verify.img"
 	VolumePath                 = "/volume"
+	checksumSuffix             = ".csum"
 )
 
 type NodeLocalVolumeRepository struct {
@@ -63,8 +64,16 @@ func (r *NodeLocalVolumeRepository) GetDiffPartPath(snapshotID, partIndex int) s
 	return filepath.Join(r.root.Name(), getDiffRelPath(snapshotID), fmt.Sprintf("part-%d", partIndex))
 }
 
+func (r *NodeLocalVolumeRepository) GetDiffChecksumPath(snapshotID, partIndex int) string {
+	return ChecksumFilePath(r.GetDiffPartPath(snapshotID, partIndex))
+}
+
 func (r *NodeLocalVolumeRepository) GetRawImagePath() string {
 	return filepath.Join(r.root.Name(), imageFilePath)
+}
+
+func (r *NodeLocalVolumeRepository) GetRawImageChecksumPath() string {
+	return ChecksumFilePath(r.GetRawImagePath())
 }
 
 func (r *NodeLocalVolumeRepository) GetInstantVerifyImagePath() string {
@@ -250,4 +259,7 @@ func (r *NodeLocalVolumeRepository) ReflinkRawImageToInstantVerifyImage() error 
 		return fmt.Errorf("failed to reflink: %w: %s", err, output)
 	}
 	return nil
+}
+func ChecksumFilePath(path string) string {
+	return path + checksumSuffix
 }
