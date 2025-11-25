@@ -77,13 +77,14 @@ func deletionJobMain() error {
 	}
 
 	d := deletion.NewDeletion(&input.Deletion{
-		Repo:                finRepo,
-		RBDRepo:             rbdRepo,
-		NodeLocalVolumeRepo: nlvRepo,
-		ActionUID:           actionUID,
-		TargetSnapshotID:    targetSnapshotID,
-		TargetPVCUID:        pvcUID,
-		ExpansionUnitSize:   expansionUnitSize,
+		Repo:                 finRepo,
+		RBDRepo:              rbdRepo,
+		NodeLocalVolumeRepo:  nlvRepo,
+		ActionUID:            actionUID,
+		TargetSnapshotID:     targetSnapshotID,
+		TargetPVCUID:         pvcUID,
+		ExpansionUnitSize:    expansionUnitSize,
+		EnableChecksumVerify: defaultEnableChecksumVerify, // this could be configurable in the future
 	})
 	for {
 		err = d.Perform()

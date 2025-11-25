@@ -38,7 +38,9 @@ type Backup struct {
 	targetPVCUID              string
 	maxPartSize               uint64
 	expansionUnitSize         uint64
+	rawChecksumChunkSize      uint64
 	diffChecksumChunkSize     uint64
+	enableChecksumVerify      bool
 }
 
 func NewBackup(in *input.Backup) *Backup {
@@ -57,7 +59,9 @@ func NewBackup(in *input.Backup) *Backup {
 		targetPVCUID:              in.TargetPVCUID,
 		maxPartSize:               in.MaxPartSize,
 		expansionUnitSize:         in.ExpansionUnitSize,
+		rawChecksumChunkSize:      in.RawChecksumChunkSize,
 		diffChecksumChunkSize:     in.DiffChecksumChunkSize,
+		enableChecksumVerify:      in.EnableChecksumVerify,
 	}
 }
 
@@ -132,11 +136,13 @@ func (b *Backup) doBackup() error {
 		return fmt.Errorf("failed to loop export diff: %w", err)
 	}
 
+	if err = b.validateChecksumChunkSizeConsistency(); err != nil {
+		return fmt.Errorf("failed to validate checksum chunk sizes: %w", err)
+	}
+
 	if err := b.declareStoringCompleted(targetSnapshot); err != nil {
 		return fmt.Errorf("failed to declare storing finished: %w", err)
 	}
-
-	// FIXME: We need to verify the backup.
 
 	if privateData.Mode == modeFull {
 		if err := b.loopApplyDiff(privateData, targetSnapshot); err != nil {
@@ -283,6 +289,24 @@ func (b *Backup) loopExportDiff(
 	return nil
 }
 
+func (b *Backup) validateChecksumChunkSizeConsistency() error {
+	metadata, err := job.GetBackupMetadata(b.repo)
+	if err != nil {
+		if errors.Is(err, model.ErrNotFound) {
+			return nil
+		}
+		return fmt.Errorf("failed to get backup metadata: %w", err)
+	}
+
+	if (metadata.RawChecksumChunkSize == 0 &&
+		metadata.DiffChecksumChunkSize == 0) ||
+		(metadata.RawChecksumChunkSize == int64(b.rawChecksumChunkSize) &&
+			metadata.DiffChecksumChunkSize == int64(b.diffChecksumChunkSize)) {
+		return nil
+	}
+	return fmt.Errorf("checksum chunk size does not match existing backup data")
+}
+
 func (b *Backup) declareStoringCompleted(targetSnapshot *model.RBDSnapshot) error {
 	var metadata *job.BackupMetadata
 	metadata, err := job.GetBackupMetadata(b.repo)
@@ -295,6 +319,8 @@ func (b *Backup) declareStoringCompleted(targetSnapshot *model.RBDSnapshot) erro
 
 	metadata.PVCUID = b.targetPVCUID
 	metadata.RBDImageName = b.targetRBDImageName
+	metadata.RawChecksumChunkSize = int64(b.rawChecksumChunkSize)
+	metadata.DiffChecksumChunkSize = int64(b.diffChecksumChunkSize)
 	if len(metadata.Diff) == 0 {
 		metadata.Diff = []*job.BackupMetadataEntry{{}}
 	}
@@ -320,6 +346,9 @@ func (b *Backup) loopApplyDiff(privateData *backupPrivateData, targetSnapshot *m
 			sourceSnapshotName,
 			targetSnapshotName,
 			b.expansionUnitSize,
+			b.rawChecksumChunkSize,
+			b.diffChecksumChunkSize,
+			b.enableChecksumVerify,
 		); err != nil {
 			return fmt.Errorf("failed to apply diff: %w", err)
 		}

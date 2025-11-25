@@ -706,6 +706,9 @@ func TestApplyDiffToRawImage_error_MissingDiffFileName(t *testing.T) {
 		"",
 		"toSnap",
 		4*1024,
+		rawChecksumChunkSize,
+		diffChecksumChunkSize,
+		true,
 	)
 
 	// Assert

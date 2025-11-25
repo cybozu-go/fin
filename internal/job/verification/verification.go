@@ -17,24 +17,26 @@ import (
 )
 
 type Verification struct {
-	repo              model.FinRepository
-	nlvRepo           model.NodeLocalVolumeRepository
-	rbdRepo           model.RBDRepository
-	actionUID         string
-	targetSnapshotID  int
-	targetPVCUID      string
-	expansionUnitSize uint64
+	repo                 model.FinRepository
+	nlvRepo              model.NodeLocalVolumeRepository
+	rbdRepo              model.RBDRepository
+	actionUID            string
+	targetSnapshotID     int
+	targetPVCUID         string
+	expansionUnitSize    uint64
+	enableChecksumVerify bool
 }
 
 func NewVerification(in *input.Verification) *Verification {
 	return &Verification{
-		repo:              in.Repo,
-		nlvRepo:           in.NLVRepo,
-		rbdRepo:           in.RBDRepo,
-		actionUID:         in.ActionUID,
-		targetSnapshotID:  in.TargetSnapshotID,
-		targetPVCUID:      in.TargetPVCUID,
-		expansionUnitSize: in.ExpansionUnitSize,
+		repo:                 in.Repo,
+		nlvRepo:              in.NLVRepo,
+		rbdRepo:              in.RBDRepo,
+		actionUID:            in.ActionUID,
+		targetSnapshotID:     in.TargetSnapshotID,
+		targetPVCUID:         in.TargetPVCUID,
+		expansionUnitSize:    in.ExpansionUnitSize,
+		enableChecksumVerify: in.EnableChecksumVerify,
 	}
 }
 
@@ -63,14 +65,14 @@ func (v *Verification) Perform() error {
 
 func (v *Verification) doVerify() error {
 	slog.Info("getting backup metadata")
-	raw, diff0, pvcUID, err := v.getBackupMetadata()
+	metadata, err := v.getBackupMetadata()
 	if err != nil {
 		return fmt.Errorf("failed to check backup metadata: %w", err)
 	}
-	if pvcUID != v.targetPVCUID {
-		return fmt.Errorf("backup target PVC UID %q does not match the current target PVC UID %q", pvcUID, v.targetPVCUID)
+	if metadata.pvcUID != v.targetPVCUID {
+		return fmt.Errorf("backup target PVC UID %q does not match the current target PVC UID %q", metadata.pvcUID, v.targetPVCUID)
 	}
-	if raw == nil {
+	if metadata.raw == nil {
 		return fmt.Errorf("no raw found in backup metadata")
 	}
 
@@ -106,10 +108,10 @@ func (v *Verification) doVerify() error {
 		}
 
 		if !instantVerifyImageExists {
-			if diff0 == nil {
+			if metadata.diff0 == nil {
 				return fmt.Errorf("no diff found in backup metadata")
 			}
-			if nextDiffPart != calculateMaxPartNumber(diff0) {
+			if nextDiffPart != calculateMaxPartNumber(metadata.diff0) {
 				return fmt.Errorf("instant_verify.img is missing")
 			}
 			// already applied all diffs and cleaned up instant_verify.img, so
@@ -119,9 +121,9 @@ func (v *Verification) doVerify() error {
 		}
 	}
 
-	if diff0 != nil {
+	if metadata.diff0 != nil {
 		slog.Info("applying diffs", slog.Int("nextDiffPart", nextDiffPart))
-		if err := v.loopApplyDiff(nextDiffPart, raw, diff0); err != nil {
+		if err := v.loopApplyDiff(nextDiffPart, metadata.raw, metadata.diff0, metadata.rawChecksumChunkSize, metadata.diffChecksumChunkSize); err != nil {
 			return fmt.Errorf("failed to apply diff: %w", err)
 		}
 	}
@@ -139,20 +141,29 @@ func (v *Verification) doVerify() error {
 	return nil
 }
 
-func (v *Verification) getBackupMetadata() (
-	*job.BackupMetadataEntry,
-	*job.BackupMetadataEntry,
-	string,
-	error,
-) {
+type verificationBackupMetadata struct {
+	raw                   *job.BackupMetadataEntry
+	diff0                 *job.BackupMetadataEntry
+	pvcUID                string
+	rawChecksumChunkSize  uint64
+	diffChecksumChunkSize uint64
+}
+
+func (v *Verification) getBackupMetadata() (*verificationBackupMetadata, error) {
 	metadata, err := job.GetBackupMetadata(v.repo)
 	if err != nil {
-		return nil, nil, "", err
+		return nil, err
 	}
-	if len(metadata.Diff) == 0 {
-		return metadata.Raw, nil, metadata.PVCUID, nil
+	backupMetadata := &verificationBackupMetadata{
+		raw:                   metadata.Raw,
+		pvcUID:                metadata.PVCUID,
+		rawChecksumChunkSize:  uint64(metadata.RawChecksumChunkSize),
+		diffChecksumChunkSize: uint64(metadata.DiffChecksumChunkSize),
 	}
-	return metadata.Raw, metadata.Diff[0], metadata.PVCUID, nil
+	if len(metadata.Diff) > 0 {
+		backupMetadata.diff0 = metadata.Diff[0]
+	}
+	return backupMetadata, nil
 }
 
 func (v *Verification) checkPVCVolumeModeIsBlock() (bool, error) {
@@ -223,6 +234,7 @@ func (v *Verification) loopApplyDiff(
 	nextDiffPart int,
 	raw *job.BackupMetadataEntry,
 	diff0 *job.BackupMetadataEntry,
+	rawChecksumChunkSize, diffChecksumChunkSize uint64,
 ) error {
 	partCount := calculateMaxPartNumber(diff0)
 	for i := nextDiffPart; i < partCount; i++ {
@@ -236,6 +248,9 @@ func (v *Verification) loopApplyDiff(
 			sourceSnapshotName,
 			targetSnapshotName,
 			v.expansionUnitSize,
+			rawChecksumChunkSize,
+			diffChecksumChunkSize,
+			v.enableChecksumVerify,
 		); err != nil {
 			return fmt.Errorf("failed to apply diff: %w", err)
 		}

@@ -23,6 +23,9 @@ type Reader struct {
 }
 
 func NewReader(dataFile, checksumFile io.Reader, chunkSize int, enableChecksumVerify bool) (*Reader, error) {
+	if chunkSize <= 0 {
+		return nil, fmt.Errorf("chunkSize must be greater than 0")
+	}
 	if enableChecksumVerify {
 		if chunkSize < 4*1024 && chunkSize%(4*1024) != 0 {
 			return nil, fmt.Errorf("chunksize must be at least 4 KiB and a multiple of 4 KiB when checksum verification is enabled")

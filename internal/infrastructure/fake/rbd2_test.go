@@ -19,7 +19,8 @@ const (
 	poolName              = "testpool"
 	imageName             = "testimage"
 	midSnapName           = "testmid-snap"
-	diffChecksumChunkSize = 2 * 1024 * 1024
+	rawChecksumChunkSize  = 64 * 1024       // 64 KiB
+	diffChecksumChunkSize = 2 * 1024 * 1024 // 2 MiB
 )
 
 func TestRBDRepository2_getSnapshotVolume(t *testing.T) {
@@ -380,7 +381,14 @@ func testRBDRepository2_exportDiff(t *testing.T, rbdRepo *RBDRepository2, volume
 			for _, diff := range tc.diffsToApply {
 				diffFilePath := filepath.Join(workDir, diff.file)
 				err := rbdRepo.ApplyDiffToRawImage(
-					rawImagePath, diffFilePath, diff.fromSnapName, diff.toSnapName, utils.RawImgExpansionUnitSize,
+					rawImagePath,
+					diffFilePath,
+					diff.fromSnapName,
+					diff.toSnapName,
+					utils.RawImgExpansionUnitSize,
+					rawChecksumChunkSize,
+					diffChecksumChunkSize,
+					false,
 				)
 				require.NoError(t, err, "failed to apply diff %s", diff.file)
 			}

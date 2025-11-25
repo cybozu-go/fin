@@ -176,8 +176,10 @@ func TestDelete_RawAndDiffCase_Success(t *testing.T) {
 
 	// Set the backup metadata
 	metadata := &job.BackupMetadata{
-		PVCUID:       targetPVCUID,
-		RBDImageName: volumeInfo.ImageName,
+		PVCUID:                targetPVCUID,
+		RBDImageName:          volumeInfo.ImageName,
+		RawChecksumChunkSize:  int64(testutil.RawChecksumChunkSize),
+		DiffChecksumChunkSize: int64(testutil.DiffChecksumChunkSize),
 		Raw: &job.BackupMetadataEntry{
 			SnapID:    previousSnapshotID,
 			SnapName:  previousSnapshotName,

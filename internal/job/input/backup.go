@@ -20,5 +20,7 @@ type Backup struct {
 	TargetPVCUID              string
 	MaxPartSize               uint64
 	ExpansionUnitSize         uint64
+	RawChecksumChunkSize      uint64
 	DiffChecksumChunkSize     uint64
+	EnableChecksumVerify      bool
 }

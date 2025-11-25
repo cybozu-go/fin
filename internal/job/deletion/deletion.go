@@ -16,24 +16,26 @@ import (
 var ErrInvalidSnapshotOrder = errors.New("raw.snapID is smaller than target snapshot ID")
 
 type Deletion struct {
-	repo                model.FinRepository
-	rbdRepo             model.RBDRepository
-	nodeLocalVolumeRepo model.NodeLocalVolumeRepository
-	actionUID           string
-	targetSnapshotID    int
-	targetPVCUID        string
-	expansionUnitSize   uint64
+	repo                 model.FinRepository
+	rbdRepo              model.RBDRepository
+	nodeLocalVolumeRepo  model.NodeLocalVolumeRepository
+	actionUID            string
+	targetSnapshotID     int
+	targetPVCUID         string
+	expansionUnitSize    uint64
+	enableChecksumVerify bool
 }
 
 func NewDeletion(in *input.Deletion) *Deletion {
 	return &Deletion{
-		repo:                in.Repo,
-		rbdRepo:             in.RBDRepo,
-		nodeLocalVolumeRepo: in.NodeLocalVolumeRepo,
-		actionUID:           in.ActionUID,
-		targetSnapshotID:    in.TargetSnapshotID,
-		targetPVCUID:        in.TargetPVCUID,
-		expansionUnitSize:   in.ExpansionUnitSize,
+		repo:                 in.Repo,
+		rbdRepo:              in.RBDRepo,
+		nodeLocalVolumeRepo:  in.NodeLocalVolumeRepo,
+		actionUID:            in.ActionUID,
+		targetSnapshotID:     in.TargetSnapshotID,
+		targetPVCUID:         in.TargetPVCUID,
+		expansionUnitSize:    in.ExpansionUnitSize,
+		enableChecksumVerify: in.EnableChecksumVerify,
 	}
 }
 
@@ -96,7 +98,7 @@ func (d *Deletion) doDeletion() error {
 		return nil
 	}
 
-	if err := d.applyDiffToRawImage(metadata.Raw, metadata.Diff[0]); err != nil {
+	if err := d.applyDiffToRawImage(metadata.Raw, metadata.Diff[0], metadata.RawChecksumChunkSize, metadata.DiffChecksumChunkSize); err != nil {
 		return fmt.Errorf("failed to apply diff to the raw image: %w", err)
 	}
 	metadata.Raw = metadata.Diff[0]
@@ -104,8 +106,8 @@ func (d *Deletion) doDeletion() error {
 	return job.SetBackupMetadata(d.repo, metadata)
 }
 
-func (d *Deletion) applyDiffToRawImage(raw, diff *job.BackupMetadataEntry) error {
-	if err := d.applyAllDiffParts(raw, diff); err != nil {
+func (d *Deletion) applyDiffToRawImage(raw, diff *job.BackupMetadataEntry, rawChecksumChunkSize, diffChecksumChunkSize int64) error {
+	if err := d.applyAllDiffParts(raw, diff, rawChecksumChunkSize, diffChecksumChunkSize); err != nil {
 		return fmt.Errorf("failed to apply diff parts: %w", err)
 	}
 	err := d.nodeLocalVolumeRepo.RemoveDiffDirRecursively(diff.SnapID)
@@ -115,7 +117,12 @@ func (d *Deletion) applyDiffToRawImage(raw, diff *job.BackupMetadataEntry) error
 	return nil
 }
 
-func (d *Deletion) applyAllDiffParts(raw, diff *job.BackupMetadataEntry) error {
+func (d *Deletion) applyAllDiffParts(
+	raw,
+	diff *job.BackupMetadataEntry,
+	rawChecksumChunkSize,
+	diffChecksumChunkSize int64,
+) error {
 	privateData, err := getDeletePrivateData(d.repo, d.actionUID)
 	if err != nil {
 		return fmt.Errorf("failed to get private data: %w", err)
@@ -133,6 +140,9 @@ func (d *Deletion) applyAllDiffParts(raw, diff *job.BackupMetadataEntry) error {
 			sourceSnapshotName,
 			targetSnapshotName,
 			d.expansionUnitSize,
+			uint64(rawChecksumChunkSize),
+			uint64(diffChecksumChunkSize),
+			d.enableChecksumVerify,
 		); err != nil {
 			return fmt.Errorf("failed to apply diff part %d: %w", i, err)
 		}

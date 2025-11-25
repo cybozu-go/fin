@@ -14,7 +14,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-const defaultDiffChecksumChunkSize = 2 * 1024 * 1024 // 2 MiB
+const (
+	defaultRawChecksumChunkSize  = 64 * 1024       // 64 KiB
+	defaultDiffChecksumChunkSize = 2 * 1024 * 1024 // 2 MiB
+	defaultEnableChecksumVerify  = true
+)
 
 func getClientSet() (*kubernetes.Clientset, error) {
 	config, err := rest.InClusterConfig()

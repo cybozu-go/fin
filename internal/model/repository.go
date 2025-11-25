@@ -120,7 +120,7 @@ type RBDRepository interface {
 	ApplyDiffToBlockDevice(blockDevicePath, diffFilePath, fromSnapName, toSnapName string, diffChecksumChunkSize uint64) error
 
 	// ApplyDiffToRawImage applies the difference from the diff file to the raw image file.
-	ApplyDiffToRawImage(rawImageFilePath, diffFilePath, fromSnapName, toSnapName string, expansionUnitSize uint64) error
+	ApplyDiffToRawImage(rawImageFilePath, diffFilePath, fromSnapName, toSnapName string, expansionUnitSize, rawChecksumChunkSize, diffChecksumChunkSize uint64, enableChecksumVerify bool) error
 }
 
 // NodeLocalVolumeRepository is an interface for directly managing a filesystem

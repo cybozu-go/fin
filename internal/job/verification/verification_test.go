@@ -39,11 +39,11 @@ type countingRBDRepository2 struct {
 var _ model.RBDRepository = (*countingRBDRepository2)(nil)
 
 func (r *countingRBDRepository2) ApplyDiffToRawImage(
-	rawImagePath, diffPath, sourceSnapshotName, targetSnapshotName string, expansionUnitSize uint64,
+	rawImagePath, diffPath, sourceSnapshotName, targetSnapshotName string, expansionUnitSize uint64, rawChecksumChunkSize, diffChecksumChunkSize uint64, enableChecksumVerify bool,
 ) error {
 	r.applyDiffCount++
 	return r.RBDRepository2.ApplyDiffToRawImage(
-		rawImagePath, diffPath, sourceSnapshotName, targetSnapshotName, expansionUnitSize,
+		rawImagePath, diffPath, sourceSnapshotName, targetSnapshotName, expansionUnitSize, rawChecksumChunkSize, diffChecksumChunkSize, enableChecksumVerify,
 	)
 }
 
@@ -348,6 +348,9 @@ func TestVerification_Success_Resume(t *testing.T) {
 		sourceSnapshotName,
 		targetSnapshotName,
 		utils.RawImgExpansionUnitSize,
+		cfg.fullBackupInput.RawChecksumChunkSize,
+		cfg.fullBackupInput.DiffChecksumChunkSize,
+		cfg.incrementalBackupInput.EnableChecksumVerify,
 	)
 	require.NoError(t, err)
 	err = cfg.finRepo.UpdateActionPrivateData(cfg.incrementalBackupInput.ActionUID, []byte("{\"nextDiffPart\":1}"))
