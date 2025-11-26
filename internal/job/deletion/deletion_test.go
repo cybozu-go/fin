@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cybozu-go/fin/internal/infrastructure/ceph"
 	"github.com/cybozu-go/fin/internal/infrastructure/fake"
 	"github.com/cybozu-go/fin/internal/job"
 	"github.com/cybozu-go/fin/internal/job/backup"
@@ -641,4 +642,111 @@ func TestDelete_InvalidState_RawEmpty_Error(t *testing.T) {
 
 	// Assert
 	assert.ErrorContains(t, err, "invalid state: raw is empty")
+}
+
+func TestDelete_RawAndDiffCase_Error_ChecksumMismatch(t *testing.T) {
+	// Description:
+	//   Deletion fails when diff file is corrupted and checksum verification detects the mismatch.
+	//
+	// Arrange:
+	//   - Backup metadata with raw (snapID=1) and diff (snapID=2).
+	//   - Diff part file exists but is corrupted.
+	//   - Enable checksum verification.
+	//
+	// Act:
+	//   Perform deletion.
+	//
+	// Assert:
+	//   Check that deletion fails with checksum mismatch error.
+
+	// Arrange
+	actionUID := uuid.New().String()
+	partSize := uint64(1024)
+
+	previousSnapshotID := 1
+	targetSnapshotID := 2
+	targetPVCUID := uuid.New().String()
+
+	nlvRepo, finRepo, _ := testutil.CreateNLVAndFinRepoForTest(t)
+	_, volumeInfo := fake.NewStorage()
+	rbdRepo := fake.NewRBDRepository2(volumeInfo.PoolName, volumeInfo.ImageName)
+
+	prevSnap, _, err := rbdRepo.CreateSnapshotWithRandomData("test-snap1", 1024)
+	require.NoError(t, err)
+	targetSnap, _, err := rbdRepo.CreateSnapshotWithRandomData("test-snap2", 2048)
+	require.NoError(t, err)
+
+	// Set backup metadata
+	metadata := &job.BackupMetadata{
+		PVCUID:                targetPVCUID,
+		RBDImageName:          volumeInfo.ImageName,
+		RawChecksumChunkSize:  int64(testutil.RawChecksumChunkSize),
+		DiffChecksumChunkSize: int64(testutil.DiffChecksumChunkSize),
+		Raw: &job.BackupMetadataEntry{
+			SnapID:    previousSnapshotID,
+			SnapName:  prevSnap.Name,
+			SnapSize:  prevSnap.Size,
+			PartSize:  partSize,
+			CreatedAt: prevSnap.Timestamp.Time,
+		},
+		Diff: []*job.BackupMetadataEntry{
+			{
+				SnapID:    targetSnapshotID,
+				SnapName:  targetSnap.Name,
+				SnapSize:  targetSnap.Size,
+				PartSize:  partSize,
+				CreatedAt: targetSnap.Timestamp.Time,
+			},
+		},
+	}
+	require.NoError(t, job.SetBackupMetadata(finRepo, metadata))
+
+	// Create raw.img and diff files
+	file, err := os.Create(nlvRepo.GetRawImagePath())
+	require.NoError(t, err)
+	require.NoError(t, file.Close())
+
+	require.NoError(t, nlvRepo.MakeDiffDir(targetSnapshotID))
+	stream, err := rbdRepo.ExportDiff(&model.ExportDiffInput{
+		PoolName:       volumeInfo.PoolName,
+		ReadOffset:     0,
+		ReadLength:     partSize,
+		FromSnap:       &prevSnap.Name,
+		MidSnapPrefix:  targetSnap.Name,
+		ImageName:      volumeInfo.ImageName,
+		TargetSnapName: targetSnap.Name,
+	})
+	require.NoError(t, err)
+	err = backup.WriteDiffPartAndCloseStream(
+		stream,
+		nlvRepo.GetDiffPartPath(targetSnapshotID, 0),
+		nlvRepo.GetDiffChecksumPath(targetSnapshotID, 0),
+		testutil.DiffChecksumChunkSize,
+	)
+	require.NoError(t, err)
+
+	// Corrupt the diff file
+	diffPartPath := nlvRepo.GetDiffPartPath(targetSnapshotID, 0)
+	diffData, err := os.ReadFile(diffPartPath)
+	require.NoError(t, err)
+	diffData[len(diffData)/2] ^= 0xFF
+	err = os.WriteFile(diffPartPath, diffData, 0644)
+	require.NoError(t, err)
+
+	// Act
+	deletionJob := NewDeletion(&input.Deletion{
+		Repo:                 finRepo,
+		RBDRepo:              rbdRepo,
+		NodeLocalVolumeRepo:  nlvRepo,
+		ActionUID:            actionUID,
+		TargetSnapshotID:     previousSnapshotID,
+		TargetPVCUID:         targetPVCUID,
+		ExpansionUnitSize:    utils.RawImgExpansionUnitSize,
+		EnableChecksumVerify: true,
+	})
+	err = deletionJob.Perform()
+
+	// Assert
+	assert.Error(t, err)
+	assert.ErrorIs(t, err, ceph.ErrChecksumMismatch)
 }

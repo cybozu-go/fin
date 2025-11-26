@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/cybozu-go/fin/internal/infrastructure/ceph"
 	"github.com/cybozu-go/fin/internal/infrastructure/db"
 	"github.com/cybozu-go/fin/internal/infrastructure/fake"
 	"github.com/cybozu-go/fin/internal/infrastructure/nlv"
@@ -484,4 +485,57 @@ func TestVerification_Error_FsckCommandNotFound(t *testing.T) {
 	// Assert
 	require.Error(t, err)
 	require.NotErrorIs(t, err, ErrFsckFailed)
+}
+
+func TestVerification_Error_ChecksumMismatch(t *testing.T) {
+	// Description:
+	//   Verification fails when diff file is corrupted and checksum verification detects the mismatch.
+	//
+	// Arrange:
+	//   - Create full backup and incremental backup.
+	//   - Corrupt the diff file.
+	//   - Enable checksum verification.
+	//
+	// Act:
+	//   Perform verification.
+	//
+	// Assert:
+	//   Check that verification fails with checksum mismatch error.
+
+	// Arrange
+	cfg := setup(t, &setupInput{})
+
+	fullBackup := backup.NewBackup(cfg.fullBackupInput)
+	err := fullBackup.Perform()
+	require.NoError(t, err)
+
+	cfg.incrementalBackupInput.EnableChecksumVerify = true
+	incrementalBackup := backup.NewBackup(cfg.incrementalBackupInput)
+	err = incrementalBackup.Perform()
+	require.NoError(t, err)
+
+	// Corrupt the diff file
+	diffPartPath := cfg.nlvRepo.GetDiffPartPath(cfg.incrementalSnapshot.ID, 0)
+	diffData, err := os.ReadFile(diffPartPath)
+	require.NoError(t, err)
+	diffData[len(diffData)/2] ^= 0xFF
+	err = os.WriteFile(diffPartPath, diffData, 0644)
+	require.NoError(t, err)
+
+	// Act
+	verification := NewVerification(&input.Verification{
+		Repo:                 cfg.finRepo,
+		RBDRepo:              cfg.rbdRepo,
+		NLVRepo:              cfg.nlvRepo,
+		ActionUID:            cfg.incrementalBackupInput.ActionUID,
+		TargetSnapshotID:     cfg.incrementalBackupInput.TargetSnapshotID,
+		TargetPVCUID:         cfg.incrementalBackupInput.TargetPVCUID,
+		ExpansionUnitSize:    cfg.incrementalBackupInput.ExpansionUnitSize,
+		EnableChecksumVerify: true,
+	})
+	err = verification.Perform()
+
+	// Assert
+	assert.Error(t, err)
+	assert.ErrorIs(t, err, ceph.ErrChecksumMismatch)
 }
