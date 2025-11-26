@@ -67,6 +67,9 @@ spec:
         image: controller:latest
         imagePullPolicy: IfNotPresent
         name: manager
+        ports:
+        - name: metrics
+          containerPort: 8080
         env:
         - name: POD_NAMESPACE
           valueFrom:
