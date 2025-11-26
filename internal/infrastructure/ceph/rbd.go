@@ -30,15 +30,6 @@ var (
 	csumZero                 uint64
 )
 
-const (
-	defaultRawChecksumChunkSize  uint64 = 64 * 1024       // 64 KiB
-	defaultDiffChecksumChunkSize uint64 = 2 * 1024 * 1024 // 2MiB
-)
-
-func init() {
-	csumZero = calcZeroChecksum(defaultRawChecksumChunkSize)
-}
-
 type RBDRepository struct {
 }
 
@@ -240,6 +231,8 @@ func applyDiffToRawImage(
 	rawChecksumChunkSize uint64,
 	enableChecksumVerify bool,
 ) error {
+	csumZero = calcZeroChecksum(rawChecksumChunkSize)
+
 	diffFileReader, _, err := openDiffDataRecords(diffFile, fromSnapName, toSnapName)
 	if err != nil {
 		return fmt.Errorf("failed to open diff data records: %w", err)
