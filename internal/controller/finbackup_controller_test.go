@@ -1125,6 +1125,13 @@ var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
 			err := reconciler.deleteOldFinBackup(ctx, finBackup, pvc)
 			Expect(err).ShouldNot(HaveOccurred())
 
+			By("verifying the AutoDeleteCompleted condition is true")
+			Eventually(func(g Gomega, ctx SpecContext) {
+				var updated finv1.FinBackup
+				g.Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(finBackup), &updated)).To(Succeed())
+				g.Expect(updated.IsAutoDeleteCompleted()).To(BeTrue())
+			}, "5s", "1s").WithContext(ctx).Should(Succeed())
+
 			By("verifying the older FinBackup is deleted")
 			var fb finv1.FinBackup
 			err = k8sClient.Get(ctx, client.ObjectKeyFromObject(oldFinBackup), &fb)

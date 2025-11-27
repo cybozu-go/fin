@@ -173,11 +173,16 @@ func (r *FinBackupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return verifResult, err
 	}
 
-	if err := r.deleteOldFinBackup(ctx, &backup, pvc); err != nil {
-		logger.Error(err, "failed to perform automatic deletion of FinBackup")
-		return ctrl.Result{}, err
+	if backup.IsVerifiedFalse() || backup.IsVerificationSkipped() {
+		return ctrl.Result{}, nil
 	}
 
+	if backup.IsVerifiedTrue() && !backup.IsAutoDeleteCompleted() {
+		if err := r.deleteOldFinBackup(ctx, &backup, pvc); err != nil {
+			logger.Error(err, "failed to perform automatic deletion of FinBackup")
+			return ctrl.Result{}, err
+		}
+	}
 	return ctrl.Result{}, nil
 }
 
@@ -235,8 +240,15 @@ func (r *FinBackupReconciler) deleteOldFinBackup(
 		return fmt.Errorf("failed to delete FinBackup %s/%s: %w", targetFB.Namespace, targetFB.Name, err)
 	}
 
-	logger.Info("initiated deletion for older FinBackup managed by FinBackupConfig",
-		"target", client.ObjectKeyFromObject(targetFB))
+	_, err = patchFinBackupCondition(ctx, r.Client, backup, metav1.Condition{
+		Type:    finv1.BackupConditionAutoDeleteCompleted,
+		Status:  metav1.ConditionTrue,
+		Reason:  "AutoDeletionComplete",
+		Message: "Automatic deletion of older FinBackups completed",
+	})
+	if err != nil {
+		return fmt.Errorf("failed to set auto deletion condition: %w", err)
+	}
 	return nil
 }
 
