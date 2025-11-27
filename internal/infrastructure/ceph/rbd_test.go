@@ -138,13 +138,13 @@ func TestApplyDiffToRawImage_success(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, int64(16*1024*1024), fileInfo.Size())
 	utils.CompareReaders(t, openFileResized(t, gotFilePath, 100*1024*1024), openGZFile(t, "testdata/full-raw-img.gz"))
-	verifyChecksum(t, gotFilePath, rawChecksumChunkSize)
+	verifyChecksum(t, gotFilePath)
 
 	diffReader := openGZFileWithChecksum(t, "testdata/diff.gz", "testdata/diff.csum", diffChecksumChunkSize, true, false)
 	err = applyDiffToRawImage(gotFilePath, diffReader, "snap20", "snap21", expansionUnitSize, rawChecksumChunkSize, true)
 	assert.NoError(t, err)
 	utils.CompareReaders(t, openFileResized(t, gotFilePath, 100*1024*1024), openGZFile(t, "testdata/diff-raw-img.gz"))
-	verifyChecksum(t, gotFilePath, rawChecksumChunkSize)
+	verifyChecksum(t, gotFilePath)
 }
 
 func TestApplyDiffToBlockDevice_success(t *testing.T) {
@@ -691,7 +691,7 @@ func TestApplyDiffToRawImage_success_RecoverAfterInterruptedCreation(t *testing.
 	require.NoError(t, err)
 	assert.Equal(t, []byte("ABCD"), rawData[:4])
 
-	verifyChecksum(t, rawImageFilePath, rawChecksumChunkSize)
+	verifyChecksum(t, rawImageFilePath)
 }
 
 func TestApplyDiffToRawImage_success_RecoverAfterInterruptedExpansion(t *testing.T) {
@@ -760,7 +760,7 @@ func TestApplyDiffToRawImage_success_RecoverAfterInterruptedExpansion(t *testing
 	require.NoError(t, err)
 	assert.Equal(t, []byte("WXYZ"), rawData[expansionUnitSize:int(expansionUnitSize)+4])
 
-	verifyChecksum(t, rawImageFilePath, rawChecksumChunkSize)
+	verifyChecksum(t, rawImageFilePath)
 }
 
 func TestApplyDiffToRawImage_error_InvalidHeader(t *testing.T) {
@@ -1678,7 +1678,7 @@ func createRawChecksumFileForTest(t *testing.T, rawImagePath string) {
 	require.NoError(t, err)
 }
 
-func verifyChecksum(t *testing.T, rawImagePath string, chunkSize uint64) {
+func verifyChecksum(t *testing.T, rawImagePath string) {
 	t.Helper()
 
 	rawFile := openFile(t, rawImagePath)
@@ -1688,7 +1688,7 @@ func verifyChecksum(t *testing.T, rawImagePath string, chunkSize uint64) {
 	checksumFile := openFile(t, checksumFilePath)
 	defer func() { _ = checksumFile.Close() }()
 
-	reader, err := csumio.NewReader(rawFile, checksumFile, int(chunkSize), true)
+	reader, err := csumio.NewReader(rawFile, checksumFile, int(rawChecksumChunkSize), true)
 	require.NoError(t, err)
 
 	_, err = io.Copy(io.Discard, reader)
