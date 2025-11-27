@@ -57,6 +57,7 @@ const (
 	BackupConditionStoredToNode        = "StoredToNode"
 	BackupConditionVerified            = "Verified"
 	BackupConditionVerificationSkipped = "VerificationSkipped"
+	BackupConditionAutoDeleteCompleted = "AutoDeleteCompleted"
 )
 
 //+kubebuilder:object:root=true
@@ -100,6 +101,10 @@ func (fb *FinBackup) IsVerifiedFalse() bool {
 
 func (fb *FinBackup) IsVerificationSkipped() bool {
 	return meta.IsStatusConditionTrue(fb.Status.Conditions, BackupConditionVerificationSkipped)
+}
+
+func (fb *FinBackup) IsAutoDeleteCompleted() bool {
+	return meta.IsStatusConditionTrue(fb.Status.Conditions, BackupConditionAutoDeleteCompleted)
 }
 
 func (fb *FinBackup) CanBeRestored(allowUnverified bool) bool {
