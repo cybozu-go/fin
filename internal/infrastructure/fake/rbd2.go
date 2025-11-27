@@ -228,10 +228,24 @@ func (r *RBDRepository2) ApplyDiffToBlockDevice(
 }
 
 func (r *RBDRepository2) ApplyDiffToRawImage(
-	rawImageFilePath, diffFilePath, fromSnapName, toSnapName string, expansionUnitSize uint64,
+	rawImageFilePath,
+	diffFilePath,
+	fromSnapName,
+	toSnapName string,
+	expansionUnitSize,
+	rawChecksumChunkSize,
+	diffChecksumChunkSize uint64,
+	enableChecksumVerify bool,
 ) error {
 	return ceph.NewRBDRepository().ApplyDiffToRawImage(
-		rawImageFilePath, diffFilePath, fromSnapName, toSnapName, expansionUnitSize,
+		rawImageFilePath,
+		diffFilePath,
+		fromSnapName,
+		toSnapName,
+		expansionUnitSize,
+		rawChecksumChunkSize,
+		diffChecksumChunkSize,
+		enableChecksumVerify,
 	)
 }
 

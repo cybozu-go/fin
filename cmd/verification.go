@@ -78,13 +78,14 @@ func verificationJobMain() error {
 	}
 
 	v := verification.NewVerification(&input.Verification{
-		Repo:              finRepo,
-		RBDRepo:           rbdRepo,
-		NLVRepo:           nlvRepo,
-		ActionUID:         actionUID,
-		TargetSnapshotID:  backupSnapshotID,
-		TargetPVCUID:      pvcUID,
-		ExpansionUnitSize: expansionUnitSize,
+		Repo:                 finRepo,
+		RBDRepo:              rbdRepo,
+		NLVRepo:              nlvRepo,
+		ActionUID:            actionUID,
+		TargetSnapshotID:     backupSnapshotID,
+		TargetPVCUID:         pvcUID,
+		ExpansionUnitSize:    expansionUnitSize,
+		EnableChecksumVerify: defaultEnableChecksumVerify, // this could be configurable in the future
 	})
 	for {
 		err = v.Perform()

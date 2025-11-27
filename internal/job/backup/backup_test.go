@@ -9,6 +9,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/cybozu-go/fin/internal/infrastructure/ceph"
 	"github.com/cybozu-go/fin/internal/infrastructure/fake"
 	"github.com/cybozu-go/fin/internal/job"
 	"github.com/cybozu-go/fin/internal/job/input"
@@ -738,4 +739,80 @@ func ensureBackupMetadataCorrect(t *testing.T, repo model.FinRepository, expecte
 			assert.True(t, expected.Diff[i].CreatedAt.Equal(metadata.Diff[i].CreatedAt))
 		}
 	}
+}
+
+func Test_FullBackup_Error_ChecksumMismatch(t *testing.T) {
+	// Description:
+	//   Backup fails when diff file is corrupted and checksum verification detects the mismatch.
+	//
+	// Arrange:
+	//   - Create a valid diff file with checksum.
+	//   - Corrupt the diff file.
+	//   - Resume the backup process from the patch phase.
+	//
+	// Act:
+	//   Perform backup.
+	//
+	// Assert:
+	//   Check that backup fails with checksum mismatch error.
+
+	// Arrange
+	cfg := setup(t, &setupInput{})
+	cfg.fullBackupInput.EnableChecksumVerify = true
+
+	// Create a normal diff file
+	err := cfg.nlvRepo.MakeDiffDir(cfg.fullSnapshot.ID)
+	require.NoError(t, err)
+	stream, err := cfg.rbdRepo.ExportDiff(&model.ExportDiffInput{
+		PoolName:       cfg.fullBackupInput.TargetRBDPoolName,
+		ReadOffset:     0,
+		ReadLength:     cfg.fullBackupInput.MaxPartSize,
+		FromSnap:       nil,
+		MidSnapPrefix:  cfg.fullSnapshot.Name,
+		ImageName:      cfg.fullBackupInput.TargetRBDImageName,
+		TargetSnapName: cfg.fullSnapshot.Name,
+	})
+	require.NoError(t, err)
+	err = WriteDiffPartAndCloseStream(
+		stream,
+		cfg.nlvRepo.GetDiffPartPath(cfg.fullBackupInput.TargetSnapshotID, 0),
+		cfg.nlvRepo.GetDiffChecksumPath(cfg.fullBackupInput.TargetSnapshotID, 0),
+		cfg.fullBackupInput.DiffChecksumChunkSize,
+	)
+	require.NoError(t, err)
+
+	// Corrupt the diff file
+	diffPartPath := cfg.nlvRepo.GetDiffPartPath(cfg.fullBackupInput.TargetSnapshotID, 0)
+	diffData, err := os.ReadFile(diffPartPath)
+	require.NoError(t, err)
+	diffData[len(diffData)/2] ^= 0xFF
+	err = os.WriteFile(diffPartPath, diffData, 0644)
+	require.NoError(t, err)
+
+	// Set up for resuming from patch phase
+	err = cfg.finRepo.StartOrRestartAction(cfg.fullBackupInput.ActionUID, model.Backup)
+	require.NoError(t, err)
+	arrangedBackupMetadata, err := json.Marshal(job.BackupMetadata{
+		PVCUID:       cfg.fullBackupInput.TargetPVCUID,
+		RBDImageName: cfg.fullBackupInput.TargetRBDImageName,
+	})
+	require.NoError(t, err)
+	err = cfg.finRepo.SetBackupMetadata(arrangedBackupMetadata)
+	require.NoError(t, err)
+	arrangedActionPrivateData, err := json.Marshal(backupPrivateData{
+		NextStorePart: 1,
+		NextPatchPart: 0,
+		Mode:          modeFull,
+	})
+	require.NoError(t, err)
+	err = cfg.finRepo.UpdateActionPrivateData(cfg.fullBackupInput.ActionUID, arrangedActionPrivateData)
+	require.NoError(t, err)
+
+	// Act
+	backup := NewBackup(cfg.fullBackupInput)
+	err = backup.Perform()
+
+	// Assert
+	assert.Error(t, err)
+	assert.ErrorIs(t, err, ceph.ErrChecksumMismatch)
 }

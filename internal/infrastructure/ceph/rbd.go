@@ -30,15 +30,6 @@ var (
 	csumZero                 uint64
 )
 
-const (
-	defaultRawChecksumChunkSize  uint64 = 64 * 1024       // 64 KiB
-	defaultDiffChecksumChunkSize uint64 = 2 * 1024 * 1024 // 2MiB
-)
-
-func init() {
-	csumZero = calcZeroChecksum(defaultRawChecksumChunkSize)
-}
-
 type RBDRepository struct {
 }
 
@@ -161,13 +152,15 @@ func (r *RBDRepository) ApplyDiffToBlockDevice(blockDevicePath, diffFilePath, fr
 }
 
 func (r *RBDRepository) ApplyDiffToRawImage(
-	rawImageFilePath, diffFilePath, fromSnapName, toSnapName string, expansionUnitSize uint64,
+	rawImageFilePath,
+	diffFilePath,
+	fromSnapName,
+	toSnapName string,
+	expansionUnitSize uint64,
+	rawChecksumChunkSize,
+	diffChecksumChunkSize uint64,
+	enableChecksumVerify bool,
 ) error {
-	// TODO: These parameters will be configurable via arguments in PR #187.
-	rawChecksumChunkSize := defaultRawChecksumChunkSize
-	diffChecksumChunkSize := defaultDiffChecksumChunkSize
-	enableChecksumVerify := false
-
 	f, err := os.Open(diffFilePath)
 	if err != nil {
 		return fmt.Errorf("failed to open diff file: %s: %w", diffFilePath, err)
@@ -229,7 +222,6 @@ func applyDiffToBlockDevice(blockDevicePath string, diffFile io.Reader, fromSnap
 	return nil
 }
 
-//nolint:unparam // parameters are currently constant; remove once they become configurable.
 func applyDiffToRawImage(
 	rawImageFilePath string,
 	diffFile io.Reader,
@@ -239,6 +231,8 @@ func applyDiffToRawImage(
 	rawChecksumChunkSize uint64,
 	enableChecksumVerify bool,
 ) error {
+	csumZero = calcZeroChecksum(rawChecksumChunkSize)
+
 	diffFileReader, _, err := openDiffDataRecords(diffFile, fromSnapName, toSnapName)
 	if err != nil {
 		return fmt.Errorf("failed to open diff data records: %w", err)

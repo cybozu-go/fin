@@ -17,10 +17,12 @@ const (
 )
 
 type BackupMetadata struct {
-	PVCUID       string                 `json:"pvcUID,omitempty"`
-	RBDImageName string                 `json:"rbdImageName,omitempty"`
-	Raw          *BackupMetadataEntry   `json:"raw,omitempty"`
-	Diff         []*BackupMetadataEntry `json:"diff,omitempty"`
+	PVCUID                string                 `json:"pvcUID,omitempty"`
+	RBDImageName          string                 `json:"rbdImageName,omitempty"`
+	RawChecksumChunkSize  int64                  `json:"rawChecksumChunkSize,omitempty"`
+	DiffChecksumChunkSize int64                  `json:"diffChecksumChunkSize,omitempty"`
+	Raw                   *BackupMetadataEntry   `json:"raw,omitempty"`
+	Diff                  []*BackupMetadataEntry `json:"diff,omitempty"`
 }
 
 type BackupMetadataEntry struct {

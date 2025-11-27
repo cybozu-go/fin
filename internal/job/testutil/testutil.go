@@ -26,6 +26,7 @@ import (
 
 const (
 	SnapshotTimeFormat    = "Mon Jan  2 15:04:05 2006"
+	RawChecksumChunkSize  = 64 * 1024       // 64 KiB
 	DiffChecksumChunkSize = 2 * 1024 * 1024 // 2 MiB
 )
 
@@ -57,7 +58,9 @@ func NewBackupInput(
 		TargetPVCUID:              string(pvc.UID),
 		MaxPartSize:               maxPartSize,
 		ExpansionUnitSize:         utils.RawImgExpansionUnitSize,
+		RawChecksumChunkSize:      RawChecksumChunkSize,
 		DiffChecksumChunkSize:     DiffChecksumChunkSize,
+		EnableChecksumVerify:      true,
 	}
 }
 

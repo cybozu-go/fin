@@ -209,10 +209,18 @@ func (r *NodeLocalVolumeRepository) RemoveDiffDirRecursively(snapshotID int) err
 }
 
 func (r *NodeLocalVolumeRepository) RemoveRawImage() error {
-	if err := r.root.Remove(imageFilePath); err != nil {
-		return fmt.Errorf("failed to remove file %s: %w", imageFilePath, err)
+	rawErr := r.root.Remove(imageFilePath)
+	if rawErr != nil && !errors.Is(rawErr, fs.ErrNotExist) {
+		return fmt.Errorf("failed to remove file %s: %w", imageFilePath, rawErr)
 	}
 
+	checksumPath := ChecksumFilePath(imageFilePath)
+	if err := r.root.Remove(checksumPath); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("failed to remove file %s: %w", checksumPath, err)
+	}
+	if rawErr != nil {
+		return fmt.Errorf("failed to remove file %s: %w", imageFilePath, rawErr)
+	}
 	return nil
 }
 
@@ -222,6 +230,11 @@ func (r *NodeLocalVolumeRepository) RemoveInstantVerifyImage() error {
 			return nil
 		}
 		return fmt.Errorf("failed to remove file %s: %w", instantVerifyImageFilePath, err)
+	}
+
+	checksumPath := ChecksumFilePath(instantVerifyImageFilePath)
+	if err := r.root.Remove(checksumPath); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("failed to remove file %s: %w", checksumPath, err)
 	}
 
 	return nil
@@ -248,18 +261,31 @@ func (r *NodeLocalVolumeRepository) RemoveOngoingFullBackupFiles(snapID int) err
 }
 
 func (r *NodeLocalVolumeRepository) ReflinkRawImageToInstantVerifyImage() error {
-	cmd := exec.Command(
-		"cp",
-		"--reflink=always",
-		r.GetRawImagePath(),
-		r.GetInstantVerifyImagePath(),
-	)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("failed to reflink: %w: %s", err, output)
+	reflink := func(src, dst string) error {
+		cmd := exec.Command("cp", "--reflink=always", src, dst)
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("failed to reflink %s to %s: %w: %s", src, dst, err, output)
+		}
+		return nil
 	}
+
+	if err := reflink(r.GetRawImagePath(), r.GetInstantVerifyImagePath()); err != nil {
+		return err
+	}
+
+	rawChecksumPath := r.GetRawImageChecksumPath()
+	if _, err := os.Stat(rawChecksumPath); err == nil {
+		if err := reflink(rawChecksumPath, ChecksumFilePath(r.GetInstantVerifyImagePath())); err != nil {
+			return err
+		}
+	} else if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("failed to stat raw checksum file: %w", err)
+	}
+
 	return nil
 }
+
 func ChecksumFilePath(path string) string {
 	return path + checksumSuffix
 }
