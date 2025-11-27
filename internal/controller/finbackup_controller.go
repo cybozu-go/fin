@@ -193,18 +193,11 @@ func (r *FinBackupReconciler) deleteOldFinBackup(
 	pvc *corev1.PersistentVolumeClaim,
 ) error {
 	logger := log.FromContext(ctx)
-	fbcUID, ok := backup.GetLabels()[LabelFinBackupConfigUID]
-	if !ok || fbcUID == "" {
-		return nil
-	}
 
 	var finBackupList finv1.FinBackupList
 	err := r.List(ctx, &finBackupList, &client.ListOptions{
-		Namespace: backup.Namespace,
-		LabelSelector: labels.SelectorFromSet(map[string]string{
-			labelBackupTargetPVCUID: string(pvc.GetUID()),
-			LabelFinBackupConfigUID: fbcUID,
-		})})
+		Namespace:     backup.Namespace,
+		LabelSelector: labels.SelectorFromSet(map[string]string{labelBackupTargetPVCUID: string(pvc.GetUID())})})
 	if err != nil {
 		return fmt.Errorf("failed to list FinBackups for automatic deletion: %w", err)
 	}

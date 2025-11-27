@@ -1083,10 +1083,7 @@ var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
 			Expect(k8sClient.Create(ctx, pvc)).Should(Succeed())
 			Expect(k8sClient.Create(ctx, pv)).Should(Succeed())
 
-			labels = map[string]string{
-				LabelFinBackupConfigUID: "finbackup-config-uid",
-				labelBackupTargetPVCUID: string(pvc.GetUID()),
-			}
+			labels = map[string]string{labelBackupTargetPVCUID: string(pvc.GetUID())}
 
 			oldFinBackup = NewFinBackup(namespace, "old-finbackup", pvc.Name, pvc.Namespace, "test-node")
 			oldFinBackup.Labels = labels
@@ -1102,14 +1099,14 @@ var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
 		})
 
 		// Description:
-		//   Delete the single older FinBackup managed by the same FinBackupConfig.
+		//   Delete the single older FinBackup targeting the same PVC.
 		//
 		// Preconditions:
 		//   - A backup-target PVC and PV exist.
-		//   - One older FinBackup is labeled with the FinBackupConfig UID and backup-target PVC UID.
+		//   - One older FinBackup is labeled with the backup-target PVC UID.
 		//
 		// Arrange:
-		//   - Create a newer FinBackup with the same FinBackupConfig UID and backup-target PVC UID labels.
+		//   - Create a newer FinBackup with the backup-target PVC UID label.
 		//
 		// Act:
 		//   - Call deleteOldFinBackup().
@@ -1117,7 +1114,7 @@ var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
 		// Assert:
 		//   - deleteOldFinBackup() returns no error.
 		//   - The older FinBackup is deleted.
-		It("should delete the older FinBackup managed by the FinBackupConfig", func(ctx SpecContext) {
+		It("should delete the older FinBackup targeting the same PVC", func(ctx SpecContext) {
 			By("creating the newer FinBackup")
 			finBackup = newFinBackup(ctx, "finbackup-test", "test-node", labels, 2)
 
@@ -1139,44 +1136,11 @@ var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
 		})
 
 		// Description:
-		//   Retain the older FinBackup when the newer FinBackup lacks the FinBackupConfig label.
-		//
-		// Preconditions:
-		//   - A backup-target PVC and PV exist.
-		//   - One older FinBackup is labeled with the FinBackupConfig and backup-target PVC UID.
-		//
-		// Arrange:
-		//   - Create a newer FinBackup that omits the FinBackupConfig label.
-		//
-		// Act:
-		//   - Call deleteOldFinBackup().
-		//
-		// Assert:
-		//   - deleteOldFinBackup() returns no error.
-		//   - The older FinBackup exists.
-		It("should retain the older FinBackup when a newer FinBackup lacks the FinBackupConfig label", func(ctx SpecContext) {
-			By("creating the newer unlabeled FinBackup")
-			labels := map[string]string{
-				labelBackupTargetPVCUID: string(pvc.GetUID()),
-			}
-			finBackup = newFinBackup(ctx, "finbackup-test", "test-node", labels, 2)
-
-			By("calling deleteOldFinBackup()")
-			err := reconciler.deleteOldFinBackup(ctx, finBackup, pvc)
-			Expect(err).ShouldNot(HaveOccurred())
-
-			By("verifying the older FinBackup exists")
-			var fb finv1.FinBackup
-			err = k8sClient.Get(ctx, client.ObjectKeyFromObject(oldFinBackup), &fb)
-			Expect(err).ShouldNot(HaveOccurred())
-		})
-
-		// Description:
 		//   Return an error and retain all older FinBackups if more than one exists on the same node.
 		//
 		// Preconditions:
 		//   - A backup-target PVC and PV exist.
-		//   - One older FinBackup is labeled with the FinBackupConfig UID and backup-target PVC UID.
+		//   - One older FinBackup is labeled with backup-target PVC UID.
 		//
 		// Arrange:
 		//   - Create a second older FinBackup with the same labels on the same node.
@@ -1216,7 +1180,7 @@ var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
 		//
 		// Preconditions:
 		//   - A backup-target PVC and PV exist.
-		//   - One older FinBackup is labeled with the FinBackupConfig UID and backup-target PVC UID.
+		//   - One older FinBackup is labeled with the backup-target PVC UID.
 		//
 		// Arrange:
 		//   - Create a newer FinBackup on a different node.
@@ -1241,39 +1205,6 @@ var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
 			Expect(err).ShouldNot(HaveOccurred())
 		})
 
-		// Description:
-		//   Retain the older FinBackup managed by a different FinBackupConfig on the same node.
-		//
-		// Preconditions:
-		//   - A backup-target PVC and PV exist.
-		//   - One older FinBackup is labeled with a FinBackupConfig UID and backup-target PVC UID.
-		//
-		// Arrange:
-		//   - Create a newer FinBackup on the same node with a different FinBackupConfig UID.
-		//
-		// Act:
-		//   - Call deleteOldFinBackup().
-		//
-		// Assert:
-		//   - deleteOldFinBackup() returns no error.
-		//   - The older FinBackup with the different FinBackupConfig UID exists.
-		It("should retain the older FinBackup managed by a different FinBackupConfig", func(ctx SpecContext) {
-			By("creating the newer FinBackup with a different FinBackupConfig UID on the same node")
-			labels := map[string]string{
-				LabelFinBackupConfigUID: "different-finbackup-config-uid",
-				labelBackupTargetPVCUID: string(pvc.GetUID()),
-			}
-			finBackup = newFinBackup(ctx, "finbackup-test", "test-node", labels, 2)
-
-			By("calling deleteOldFinBackup()")
-			err := reconciler.deleteOldFinBackup(ctx, finBackup, pvc)
-			Expect(err).ShouldNot(HaveOccurred())
-
-			By("verifying the older FinBackup with the different FinBackupConfig UID exists")
-			var fb finv1.FinBackup
-			err = k8sClient.Get(ctx, client.ObjectKeyFromObject(oldFinBackup), &fb)
-			Expect(err).ShouldNot(HaveOccurred())
-		})
 	})
 })
 
