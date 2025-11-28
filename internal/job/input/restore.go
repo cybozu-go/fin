@@ -13,5 +13,6 @@ type Restore struct {
 	TargetSnapshotID      int
 	RawImageChunkSize     uint64
 	DiffChecksumChunkSize uint64
+	EnableChecksumVerify  bool
 	TargetPVCUID          string
 }
