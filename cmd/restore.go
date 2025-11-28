@@ -92,6 +92,7 @@ func restoreJobMain() error {
 		TargetPVCUID:          pvcUID,
 		RawImageChunkSize:     rawImageChunkSize,
 		DiffChecksumChunkSize: defaultDiffChecksumChunkSize,
+		EnableChecksumVerify:  defaultEnableChecksumVerify,
 		RestoreVol:            restoreVol,
 	})
 
