@@ -242,38 +242,20 @@ func applyDiffToRawImage(
 	var rawChecksumFile *os.File
 
 	rawStat, err := os.Stat(rawImageFilePath)
-	if err != nil && !os.IsNotExist(err) {
+	rawExist := !os.IsNotExist(err)
+	if err != nil && rawExist {
 		return fmt.Errorf("failed to stat raw image file: %w", err)
 	}
 
-	// When raw.img already exists check the chunk counts of raw.img and its checksum file.
-	// A smaller raw chunk count means the checksum was created before raw.img was written at all,
-	// or the process stopped while raw.img was being written. The next retry recreates both.
-	//
-	// This check also covers cases where applyDiffDataRecords extended the checksum file but raw.img
-	// was not extended due to disruption.
-	rawNotExist := os.IsNotExist(err)
-	rawCreationIncomplete := false
-	if enableChecksumVerify && !rawNotExist {
-		checksumFilePath := getChecksumFilePath(rawImageFilePath)
-		checksumStat, err := os.Stat(checksumFilePath)
-		if os.IsNotExist(err) {
-			return ErrChecksumMismatch
-		} else if err != nil {
-			return fmt.Errorf("failed to stat checksum file %s: %w", checksumFilePath, err)
-		}
-		rawChunks := (uint64(rawStat.Size()) + rawChecksumChunkSize - 1) / rawChecksumChunkSize
-		checksumChunks := uint64(checksumStat.Size()) / csumio.ChecksumLen
-		if rawChunks < checksumChunks {
-			rawCreationIncomplete = true
+	var rawCreationIncomplete bool
+	if rawExist && enableChecksumVerify {
+		rawCreationIncomplete, err = isRawImageCreationIncomplete(rawImageFilePath, rawStat, expansionUnitSize, rawChecksumChunkSize)
+		if err != nil {
+			return err
 		}
 	}
 
-	if rawNotExist || rawCreationIncomplete {
-		// Note: The checksum file must be updated first. If it is not updated before writing raw.img,
-		// and a crash occurs while updating the checksum, the next retry will fail checksum verification.
-		// By updating the checksum first, we ensure that if a crash occurs, the file can be safely
-		// recreated on the next attempt.
+	if !rawExist || rawCreationIncomplete {
 		if enableChecksumVerify {
 			checksumFilePath := getChecksumFilePath(rawImageFilePath)
 			rawChecksumFile, err = os.OpenFile(checksumFilePath, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0644)
@@ -832,4 +814,44 @@ func calcZeroChecksum(chunkSize uint64) uint64 {
 
 func getChecksumFilePath(imageFilePath string) string {
 	return imageFilePath + ".csum"
+}
+
+// isRawImageCreationIncomplete judges whether new creation or recreation of raw.img and its checksum file is needed
+// based on their sizes. Among the following cases, only case 1 returns true:
+//
+// case 1: rawChunks == 0 && checksumChunks > 0 && checksumChunks <= expansionUnitChunks
+//
+//	raw.img was never created or is empty, but a checksum file exists. This indicates the previous
+//	creation attempt was interrupted after creating the checksum file but before or during raw.img creation.
+//	Both files must be recreated.
+//
+// case 2: expansionUnitChunks <= rawChunks && rawChunks < checksumChunks
+//
+//	raw.img exists but is smaller than what the checksum file indicates. This means the previous creation
+//	was interrupted while writing raw.img. Recreation is skipped; applyDiffDataRecords should complete
+//	the expansion (returns false).
+//
+// other cases:
+//
+//	All other cases indicate the files are in a consistent state, so return false and skip recreation.
+func isRawImageCreationIncomplete(rawImageFilePath string, rawStat os.FileInfo, expansionUnitSize, rawChecksumChunkSize uint64) (bool, error) {
+	expansionUnitChunks := expansionUnitSize / rawChecksumChunkSize
+
+	checksumFilePath := getChecksumFilePath(rawImageFilePath)
+	checksumStat, err := os.Stat(checksumFilePath)
+	if os.IsNotExist(err) {
+		return false, ErrChecksumMismatch
+	} else if err != nil {
+		return false, fmt.Errorf("failed to stat checksum file %s: %w", checksumFilePath, err)
+	}
+
+	rawChunks := (uint64(rawStat.Size()) + rawChecksumChunkSize - 1) / rawChecksumChunkSize
+	checksumChunks := uint64(checksumStat.Size()) / csumio.ChecksumLen
+
+	// This case means raw.img and its checksum were never created at all, or the previous run stopped midway. Both files must be recreated.
+	if uint64(0) == rawChunks && rawChunks < checksumChunks && checksumChunks <= expansionUnitChunks {
+		return true, nil
+	}
+
+	return false, nil
 }

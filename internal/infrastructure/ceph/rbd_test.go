@@ -138,13 +138,13 @@ func TestApplyDiffToRawImage_success(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, int64(16*1024*1024), fileInfo.Size())
 	utils.CompareReaders(t, openFileResized(t, gotFilePath, 100*1024*1024), openGZFile(t, "testdata/full-raw-img.gz"))
-	verifyChecksum(t, gotFilePath, rawChecksumChunkSize)
+	verifyChecksum(t, gotFilePath)
 
 	diffReader := openGZFileWithChecksum(t, "testdata/diff.gz", "testdata/diff.csum", diffChecksumChunkSize, true, false)
 	err = applyDiffToRawImage(gotFilePath, diffReader, "snap20", "snap21", expansionUnitSize, rawChecksumChunkSize, true)
 	assert.NoError(t, err)
 	utils.CompareReaders(t, openFileResized(t, gotFilePath, 100*1024*1024), openGZFile(t, "testdata/diff-raw-img.gz"))
-	verifyChecksum(t, gotFilePath, rawChecksumChunkSize)
+	verifyChecksum(t, gotFilePath)
 }
 
 func TestApplyDiffToBlockDevice_success(t *testing.T) {
@@ -626,6 +626,141 @@ func TestApplyDiffToRawImage_ChecksumRecoveryAfterCrash(t *testing.T) {
 	got, err := os.ReadFile(rawImageFilePath)
 	require.NoError(t, err)
 	assert.Equal(t, []byte("ABCD"), got[:4])
+}
+
+func TestApplyDiffToRawImage_success_RecoverAfterInterruptedCreation(t *testing.T) {
+	// Description:
+	// Verify that applyDiffToRawImage can recreate raw.img when a previous creation attempt
+	// left only the checksum file initialized.
+	//
+	// Arrange:
+	// - raw.img exists but is empty (creation failed before writing data)
+	// - raw.img.csum exists with zero checksums for one expansion unit
+	//
+	// Act:
+	// - Apply a diff that writes to the first chunk
+	//
+	// Assert:
+	// - raw.img is created to the expansion unit size
+	// - the written chunk data and checksum are updated
+	// - untouched chunks keep the zero checksum
+
+	// Arrange
+	rawImageFilePath := getRawImagePathForTest(t)
+	require.NoError(t, os.WriteFile(rawImageFilePath, nil, 0644))
+
+	numChunks := expansionUnitSize / rawChecksumChunkSize
+
+	checksumFilePath := getChecksumFilePath(rawImageFilePath)
+	rawChecksumFile, err := os.OpenFile(checksumFilePath, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0644)
+	require.NoError(t, err)
+
+	for i := 0; i < numChunks-1; i++ {
+		require.NoError(t, writeChecksumAtChunk(rawChecksumFile, uint64(i), csumZero))
+	}
+	require.NoError(t, rawChecksumFile.Sync())
+	require.NoError(t, rawChecksumFile.Close())
+
+	diffReader, err := diffgenerator.Run(
+		diffgenerator.WithToSnapName("toSnap"),
+		diffgenerator.WithImageSize(expansionUnitSize),
+		diffgenerator.WithRecords([]*diffgenerator.DataRecord{
+			diffgenerator.NewUpdatedDataRecord(0, 4, []byte("ABCD")),
+		}),
+	)
+	require.NoError(t, err)
+
+	// Act
+	err = applyDiffToRawImage(
+		rawImageFilePath,
+		diffReader,
+		"",
+		"toSnap",
+		expansionUnitSize,
+		rawChecksumChunkSize,
+		true,
+	)
+	require.NoError(t, err)
+
+	// Assert
+	rawStat, err := os.Stat(rawImageFilePath)
+	require.NoError(t, err)
+	assert.Equal(t, int64(expansionUnitSize), rawStat.Size())
+
+	rawData, err := os.ReadFile(rawImageFilePath)
+	require.NoError(t, err)
+	assert.Equal(t, []byte("ABCD"), rawData[:4])
+
+	verifyChecksum(t, rawImageFilePath)
+}
+
+func TestApplyDiffToRawImage_success_RecoverAfterInterruptedExpansion(t *testing.T) {
+	// Description:
+	// Verify that applyDiffToRawImage can recover when the checksum file was extended
+	// to the next expansion unit but raw.img was not.
+	//
+	// Arrange:
+	// - raw.img exists and is sized to one expansion unit
+	// - raw.img.csum exists and is extended to two expansion units (all zeros)
+	//
+	// Act:
+	// - Apply a diff that writes into the second expansion unit
+	//
+	// Assert:
+	// - raw.img is extended to two expansion units
+	// - the written data exists at the expected offset
+	// - checksum verification passes
+
+	// Arrange
+	rawImageFilePath := getRawImagePathForTest(t)
+
+	rawImgFile, err := os.OpenFile(rawImageFilePath, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0644)
+	require.NoError(t, err)
+	require.NoError(t, unix.Fallocate(int(rawImgFile.Fd()), 0, 0, int64(expansionUnitSize)))
+	require.NoError(t, rawImgFile.Close())
+
+	checksumFilePath := getChecksumFilePath(rawImageFilePath)
+	rawChecksumFile, err := os.OpenFile(checksumFilePath, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0644)
+	require.NoError(t, err)
+
+	numChunks := (2 * expansionUnitSize) / rawChecksumChunkSize
+	for i := 0; i < numChunks-1; i++ {
+		require.NoError(t, writeChecksumAtChunk(rawChecksumFile, uint64(i), csumZero))
+	}
+	require.NoError(t, rawChecksumFile.Sync())
+	require.NoError(t, rawChecksumFile.Close())
+
+	diffReader, err := diffgenerator.Run(
+		diffgenerator.WithToSnapName("toSnap"),
+		diffgenerator.WithImageSize(2*expansionUnitSize),
+		diffgenerator.WithRecords([]*diffgenerator.DataRecord{
+			diffgenerator.NewUpdatedDataRecord(expansionUnitSize, 4, []byte("WXYZ")),
+		}),
+	)
+	require.NoError(t, err)
+
+	// Act
+	err = applyDiffToRawImage(
+		rawImageFilePath,
+		diffReader,
+		"",
+		"toSnap",
+		expansionUnitSize,
+		rawChecksumChunkSize,
+		true,
+	)
+	require.NoError(t, err)
+
+	// Assert
+	rawStat, err := os.Stat(rawImageFilePath)
+	require.NoError(t, err)
+	assert.Equal(t, int64(2*expansionUnitSize), rawStat.Size())
+
+	rawData, err := os.ReadFile(rawImageFilePath)
+	require.NoError(t, err)
+	assert.Equal(t, []byte("WXYZ"), rawData[expansionUnitSize:int(expansionUnitSize)+4])
+
+	verifyChecksum(t, rawImageFilePath)
 }
 
 func TestApplyDiffToRawImage_error_InvalidHeader(t *testing.T) {
@@ -1543,7 +1678,7 @@ func createRawChecksumFileForTest(t *testing.T, rawImagePath string) {
 	require.NoError(t, err)
 }
 
-func verifyChecksum(t *testing.T, rawImagePath string, chunkSize uint64) {
+func verifyChecksum(t *testing.T, rawImagePath string) {
 	t.Helper()
 
 	rawFile := openFile(t, rawImagePath)
@@ -1553,7 +1688,7 @@ func verifyChecksum(t *testing.T, rawImagePath string, chunkSize uint64) {
 	checksumFile := openFile(t, checksumFilePath)
 	defer func() { _ = checksumFile.Close() }()
 
-	reader, err := csumio.NewReader(rawFile, checksumFile, int(chunkSize), true)
+	reader, err := csumio.NewReader(rawFile, checksumFile, int(rawChecksumChunkSize), true)
 	require.NoError(t, err)
 
 	_, err = io.Copy(io.Discard, reader)
