@@ -57,6 +57,7 @@ const (
 	BackupConditionStoredToNode        = "StoredToNode"
 	BackupConditionVerified            = "Verified"
 	BackupConditionVerificationSkipped = "VerificationSkipped"
+	BackupConditionChecksumMismatched  = "ChecksumMismatched"
 	BackupConditionAutoDeleteCompleted = "AutoDeleteCompleted"
 )
 
@@ -101,6 +102,10 @@ func (fb *FinBackup) IsVerifiedFalse() bool {
 
 func (fb *FinBackup) IsVerificationSkipped() bool {
 	return meta.IsStatusConditionTrue(fb.Status.Conditions, BackupConditionVerificationSkipped)
+}
+
+func (fb *FinBackup) IsChecksumMismatched() bool {
+	return meta.IsStatusConditionTrue(fb.Status.Conditions, BackupConditionChecksumMismatched)
 }
 
 func (fb *FinBackup) IsAutoDeleteCompleted() bool {
