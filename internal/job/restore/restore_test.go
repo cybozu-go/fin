@@ -675,7 +675,7 @@ func TestRestore_doRestoreRawImagePhase_success(t *testing.T) {
 	metadata, err := job.GetBackupMetadata(cfg.finRepo)
 	require.NoError(t, err)
 	r := NewRestore(cfg.restoreInputs[0])
-	require.NoError(t, r.doRestoreRawImagePhase(restorePD, metadata.Raw))
+	require.NoError(t, r.doRestoreRawImagePhase(restorePD, metadata.Raw, false))
 
 	// Assert
 	restorePD, err = getRestorePrivateData(cfg.finRepo, cfg.restoreInputs[0].ActionUID)
@@ -729,7 +729,7 @@ func TestRestore_doRestoreRawImagePhase_resume(t *testing.T) {
 	metadata, err := job.GetBackupMetadata(cfg.finRepo)
 	require.NoError(t, err)
 	r := NewRestore(cfg.restoreInputs[0])
-	require.NoError(t, r.doRestoreRawImagePhase(restorePD, metadata.Raw))
+	require.NoError(t, r.doRestoreRawImagePhase(restorePD, metadata.Raw, false))
 
 	// Assert
 	restorePD, err = getRestorePrivateData(cfg.finRepo, cfg.restoreInputs[0].ActionUID)
@@ -781,7 +781,7 @@ func TestRestore_doRestoreRawImagePhase_error(t *testing.T) {
 	metadata, err := job.GetBackupMetadata(cfg.finRepo)
 	require.NoError(t, err)
 	r := NewRestore(cfg.restoreInputs[0])
-	require.Error(t, r.doRestoreRawImagePhase(restorePD, metadata.Raw))
+	require.Error(t, r.doRestoreRawImagePhase(restorePD, metadata.Raw, false))
 
 	// Assert
 	restorePD, err = getRestorePrivateData(cfg.finRepo, cfg.restoreInputs[0].ActionUID)
@@ -827,7 +827,7 @@ func TestRestore_doRestoreRawImagePhase_skip(t *testing.T) {
 		cfg.restoreVol.GetPath(),
 		defaultVolumeSize)
 	r := NewRestore(cfg.restoreInputs[0])
-	require.NoError(t, r.doRestoreRawImagePhase(restorePD, nil))
+	require.NoError(t, r.doRestoreRawImagePhase(restorePD, nil, false))
 
 	// Assert
 	restorePD, err := getRestorePrivateData(cfg.finRepo, cfg.restoreInputs[0].ActionUID)

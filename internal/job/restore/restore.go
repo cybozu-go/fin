@@ -20,6 +20,7 @@ type Restore struct {
 	targetSnapshotID      int
 	rawImageChunkSize     uint64
 	diffChecksumChunkSize uint64
+	enableChecksumVerify  bool
 	targetPVCUID          string
 }
 
@@ -33,6 +34,7 @@ func NewRestore(in *input.Restore) *Restore {
 		targetSnapshotID:      in.TargetSnapshotID,
 		rawImageChunkSize:     in.RawImageChunkSize,
 		diffChecksumChunkSize: in.DiffChecksumChunkSize,
+		enableChecksumVerify:  in.EnableChecksumVerify,
 		targetPVCUID:          in.TargetPVCUID,
 	}
 }
@@ -95,7 +97,7 @@ func (r *Restore) doRestore() error {
 		return fmt.Errorf("discard phase failed: %w", err)
 	}
 
-	if err := r.doRestoreRawImagePhase(d, metadata.Raw); err != nil {
+	if err := r.doRestoreRawImagePhase(d, metadata.Raw, uint64(metadata.RawChecksumChunkSize), r.enableChecksumVerify); err != nil {
 		return fmt.Errorf("restore raw image phase failed: %w", err)
 	}
 
@@ -125,11 +127,11 @@ func (r *Restore) doDiscardPhase(privateData *restorePrivateData) error {
 	return setRestorePrivateData(r.repo, r.actionUID, privateData)
 }
 
-func (r *Restore) doRestoreRawImagePhase(privateData *restorePrivateData, raw *job.BackupMetadataEntry) error {
+func (r *Restore) doRestoreRawImagePhase(privateData *restorePrivateData, raw *job.BackupMetadataEntry, rawChecksumChunkSize uint64, enableChecksumVerify bool) error {
 	if privateData.Phase != RestoreRawImage {
 		return nil
 	}
-	err := r.loopCopyChunk(privateData, raw.SnapSize)
+	err := r.loopCopyChunk(privateData, raw.SnapSize, rawChecksumChunkSize, enableChecksumVerify)
 	if err != nil {
 		return fmt.Errorf("failed to restore raw image: %w", err)
 	}
@@ -143,12 +145,12 @@ func (r *Restore) doRestoreRawImagePhase(privateData *restorePrivateData, raw *j
 	return setRestorePrivateData(r.repo, r.actionUID, privateData)
 }
 
-func (r *Restore) loopCopyChunk(privateData *restorePrivateData, rawImageSize uint64) error {
-	chunkCount := int(math.Ceil(float64(rawImageSize) / float64(r.rawImageChunkSize)))
+func (r *Restore) loopCopyChunk(privateData *restorePrivateData, rawImageSize uint64, rawChecksumChunkSize uint64, enableChecksumVerify bool) error {
+	chunkCount := int(math.Ceil(float64(rawImageSize) / float64(rawChecksumChunkSize)))
 	for i := privateData.NextRawImageChunk; i < chunkCount; i++ {
 		rawImagePath := r.nodeLocalVolumeRepo.GetRawImagePath()
 		restoreVolPath := r.restoreVol.GetPath()
-		if err := r.restoreVol.CopyChunk(rawImagePath, i, r.rawImageChunkSize, false); err != nil {
+		if err := r.restoreVol.CopyChunk(rawImagePath, i, rawChecksumChunkSize, enableChecksumVerify); err != nil {
 			return fmt.Errorf("failed to copy chunk %d: %w", i, err)
 		}
 
