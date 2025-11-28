@@ -75,7 +75,7 @@ func (v *FinBackupCustomValidator) ValidateDelete(ctx context.Context, obj runti
 		return nil, fmt.Errorf("expected a FinBackup object but got %T", obj)
 	}
 
-	// Retrieve the list of FinBackups with the same target.Spec.Node and targetPVCName.
+	// Retrieve the list of FinBackups with the same targetPVCName.
 	// Deny deletion if any FinBackup has a snapID smaller than target.SnapID.
 	targetPVCName := target.Spec.PVC
 	targetPVCNamespace := target.Spec.PVCNamespace
@@ -106,8 +106,7 @@ func (v *FinBackupCustomValidator) ValidateDelete(ctx context.Context, obj runti
 
 	relatedBackups := make([]finv1.FinBackup, 0, len(list.Items))
 	for _, b := range list.Items {
-		if b.Spec.Node != target.Spec.Node ||
-			b.Spec.PVC != targetPVCName ||
+		if b.Spec.PVC != targetPVCName ||
 			b.Spec.PVCNamespace != targetPVCNamespace {
 			continue
 		}

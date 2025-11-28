@@ -199,9 +199,6 @@ func (r *FinBackupReconciler) deleteOldFinBackup(
 
 	var candidates []finv1.FinBackup
 	for _, fb := range finBackupList.Items {
-		if fb.Spec.Node != backup.Spec.Node {
-			continue
-		}
 		if fb.Status.SnapID == nil {
 			continue
 		}
@@ -211,8 +208,8 @@ func (r *FinBackupReconciler) deleteOldFinBackup(
 	}
 	if len(candidates) > 1 {
 		return fmt.Errorf(
-			"only one older FinBackup is allowed on node %q (snapID < %d); found %d FinBackups",
-			backup.Spec.Node, *backup.Status.SnapID, len(candidates),
+			"only one older FinBackup is allowed (snapID < %d); found %d FinBackups",
+			*backup.Status.SnapID, len(candidates),
 		)
 	}
 	if len(candidates) == 1 {
