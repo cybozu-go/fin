@@ -154,11 +154,7 @@ func (r *FinBackupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, nil
 	}
 
-	if backup.IsStoredToNode() {
-		if backup.DoesVerifiedExist() {
-			return ctrl.Result{}, nil
-		}
-	} else {
+	if !backup.IsStoredToNode() {
 		result, err := r.reconcileBackup(ctx, backup, *pvc)
 		if errors.Is(err, errNonRetryableReconcile) {
 			return ctrl.Result{}, nil
@@ -168,20 +164,19 @@ func (r *FinBackupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		}
 	}
 
-	verifResult, err := r.reconcileVerification(ctx, &backup, *pvc)
-	if err != nil || !verifResult.IsZero() {
-		return verifResult, err
-	}
-
 	if backup.IsVerifiedFalse() || backup.IsVerificationSkipped() {
 		return ctrl.Result{}, nil
 	}
 
+	if !backup.DoesVerifiedExist() && meta.FindStatusCondition(backup.Status.Conditions, finv1.BackupConditionVerificationSkipped) == nil {
+		return r.reconcileVerification(ctx, &backup, *pvc)
+	}
 	if backup.IsVerifiedTrue() && !backup.IsAutoDeleteCompleted() {
 		if err := r.deleteOldFinBackup(ctx, &backup, pvc); err != nil {
 			logger.Error(err, "failed to perform automatic deletion of FinBackup")
 			return ctrl.Result{}, err
 		}
+		logger.Info("automatic deletion of old FinBackup completed")
 	}
 	return ctrl.Result{}, nil
 }
@@ -214,23 +209,21 @@ func (r *FinBackupReconciler) deleteOldFinBackup(
 			candidates = append(candidates, fb)
 		}
 	}
-	if len(candidates) == 0 {
-		return nil
-	}
 	if len(candidates) > 1 {
 		return fmt.Errorf(
 			"only one older FinBackup is allowed on node %q (snapID < %d); found %d FinBackups",
 			backup.Spec.Node, *backup.Status.SnapID, len(candidates),
 		)
 	}
-
-	targetFB := &candidates[0]
-	if err := r.Delete(ctx, targetFB); err != nil {
-		if k8serrors.IsNotFound(err) {
-			logger.Info("target FinBackup already deleted", "target", client.ObjectKeyFromObject(targetFB))
-			return nil
+	if len(candidates) == 1 {
+		targetFB := &candidates[0]
+		if err := r.Delete(ctx, targetFB); err != nil {
+			if k8serrors.IsNotFound(err) {
+				logger.Info("target FinBackup already deleted", "target", client.ObjectKeyFromObject(targetFB))
+				return nil
+			}
+			return fmt.Errorf("failed to delete FinBackup %s/%s: %w", targetFB.Namespace, targetFB.Name, err)
 		}
-		return fmt.Errorf("failed to delete FinBackup %s/%s: %w", targetFB.Namespace, targetFB.Name, err)
 	}
 
 	_, err = patchFinBackupCondition(ctx, r.Client, backup, metav1.Condition{
@@ -1146,7 +1139,6 @@ func (r *FinBackupReconciler) reconcileVerification(
 		return r.skipVerification(ctx, backup)
 	}
 
-	logger.Info("Create verification Job")
 	if err := r.createOrUpdateVerificationJob(ctx, backup, &pvc); err != nil {
 		return ctrl.Result{}, err
 	}
