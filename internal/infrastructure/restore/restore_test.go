@@ -17,7 +17,8 @@ import (
 const (
 	rawImageFileName     = "raw.img"
 	restoreImageFileName = "restore.img"
-	chunkSize            = csumio.MinimumChunkSize
+	rawImageChunkSize    = 1 * 1024 * 1024 // 1 MiB
+	rawChecksumChunkSize = csumio.MinimumChunkSize
 )
 
 func writeRawWithChecksum(t *testing.T, rawPath string, data []byte) {
@@ -30,7 +31,7 @@ func writeRawWithChecksum(t *testing.T, rawPath string, data []byte) {
 	require.NoError(t, err)
 	defer func() { require.NoError(t, checksumFile.Close()) }()
 
-	writer, err := csumio.NewWriter(rawFile, checksumFile, chunkSize)
+	writer, err := csumio.NewWriter(rawFile, checksumFile, rawChecksumChunkSize)
 	require.NoError(t, err)
 	_, err = writer.Write(data)
 	require.NoError(t, err)
@@ -102,7 +103,7 @@ func TestCopyChunk(t *testing.T) {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			// Arrange
-			data := bytes.Repeat([]byte{writtenDataByte}, chunkSize)
+			data := bytes.Repeat([]byte{writtenDataByte}, rawImageChunkSize)
 			tmpDir := t.TempDir()
 			rawPath := filepath.Join(tmpDir, rawImageFileName)
 			writeRawWithChecksum(t, rawPath, data)
@@ -117,10 +118,10 @@ func TestCopyChunk(t *testing.T) {
 			}
 
 			restorePath := filepath.Join(tmpDir, restoreImageFileName)
-			rv := prepareRestoreVolume(t, restorePath, int64(chunkSize))
+			rv := prepareRestoreVolume(t, restorePath, int64(rawImageChunkSize))
 
 			// Act
-			err := rv.CopyChunk(rawPath, 0, uint64(chunkSize), tc.enableVerify)
+			err := rv.CopyChunk(rawPath, 0, uint64(rawImageChunkSize), uint64(rawChecksumChunkSize), tc.enableVerify)
 
 			// Assert
 			if tc.expectErr != nil {
@@ -134,7 +135,7 @@ func TestCopyChunk(t *testing.T) {
 				assert.NoError(t, restoreFile.Close())
 			}()
 
-			readBuf := make([]byte, chunkSize)
+			readBuf := make([]byte, rawImageChunkSize)
 			_, err = io.ReadFull(restoreFile, readBuf)
 			assert.NoError(t, err)
 			assert.Equal(t, data, readBuf)

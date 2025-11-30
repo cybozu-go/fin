@@ -146,11 +146,11 @@ func (r *Restore) doRestoreRawImagePhase(privateData *restorePrivateData, raw *j
 }
 
 func (r *Restore) loopCopyChunk(privateData *restorePrivateData, rawImageSize uint64, rawChecksumChunkSize uint64, enableChecksumVerify bool) error {
-	chunkCount := int(math.Ceil(float64(rawImageSize) / float64(rawChecksumChunkSize)))
+	chunkCount := int(math.Ceil(float64(rawImageSize) / float64(r.rawImageChunkSize)))
 	for i := privateData.NextRawImageChunk; i < chunkCount; i++ {
 		rawImagePath := r.nodeLocalVolumeRepo.GetRawImagePath()
 		restoreVolPath := r.restoreVol.GetPath()
-		if err := r.restoreVol.CopyChunk(rawImagePath, i, rawChecksumChunkSize, enableChecksumVerify); err != nil {
+		if err := r.restoreVol.CopyChunk(rawImagePath, i, r.rawImageChunkSize, rawChecksumChunkSize, enableChecksumVerify); err != nil {
 			return fmt.Errorf("failed to copy chunk %d: %w", i, err)
 		}
 
