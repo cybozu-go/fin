@@ -203,6 +203,12 @@ func verificationTestSuite() {
 		finbackup, err := NewFinBackup(ns.Name, utils.GetUniqueName("test-finbackup-"),
 			pvc, nodes[0])
 		Expect(err).NotTo(HaveOccurred())
+		finbackup.Annotations = map[string]string{
+			// Corrupting the RBD image may trigger a checksum mismatch before
+			// fsck runs. In this test we want to evaluate the fsck-based
+			// verification result, so skip checksum verification.
+			"fin.cybozu.io/skip-checksum-verify": "true",
+		}
 		err = CreateFinBackup(ctx, ctrlClient, finbackup)
 		Expect(err).NotTo(HaveOccurred())
 

@@ -83,17 +83,21 @@ func restoreJobMain() error {
 		return fmt.Errorf("invalid TARGET_SNAPSHOT_ID: %w", err)
 	}
 
+	enableChecksumVerify, err := getEnableChecksumVerify()
+	if err != nil {
+		return err
+	}
+
 	r := restore.NewRestore(&input.Restore{
-		Repo:                  finRepo,
-		RBDRepo:               rbdRepo,
-		NodeLocalVolumeRepo:   nlvRepo,
-		ActionUID:             actionUID,
-		TargetSnapshotID:      targetSnapshotID,
-		TargetPVCUID:          pvcUID,
-		RawImageChunkSize:     rawImageChunkSize,
-		DiffChecksumChunkSize: defaultDiffChecksumChunkSize,
-		EnableChecksumVerify:  defaultEnableChecksumVerify,
-		RestoreVol:            restoreVol,
+		Repo:                 finRepo,
+		RBDRepo:              rbdRepo,
+		NodeLocalVolumeRepo:  nlvRepo,
+		ActionUID:            actionUID,
+		TargetSnapshotID:     targetSnapshotID,
+		TargetPVCUID:         pvcUID,
+		RawImageChunkSize:    rawImageChunkSize,
+		EnableChecksumVerify: enableChecksumVerify,
+		RestoreVol:           restoreVol,
 	})
 
 	for {

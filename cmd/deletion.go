@@ -76,6 +76,11 @@ func deletionJobMain() error {
 		return err
 	}
 
+	enableChecksumVerify, err := getEnableChecksumVerify()
+	if err != nil {
+		return err
+	}
+
 	d := deletion.NewDeletion(&input.Deletion{
 		Repo:                 finRepo,
 		RBDRepo:              rbdRepo,
@@ -84,7 +89,7 @@ func deletionJobMain() error {
 		TargetSnapshotID:     targetSnapshotID,
 		TargetPVCUID:         pvcUID,
 		ExpansionUnitSize:    expansionUnitSize,
-		EnableChecksumVerify: defaultEnableChecksumVerify, // this could be configurable in the future
+		EnableChecksumVerify: enableChecksumVerify,
 	})
 	for {
 		err = d.Perform()

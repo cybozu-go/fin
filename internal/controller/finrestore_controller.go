@@ -232,19 +232,34 @@ func (r *FinRestoreReconciler) reconcileCreateOrUpdate(
 		return ctrl.Result{}, err
 	}
 
-	var job batchv1.Job
-	err = r.Get(ctx, client.ObjectKey{Namespace: r.cephClusterNamespace, Name: restoreJobName(restore)}, &job)
+	jobStatus, err := CheckJobStatus(ctx, r.Client, restoreJobName(restore), r.cephClusterNamespace)
 	if err != nil {
-		return ctrl.Result{}, fmt.Errorf("failed to get restore job: %w", err)
+		return ctrl.Result{}, fmt.Errorf("failed to check restore job status: %w", err)
 	}
-
-	done, err := jobCompleted(&job)
-	if err != nil {
-		logger.Error(err, "restore job failed")
-		return ctrl.Result{}, err
-	}
-	if !done {
+	switch jobStatus.Status {
+	case JobStatusComplete:
+		// do nothing
+	case JobStatusInProgress:
 		return ctrl.Result{}, nil
+	case JobStatusFailedWithExitCode2:
+		var backup finv1.FinBackup
+		err = r.Get(ctx, client.ObjectKey{Name: restore.Spec.Backup, Namespace: restore.Namespace}, &backup)
+		if err != nil {
+			return ctrl.Result{}, fmt.Errorf("failed to get FinBackup for checksum mismatch update: %w", err)
+		}
+
+		_, err = patchFinBackupCondition(ctx, r.Client, &backup, metav1.Condition{
+			Type:    finv1.BackupConditionChecksumMismatched,
+			Status:  metav1.ConditionTrue,
+			Reason:  "ChecksumMismatch",
+			Message: "Data corruption detected during restore: checksum mismatch",
+		})
+		if err != nil {
+			return ctrl.Result{}, fmt.Errorf("failed to set FinBackup ChecksumMismatched condition: %w", err)
+		}
+		return ctrl.Result{}, nil
+	default:
+		return ctrl.Result{}, fmt.Errorf("unknown restore job status: %d", jobStatus.Status)
 	}
 
 	updatedRestore := restore.DeepCopy()
@@ -303,7 +318,20 @@ func (r *FinRestoreReconciler) createOrUpdateRestoreJob(
 			RunAsGroup: ptr.To(int64(0)),
 		}
 
-		job.Spec.Template.Spec.RestartPolicy = corev1.RestartPolicyOnFailure
+		job.Spec.Template.Spec.RestartPolicy = corev1.RestartPolicyNever
+
+		job.Spec.PodFailurePolicy = &batchv1.PodFailurePolicy{
+			Rules: []batchv1.PodFailurePolicyRule{
+				{
+					Action: batchv1.PodFailurePolicyActionFailJob,
+					OnExitCodes: &batchv1.PodFailurePolicyOnExitCodesRequirement{
+						ContainerName: ptr.To("restore"),
+						Operator:      batchv1.PodFailurePolicyOnExitCodesOpIn,
+						Values:        []int32{2},
+					},
+				},
+			},
+		}
 
 		job.Spec.Template.Spec.Containers = []corev1.Container{
 			{
@@ -334,6 +362,10 @@ func (r *FinRestoreReconciler) createOrUpdateRestoreJob(
 					{
 						Name:  "RAW_IMAGE_CHUNK_SIZE",
 						Value: strconv.FormatInt(rawImageChunkSize.Value(), 10),
+					},
+					{
+						Name:  "ENABLE_CHECKSUM_VERIFY",
+						Value: strconv.FormatBool(!restore.Spec.AllowChecksumMismatched),
 					},
 				},
 				Image:           r.podImage,

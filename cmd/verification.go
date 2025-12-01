@@ -77,6 +77,11 @@ func verificationJobMain() error {
 		return err
 	}
 
+	enableChecksumVerify, err := getEnableChecksumVerify()
+	if err != nil {
+		return err
+	}
+
 	v := verification.NewVerification(&input.Verification{
 		Repo:                 finRepo,
 		RBDRepo:              rbdRepo,
@@ -85,7 +90,7 @@ func verificationJobMain() error {
 		TargetSnapshotID:     backupSnapshotID,
 		TargetPVCUID:         pvcUID,
 		ExpansionUnitSize:    expansionUnitSize,
-		EnableChecksumVerify: defaultEnableChecksumVerify, // this could be configurable in the future
+		EnableChecksumVerify: enableChecksumVerify,
 	})
 	for {
 		err = v.Perform()
