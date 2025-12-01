@@ -51,11 +51,7 @@ func (r *RestoreVolume) ApplyDiff(diffPath string) error {
 	return errors.New("not implemented")
 }
 
-func (r *RestoreVolume) CopyChunk(rawPath string, index int, chunkSize uint64, enableChecksumVerify bool) error {
-	if chunkSize == 0 {
-		return nil
-	}
-
+func (r *RestoreVolume) CopyChunk(rawPath string, index int, rawImageChunkSize, rawChecksumChunkSize uint64, enableChecksumVerify bool) error {
 	rawFile, err := os.Open(rawPath)
 	if err != nil {
 		return fmt.Errorf("failed to open `%s`: %w", rawPath, err)
@@ -79,42 +75,37 @@ func (r *RestoreVolume) CopyChunk(rawPath string, index int, chunkSize uint64, e
 	}
 	defer func() { _ = resVol.Close() }()
 
-	offset := int64(index) * int64(chunkSize)
-	if _, err := rawFile.Seek(offset, io.SeekStart); err != nil {
-		return fmt.Errorf("failed to seek `%s` to %d: %w",
-			rawPath, offset, err)
+	dataOffset := int64(index) * int64(rawImageChunkSize)
+	if _, err := rawFile.Seek(dataOffset, io.SeekStart); err != nil {
+		return fmt.Errorf("failed to seek `%s` to %d: %w", rawPath, dataOffset, err)
 	}
-	if _, err = resVol.Seek(offset, io.SeekStart); err != nil {
-		return fmt.Errorf("failed to seek `%s` to %d: %w",
-			r.GetPath(), offset, err)
+	if _, err = resVol.Seek(dataOffset, io.SeekStart); err != nil {
+		return fmt.Errorf("failed to seek `%s` to %d: %w", r.GetPath(), dataOffset, err)
 	}
 
-	var reader io.Reader = rawFile
-	if checksumFile != nil {
-		checksumOffset := int64(index) * int64(csumio.ChecksumLen)
+	if enableChecksumVerify && checksumFile != nil {
+		csumOffset := dataOffset / int64(rawChecksumChunkSize)
+		checksumOffset := csumOffset * int64(csumio.ChecksumLen)
 		if _, err := checksumFile.Seek(checksumOffset, io.SeekStart); err != nil {
-			return fmt.Errorf("failed to seek `%s` to %d: %w",
-				checksumFilePath, checksumOffset, err)
+			return fmt.Errorf("failed to seek `%s` to %d: %w", checksumFilePath, checksumOffset, err)
 		}
-		checksumReader := io.LimitReader(checksumFile, csumio.ChecksumLen)
-		cr, err := csumio.NewReader(reader, checksumReader, int(chunkSize), enableChecksumVerify)
-		if err != nil {
-			return fmt.Errorf("failed to create checksum reader: %w", err)
-		}
-		reader = cr
 	}
 
-	buf := make([]byte, chunkSize)
-	rn, err := reader.Read(buf)
+	reader, err := csumio.NewReader(rawFile, checksumFile, int(rawChecksumChunkSize), enableChecksumVerify)
 	if err != nil {
-		if errors.Is(err, io.EOF) {
-			return nil
+		return fmt.Errorf("failed to create checksum reader: %w", err)
+	}
+
+	buf := make([]byte, rawImageChunkSize)
+	rn, err := io.ReadFull(reader, buf)
+	if err != nil {
+		if !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
+			return fmt.Errorf("failed to read: %w", err)
 		}
-		return fmt.Errorf("failed to read: %w", err)
 	}
 
 	allZero := true
-	for _, b := range buf {
+	for _, b := range buf[:rn] {
 		if b != 0 {
 			allZero = false
 			break
@@ -132,7 +123,6 @@ func (r *RestoreVolume) CopyChunk(rawPath string, index int, chunkSize uint64, e
 		if wn != rn {
 			return fmt.Errorf("short write: wrote %d bytes, expected %d", wn, rn)
 		}
-		// FIXME: calculate and store the checksum of `buf` here.
 	}
 
 	return nil

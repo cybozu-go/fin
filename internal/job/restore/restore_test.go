@@ -105,6 +105,7 @@ func setup(t *testing.T, config *setupInput) *setupOutput {
 		backupInput.K8sClient = k8sClient
 		backupInput.RBDRepo = rbdRepo
 		backupInput.NodeLocalVolumeRepo = nlvRepo
+		backupInput.RawChecksumChunkSize = config.chunkSize
 
 		bk := backup.NewBackup(backupInput)
 		err = bk.Perform()
@@ -675,7 +676,7 @@ func TestRestore_doRestoreRawImagePhase_success(t *testing.T) {
 	metadata, err := job.GetBackupMetadata(cfg.finRepo)
 	require.NoError(t, err)
 	r := NewRestore(cfg.restoreInputs[0])
-	require.NoError(t, r.doRestoreRawImagePhase(restorePD, metadata.Raw))
+	require.NoError(t, r.doRestoreRawImagePhase(restorePD, metadata.Raw, uint64(metadata.RawChecksumChunkSize), true))
 
 	// Assert
 	restorePD, err = getRestorePrivateData(cfg.finRepo, cfg.restoreInputs[0].ActionUID)
@@ -729,7 +730,7 @@ func TestRestore_doRestoreRawImagePhase_resume(t *testing.T) {
 	metadata, err := job.GetBackupMetadata(cfg.finRepo)
 	require.NoError(t, err)
 	r := NewRestore(cfg.restoreInputs[0])
-	require.NoError(t, r.doRestoreRawImagePhase(restorePD, metadata.Raw))
+	require.NoError(t, r.doRestoreRawImagePhase(restorePD, metadata.Raw, uint64(metadata.RawChecksumChunkSize), true))
 
 	// Assert
 	restorePD, err = getRestorePrivateData(cfg.finRepo, cfg.restoreInputs[0].ActionUID)
@@ -781,7 +782,7 @@ func TestRestore_doRestoreRawImagePhase_error(t *testing.T) {
 	metadata, err := job.GetBackupMetadata(cfg.finRepo)
 	require.NoError(t, err)
 	r := NewRestore(cfg.restoreInputs[0])
-	require.Error(t, r.doRestoreRawImagePhase(restorePD, metadata.Raw))
+	require.Error(t, r.doRestoreRawImagePhase(restorePD, metadata.Raw, uint64(metadata.RawChecksumChunkSize), true))
 
 	// Assert
 	restorePD, err = getRestorePrivateData(cfg.finRepo, cfg.restoreInputs[0].ActionUID)
@@ -820,6 +821,8 @@ func TestRestore_doRestoreRawImagePhase_skip(t *testing.T) {
 		Phase: RestoreDiff,
 	}
 	createPrivateData(t, cfg, cfg.restoreInputs[0], restorePD)
+	metadata, err := job.GetBackupMetadata(cfg.finRepo)
+	require.NoError(t, err)
 
 	// Act
 	randomData := testutil.FillFileRandomData(
@@ -827,10 +830,10 @@ func TestRestore_doRestoreRawImagePhase_skip(t *testing.T) {
 		cfg.restoreVol.GetPath(),
 		defaultVolumeSize)
 	r := NewRestore(cfg.restoreInputs[0])
-	require.NoError(t, r.doRestoreRawImagePhase(restorePD, nil))
+	require.NoError(t, r.doRestoreRawImagePhase(restorePD, nil, uint64(metadata.RawChecksumChunkSize), true))
 
 	// Assert
-	restorePD, err := getRestorePrivateData(cfg.finRepo, cfg.restoreInputs[0].ActionUID)
+	restorePD, err = getRestorePrivateData(cfg.finRepo, cfg.restoreInputs[0].ActionUID)
 	require.NoError(t, err)
 	assert.Equal(t, RestoreDiff, restorePD.Phase)
 

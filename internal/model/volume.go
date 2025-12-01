@@ -9,5 +9,5 @@ type RestoreVolume interface {
 	ZeroOut() error
 
 	// CopyChunk copy a chunk from raw.img to the restore volume
-	CopyChunk(rawPath string, index int, chunkSize uint64, enableChecksumVerify bool) error
+	CopyChunk(rawPath string, index int, chunkSize uint64, checksumChunkSize uint64, enableChecksumVerify bool) error
 }
