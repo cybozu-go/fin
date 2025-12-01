@@ -51,23 +51,17 @@ const (
 	annotationFinBackupNamespace   = "fin.cybozu.io/finbackup-namespace"
 	annotationRBDPool              = "fin.cybozu.io/rbd-pool"
 	AnnotationSkipVerify           = "fin.cybozu.io/skip-verify"
+	annotationSkipChecksumVerify   = "fin.cybozu.io/skip-checksum-verify"
 	AnnotationFullBackup           = "fin.cybozu.io/full-backup"
 
-	maxOlderFinBackups = 1
-)
-
-type verificationJobStatus int
-
-const (
-	verificationJobStatusComplete verificationJobStatus = iota
-	verificationJobStatusInProgress
-	verificationJobStatusFailedWithExitCode2
-	verificationJobStatusUnknown
+	maxOlderFinBackups  = 1
+	annotationValueTrue = "true"
 )
 
 var (
 	errNonRetryableReconcile = errors.New("non retryable reconciliation error; " +
 		"reconciliation must not keep going nor be retried")
+	errChecksumMismatchDetected = errors.New("checksum mismatched detected")
 )
 
 // FinBackupReconciler reconciles a FinBackup object
@@ -79,6 +73,8 @@ type FinBackupReconciler struct {
 	maxPartSize             *resource.Quantity
 	snapRepo                model.RBDSnapshotRepository
 	rawImgExpansionUnitSize uint64
+	rawChecksumChunkSize    uint64
+	diffChecksumChunkSize   uint64
 }
 
 func NewFinBackupReconciler(
@@ -88,7 +84,9 @@ func NewFinBackupReconciler(
 	podImage string,
 	maxPartSize *resource.Quantity,
 	snapRepo model.RBDSnapshotRepository,
-	rawImgExpansionUnitSize uint64,
+	rawImgExpansionUnitSize,
+	rawChecksumChunkSize,
+	diffChecksumChunkSize uint64,
 ) *FinBackupReconciler {
 	return &FinBackupReconciler{
 		Client:                  client,
@@ -98,6 +96,8 @@ func NewFinBackupReconciler(
 		maxPartSize:             maxPartSize,
 		snapRepo:                snapRepo,
 		rawImgExpansionUnitSize: rawImgExpansionUnitSize,
+		rawChecksumChunkSize:    rawChecksumChunkSize,
+		diffChecksumChunkSize:   diffChecksumChunkSize,
 	}
 }
 
@@ -147,6 +147,13 @@ func (r *FinBackupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, nil
 	}
 
+	if backup.IsChecksumMismatched() {
+		annotations := backup.GetAnnotations()
+		if annotations != nil && annotations[annotationSkipChecksumVerify] != annotationValueTrue {
+			return ctrl.Result{}, errChecksumMismatchDetected
+		}
+	}
+
 	if !backup.DeletionTimestamp.IsZero() {
 		return r.reconcileDelete(ctx, &backup, gotFromStatus)
 	}
@@ -163,6 +170,9 @@ func (r *FinBackupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		}
 		if err != nil || !result.IsZero() {
 			return result, err
+		}
+		if !backup.IsStoredToNode() {
+			return ctrl.Result{}, nil
 		}
 	}
 
@@ -309,6 +319,29 @@ func (r *FinBackupReconciler) reconcileBackup(
 	if err != nil {
 		logger.Error(err, "failed to create or update backup job")
 		return ctrl.Result{}, err
+	}
+
+	jobStatus, err := CheckJobStatus(ctx, r.Client, backupJobName(&backup), r.cephClusterNamespace)
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf("failed to check backup job status: %w", err)
+	}
+	switch jobStatus.Status {
+	case JobStatusComplete:
+		// do nothing
+	case JobStatusInProgress:
+		return ctrl.Result{}, nil
+	case JobStatusFailedWithExitCode2:
+		if _, err := patchFinBackupCondition(ctx, r.Client, &backup, metav1.Condition{
+			Type:    finv1.BackupConditionChecksumMismatched,
+			Status:  metav1.ConditionTrue,
+			Reason:  "ChecksumMismatch",
+			Message: "Data corruption detected: checksum mismatch",
+		}); err != nil {
+			return ctrl.Result{}, fmt.Errorf("failed to set FinBackup ChecksumMismatched condition to true: %w", err)
+		}
+		return ctrl.Result{}, nil
+	default:
+		return ctrl.Result{}, fmt.Errorf("unknown backup job status: %d", jobStatus.Status)
 	}
 
 	if backup.Status.BackupStartTime.IsZero() {
@@ -491,12 +524,28 @@ func (r *FinBackupReconciler) reconcileDelete(
 		if err != nil {
 			return ctrl.Result{}, fmt.Errorf("failed to get deletion job: %w", err)
 		}
-		done, err = jobCompleted(&deletionJob)
+
+		jobStatus, err := CheckJobStatus(ctx, r.Client, deletionJobName(backup), r.cephClusterNamespace)
 		if err != nil {
-			return ctrl.Result{}, err
+			return ctrl.Result{}, fmt.Errorf("failed to check deletion job status: %w", err)
 		}
-		if !done {
+		switch jobStatus.Status {
+		case JobStatusComplete:
+			// do nothing
+		case JobStatusInProgress:
 			return ctrl.Result{}, nil
+		case JobStatusFailedWithExitCode2:
+			if _, err := patchFinBackupCondition(ctx, r.Client, backup, metav1.Condition{
+				Type:    finv1.BackupConditionChecksumMismatched,
+				Status:  metav1.ConditionTrue,
+				Reason:  "ChecksumMismatch",
+				Message: "CData corruption detected: checksum mismatch",
+			}); err != nil {
+				return ctrl.Result{}, fmt.Errorf("failed to set FinBackup ChecksumMismatched condition to true: %w", err)
+			}
+			return ctrl.Result{}, nil
+		default:
+			return ctrl.Result{}, fmt.Errorf("unknown deletion job status: %d", jobStatus.Status)
 		}
 
 		propagationPolicy := metav1.DeletePropagationBackground
@@ -777,7 +826,63 @@ func (r *FinBackupReconciler) createOrUpdateBackupJob(
 
 		job.Spec.Template.Spec.ServiceAccountName = "fin-backup-job"
 
-		job.Spec.Template.Spec.RestartPolicy = corev1.RestartPolicyOnFailure
+		job.Spec.Template.Spec.RestartPolicy = corev1.RestartPolicyNever
+
+		job.Spec.PodFailurePolicy = &batchv1.PodFailurePolicy{
+			Rules: []batchv1.PodFailurePolicyRule{
+				{
+					Action: batchv1.PodFailurePolicyActionFailJob,
+					OnExitCodes: &batchv1.PodFailurePolicyOnExitCodesRequirement{
+						ContainerName: ptr.To("backup"),
+						Operator:      batchv1.PodFailurePolicyOnExitCodesOpIn,
+						Values:        []int32{2},
+					},
+				},
+			},
+		}
+
+		// Prepare Ceph config/keyring before running backup.
+		job.Spec.Template.Spec.InitContainers = []corev1.Container{
+			{
+				Name:    "toolbox",
+				Command: []string{"/bin/bash", "-c", embeddedToolboxScript},
+				Env: []corev1.EnvVar{
+					{
+						Name: "ROOK_CEPH_USERNAME",
+						ValueFrom: &corev1.EnvVarSource{
+							SecretKeyRef: &corev1.SecretKeySelector{
+								Key: "ceph-username",
+								LocalObjectReference: corev1.LocalObjectReference{
+									Name: "rook-ceph-mon",
+								},
+							},
+						},
+					},
+				},
+				Image:           r.podImage,
+				ImagePullPolicy: corev1.PullIfNotPresent,
+				SecurityContext: &corev1.SecurityContext{
+					RunAsGroup:   ptr.To(int64(2016)),
+					RunAsNonRoot: ptr.To(true),
+					RunAsUser:    ptr.To(int64(2016)),
+				},
+				VolumeMounts: []corev1.VolumeMount{
+					{
+						MountPath: "/var/lib/rook-ceph-mon",
+						Name:      "ceph-admin-secret",
+						ReadOnly:  true,
+					},
+					{
+						MountPath: "/etc/ceph",
+						Name:      "ceph-config",
+					},
+					{
+						MountPath: "/etc/rook",
+						Name:      "mon-endpoint-volume",
+					},
+				},
+			},
+		}
 
 		job.Spec.Template.Spec.Containers = []corev1.Container{
 			{
@@ -825,6 +930,18 @@ func (r *FinBackupReconciler) createOrUpdateBackupJob(
 						Name:  EnvRawImgExpansionUnitSize,
 						Value: strconv.FormatUint(r.rawImgExpansionUnitSize, 10),
 					},
+					{
+						Name:  EnvRawChecksumChunkSize,
+						Value: strconv.FormatUint(r.rawChecksumChunkSize, 10),
+					},
+					{
+						Name:  EnvDiffChecksumChunkSize,
+						Value: strconv.FormatUint(r.diffChecksumChunkSize, 10),
+					},
+					{
+						Name:  "ENABLE_CHECKSUM_VERIFY",
+						Value: strconv.FormatBool(backup.GetAnnotations()[annotationSkipChecksumVerify] != annotationValueTrue),
+					},
 				},
 				Image:           r.podImage,
 				ImagePullPolicy: corev1.PullIfNotPresent,
@@ -836,45 +953,6 @@ func (r *FinBackupReconciler) createOrUpdateBackupJob(
 					{
 						MountPath: nlv.VolumePath,
 						Name:      "fin-volume",
-					},
-				},
-			},
-			{
-				Name:    "toolbox",
-				Command: []string{"/bin/bash", "-c", embeddedToolboxScript},
-				Env: []corev1.EnvVar{
-					{
-						Name: "ROOK_CEPH_USERNAME",
-						ValueFrom: &corev1.EnvVarSource{
-							SecretKeyRef: &corev1.SecretKeySelector{
-								Key: "ceph-username",
-								LocalObjectReference: corev1.LocalObjectReference{
-									Name: "rook-ceph-mon",
-								},
-							},
-						},
-					},
-				},
-				Image:           r.podImage,
-				ImagePullPolicy: corev1.PullIfNotPresent,
-				SecurityContext: &corev1.SecurityContext{
-					RunAsGroup:   ptr.To(int64(2016)),
-					RunAsNonRoot: ptr.To(true),
-					RunAsUser:    ptr.To(int64(2016)),
-				},
-				VolumeMounts: []corev1.VolumeMount{
-					{
-						MountPath: "/var/lib/rook-ceph-mon",
-						Name:      "ceph-admin-secret",
-						ReadOnly:  true,
-					},
-					{
-						MountPath: "/etc/ceph",
-						Name:      "ceph-config",
-					},
-					{
-						MountPath: "/etc/rook",
-						Name:      "mon-endpoint-volume",
 					},
 				},
 			},
@@ -970,7 +1048,20 @@ func (r *FinBackupReconciler) createOrUpdateDeletionJob(ctx context.Context, bac
 			RunAsUser:    ptr.To(int64(10000)),
 		}
 
-		job.Spec.Template.Spec.RestartPolicy = corev1.RestartPolicyOnFailure
+		job.Spec.Template.Spec.RestartPolicy = corev1.RestartPolicyNever
+
+		job.Spec.PodFailurePolicy = &batchv1.PodFailurePolicy{
+			Rules: []batchv1.PodFailurePolicyRule{
+				{
+					Action: batchv1.PodFailurePolicyActionFailJob,
+					OnExitCodes: &batchv1.PodFailurePolicyOnExitCodesRequirement{
+						ContainerName: ptr.To("deletion"),
+						Operator:      batchv1.PodFailurePolicyOnExitCodesOpIn,
+						Values:        []int32{2},
+					},
+				},
+			},
+		}
 
 		job.Spec.Template.Spec.Containers = []corev1.Container{
 			{
@@ -1001,6 +1092,10 @@ func (r *FinBackupReconciler) createOrUpdateDeletionJob(ctx context.Context, bac
 					{
 						Name:  EnvRawImgExpansionUnitSize,
 						Value: strconv.FormatUint(r.rawImgExpansionUnitSize, 10),
+					},
+					{
+						Name:  "ENABLE_CHECKSUM_VERIFY",
+						Value: strconv.FormatBool(backup.GetAnnotations()[annotationSkipChecksumVerify] != annotationValueTrue),
 					},
 				},
 				Image:           r.podImage,
@@ -1142,16 +1237,26 @@ func (r *FinBackupReconciler) reconcileVerification(
 		return ctrl.Result{}, err
 	}
 
-	jobStatus, err := r.checkVerificationJobStatus(ctx, backup)
+	jobStatus, err := CheckJobStatus(ctx, r.Client, verificationJobName(backup), r.cephClusterNamespace)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to check verification job status: %w", err)
 	}
-	switch jobStatus {
-	case verificationJobStatusComplete:
+	switch jobStatus.Status {
+	case JobStatusComplete:
 		// do nothing
-	case verificationJobStatusInProgress:
+	case JobStatusInProgress:
 		return ctrl.Result{}, nil
-	case verificationJobStatusFailedWithExitCode2:
+	case JobStatusFailedWithExitCode2:
+		if _, err := patchFinBackupCondition(ctx, r.Client, backup, metav1.Condition{
+			Type:    finv1.BackupConditionChecksumMismatched,
+			Status:  metav1.ConditionTrue,
+			Reason:  "ChecksumMismatch",
+			Message: "Data corruption detected: checksum mismatch",
+		}); err != nil {
+			return ctrl.Result{}, fmt.Errorf("failed to set FinBackup ChecksumMismatched condition to true: %w", err)
+		}
+		return ctrl.Result{}, nil
+	case JobStatusFailedWithExitCode3:
 		if _, err := patchFinBackupCondition(ctx, r.Client, backup, metav1.Condition{
 			Type:    finv1.BackupConditionVerified,
 			Status:  metav1.ConditionFalse,
@@ -1162,7 +1267,7 @@ func (r *FinBackupReconciler) reconcileVerification(
 		}
 		return ctrl.Result{}, nil
 	default:
-		return ctrl.Result{}, fmt.Errorf("unknown verification job status: %d", jobStatus)
+		return ctrl.Result{}, fmt.Errorf("unknown verification job status: %d", jobStatus.Status)
 	}
 
 	backup, err = patchFinBackupCondition(ctx, r.Client, backup, metav1.Condition{
@@ -1184,7 +1289,7 @@ func (r *FinBackupReconciler) reconcileVerification(
 func (r *FinBackupReconciler) checkSkipVerificationCondition(backup *finv1.FinBackup) bool {
 	hasSkipVerifyAnnot := false
 	if annots := backup.GetAnnotations(); annots != nil {
-		hasSkipVerifyAnnot = annots[AnnotationSkipVerify] == "true"
+		hasSkipVerifyAnnot = annots[AnnotationSkipVerify] == annotationValueTrue
 	}
 	return !backup.DoesVerifiedExist() && (hasSkipVerifyAnnot || backup.IsVerificationSkipped())
 }
@@ -1280,7 +1385,7 @@ func (r *FinBackupReconciler) createOrUpdateVerificationJob(
 					OnExitCodes: &batchv1.PodFailurePolicyOnExitCodesRequirement{
 						ContainerName: ptr.To("verification"),
 						Operator:      batchv1.PodFailurePolicyOnExitCodesOpIn,
-						Values:        []int32{2},
+						Values:        []int32{2, 3},
 					},
 				},
 			},
@@ -1316,6 +1421,10 @@ func (r *FinBackupReconciler) createOrUpdateVerificationJob(
 						Name:  EnvRawImgExpansionUnitSize,
 						Value: strconv.FormatUint(r.rawImgExpansionUnitSize, 10),
 					},
+					{
+						Name:  "ENABLE_CHECKSUM_VERIFY",
+						Value: strconv.FormatBool(backup.GetAnnotations()[annotationSkipChecksumVerify] != annotationValueTrue),
+					},
 				},
 				Image:           r.podImage,
 				ImagePullPolicy: corev1.PullIfNotPresent,
@@ -1346,56 +1455,6 @@ func (r *FinBackupReconciler) createOrUpdateVerificationJob(
 	}
 
 	return nil
-}
-
-func (r *FinBackupReconciler) checkVerificationJobStatus(
-	ctx context.Context,
-	backup *finv1.FinBackup,
-) (verificationJobStatus, error) {
-	var job batchv1.Job
-	err := r.Get(ctx, client.ObjectKey{Namespace: r.cephClusterNamespace, Name: verificationJobName(backup)}, &job)
-	if err != nil {
-		return verificationJobStatusUnknown, fmt.Errorf("failed to get verification Job: %w", err)
-	}
-
-	done, err := jobCompleted(&job)
-	if done { // Complete=True
-		return verificationJobStatusComplete, nil
-	} else if err == nil { // not Complete=True nor Failed=True
-		return verificationJobStatusInProgress, nil
-	}
-
-	// Failed=True, so check the exit code
-	pods := corev1.PodList{}
-	if err := r.List(ctx, &pods, &client.ListOptions{
-		Namespace: r.cephClusterNamespace,
-		LabelSelector: labels.SelectorFromSet(map[string]string{
-			"batch.kubernetes.io/job-name": verificationJobName(backup),
-		}),
-	},
-	); err != nil {
-		return verificationJobStatusUnknown, fmt.Errorf("failed to list pods of verification Job: %w", err)
-	}
-	if len(pods.Items) != 1 {
-		return verificationJobStatusUnknown, fmt.Errorf("expected 1 pod for verification Job, got %d", len(pods.Items))
-	}
-
-	containerStatuses := pods.Items[0].Status.ContainerStatuses
-	if len(containerStatuses) != 1 {
-		return verificationJobStatusUnknown,
-			fmt.Errorf("expected 1 container in verification pod, got %d", len(containerStatuses))
-	}
-
-	state := containerStatuses[0].State
-	if state.Terminated == nil {
-		return verificationJobStatusUnknown, errors.New("verification container is not terminated")
-	}
-
-	if state.Terminated.ExitCode == 2 {
-		return verificationJobStatusFailedWithExitCode2, nil
-	}
-
-	return verificationJobStatusUnknown, fmt.Errorf("verification job failed with exit code %d", state.Terminated.ExitCode)
 }
 
 // SetupWithManager sets up the controller with the Manager.

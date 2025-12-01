@@ -17,7 +17,6 @@ import (
 const (
 	defaultRawChecksumChunkSize  = 64 * 1024       // 64 KiB
 	defaultDiffChecksumChunkSize = 2 * 1024 * 1024 // 2 MiB
-	defaultEnableChecksumVerify  = true
 )
 
 func getClientSet() (*kubernetes.Clientset, error) {
@@ -53,14 +52,42 @@ func getControllerClient() (client.Client, error) {
 	return k8sClient, nil
 }
 
-func getExpansionUnitSize() (uint64, error) {
-	expansionUnitSizeStr := os.Getenv(controller.EnvRawImgExpansionUnitSize)
-	if expansionUnitSizeStr == "" {
-		return 0, fmt.Errorf("%s environment variable is not set", controller.EnvRawImgExpansionUnitSize)
+func getUint64FromEnv(envName string) (uint64, error) {
+	value := os.Getenv(envName)
+	if value == "" {
+		return 0, fmt.Errorf("%s environment variable is not set", envName)
 	}
-	expansionUnitSize, err := strconv.ParseUint(expansionUnitSizeStr, 10, 64)
+	parsed, err := strconv.ParseUint(value, 10, 64)
 	if err != nil {
-		return 0, fmt.Errorf("invalid %s: %w", controller.EnvRawImgExpansionUnitSize, err)
+		return 0, fmt.Errorf("invalid %s: %w", envName, err)
 	}
-	return expansionUnitSize, nil
+	return parsed, nil
+}
+
+func getBoolFromEnv(envName string) (bool, error) {
+	value := os.Getenv(envName)
+	if value == "" {
+		return false, fmt.Errorf("%s environment variable is not set", envName)
+	}
+	parsed, err := strconv.ParseBool(value)
+	if err != nil {
+		return false, fmt.Errorf("invalid %s: %w", envName, err)
+	}
+	return parsed, nil
+}
+
+func getExpansionUnitSize() (uint64, error) {
+	return getUint64FromEnv(controller.EnvRawImgExpansionUnitSize)
+}
+
+func getRawChecksumChunkSize() (uint64, error) {
+	return getUint64FromEnv(controller.EnvRawChecksumChunkSize)
+}
+
+func getDiffChecksumChunkSize() (uint64, error) {
+	return getUint64FromEnv(controller.EnvDiffChecksumChunkSize)
+}
+
+func getEnableChecksumVerify() (bool, error) {
+	return getBoolFromEnv(controller.EnvEnableChecksumVerify)
 }

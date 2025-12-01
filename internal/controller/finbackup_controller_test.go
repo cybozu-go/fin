@@ -32,7 +32,7 @@ var (
 	defaultMaxPartSize = resource.MustParse("100Mi")
 )
 
-func makeJobFailWithExitCode2(ctx SpecContext, jobName string) {
+func makeJobFailWithExitCode(ctx SpecContext, jobName string, exitCode int32) {
 	GinkgoHelper()
 	Eventually(func(g Gomega, ctx SpecContext) {
 		var pod corev1.Pod
@@ -58,7 +58,7 @@ func makeJobFailWithExitCode2(ctx SpecContext, jobName string) {
 				{
 					State: corev1.ContainerState{
 						Terminated: &corev1.ContainerStateTerminated{
-							ExitCode: 2,
+							ExitCode: exitCode,
 						},
 					},
 				},
@@ -495,8 +495,8 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 			MakeFinBackupStoredToNode(ctx, finbackup1)
 
 			// Act (1)
-			By("making the verification Job fail with exit code 2")
-			makeJobFailWithExitCode2(ctx, verificationJobName(finbackup1))
+			By("making the verification Job fail with exit code 3")
+			makeJobFailWithExitCode(ctx, verificationJobName(finbackup1), 3)
 
 			// Assert (1)
 			By("checking the FinBackup has the condition Verified=False")

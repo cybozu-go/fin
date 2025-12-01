@@ -49,6 +49,8 @@ func controllerMain(args []string) error {
 	var secureMetrics bool
 	var enableHTTP2 bool
 	var rawImgExpansionUnitSize uint64
+	var rawChecksumChunkSize uint64
+	var diffChecksumChunkSize uint64
 	var webhookCertPath string
 	var webhookKeyPath string
 	var overwriteFBCSchedule string
@@ -65,6 +67,10 @@ func controllerMain(args []string) error {
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
 	fs.Uint64Var(&rawImgExpansionUnitSize, "raw-img-expansion-unit-size", ceph.DefaultExpansionUnitSize,
 		fmt.Sprintf("Set %s in jobs.", controller.EnvRawImgExpansionUnitSize))
+	fs.Uint64Var(&rawChecksumChunkSize, "raw-checksum-chunk-size", defaultRawChecksumChunkSize,
+		fmt.Sprintf("Set %s in jobs.", controller.EnvRawChecksumChunkSize))
+	fs.Uint64Var(&diffChecksumChunkSize, "diff-checksum-chunk-size", defaultDiffChecksumChunkSize,
+		fmt.Sprintf("Set %s in jobs.", controller.EnvDiffChecksumChunkSize))
 	fs.StringVar(&webhookCertPath, "webhook-cert-path", "",
 		"The file path of the webhook certificate file.")
 	fs.StringVar(&webhookKeyPath, "webhook-key-path", "",
@@ -92,6 +98,12 @@ func controllerMain(args []string) error {
 	}
 	if rawImgExpansionUnitSize == 0 {
 		return fmt.Errorf("raw-img-expansion-unit-size must be greater than 0")
+	}
+	if rawChecksumChunkSize == 0 {
+		return fmt.Errorf("raw-checksum-chunk-size must be greater than 0")
+	}
+	if diffChecksumChunkSize == 0 {
+		return fmt.Errorf("diff-checksum-chunk-size must be greater than 0")
 	}
 
 	// if the enable-http2 flag is false (the default), http/2 should be disabled
@@ -175,6 +187,8 @@ func controllerMain(args []string) error {
 		&maxPartSize,
 		snapRepo,
 		rawImgExpansionUnitSize,
+		rawChecksumChunkSize,
+		diffChecksumChunkSize,
 	)
 	if err = finBackupReconciler.SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("unable to create controller FinBackup: %w", err)
