@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"context"
 	"time"
 
 	finv1 "github.com/cybozu-go/fin/api/v1"
@@ -9,6 +10,8 @@ import (
 	. "github.com/onsi/gomega"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	storagev1 "k8s.io/api/storage/v1"
+	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes/scheme"
@@ -42,6 +45,92 @@ func findEnvVar(envVars []corev1.EnvVar, name string) *corev1.EnvVar {
 	}
 	return nil
 }
+
+var _ = Describe("FinBackupConfig Controller under Manager", Ordered, func() {
+	var fbcNS *corev1.Namespace
+	var sc *storagev1.StorageClass
+	var pvc *corev1.PersistentVolumeClaim
+	var pv *corev1.PersistentVolume
+	var reconciler *FinBackupConfigReconciler
+	var stopFunc context.CancelFunc
+
+	BeforeAll(func() {
+		ctx := context.Background()
+		fbcNS = &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: utils.GetUniqueName("fbc-namespace")}}
+		Expect(k8sClient.Create(ctx, fbcNS)).NotTo(HaveOccurred())
+
+		sc = NewRBDStorageClass(utils.GetUniqueName("sc"), namespace, rbdPoolName)
+		err := k8sClient.Create(ctx, sc)
+		Expect(err).NotTo(HaveOccurred())
+
+		pvc, pv = NewPVCAndPV(sc, namespace, "test-pvc", "test-pv", rbdImageName)
+		err = k8sClient.Create(ctx, pvc)
+		Expect(err).NotTo(HaveOccurred())
+		err = k8sClient.Create(ctx, pv)
+		Expect(err).NotTo(HaveOccurred())
+
+		reconciler = NewFinBackupConfigReconciler(
+			k8sClient,
+			scheme.Scheme,
+			"",
+			namespace,
+			"test:latest",
+			"test-sa",
+		)
+
+		mgr, err := ctrl.NewManager(cfg, ctrl.Options{Scheme: scheme.Scheme})
+		Expect(err).ToNot(HaveOccurred())
+		err = reconciler.SetupWithManager(mgr)
+		Expect(err).ToNot(HaveOccurred())
+
+		ctx, cancel := context.WithCancel(context.Background())
+		stopFunc = cancel
+		go func() {
+			defer GinkgoRecover()
+			err := mgr.Start(ctx)
+			Expect(err).ToNot(HaveOccurred(), "failed to run controller")
+		}()
+	})
+
+	AfterAll(func(ctx SpecContext) {
+		stopFunc()
+		Expect(k8sClient.Delete(ctx, fbcNS)).To(Succeed())
+		Expect(k8sClient.Delete(ctx, sc)).To(Succeed())
+		DeletePVCAndPV(ctx, namespace, pvc.Name)
+	})
+
+	It("should delete FinBackupConfig", func(ctx SpecContext) {
+		fbc := &finv1.FinBackupConfig{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-fbc",
+				Namespace: fbcNS.Name,
+			},
+			Spec: finv1.FinBackupConfigSpec{
+				PVCNamespace: pvc.Namespace,
+				PVC:          pvc.Name,
+				Schedule:     "0 2 * * *",
+				Suspend:      false,
+			},
+		}
+		By("creating FinBackupConfig")
+		Expect(k8sClient.Create(ctx, fbc)).NotTo(HaveOccurred())
+
+		By("waiting for reconcile to add finalizer")
+		Eventually(func(g Gomega) {
+			updated := &finv1.FinBackupConfig{}
+			err := k8sClient.Get(ctx, client.ObjectKeyFromObject(fbc), updated)
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(updated.Finalizers).To(ContainElement(finBackupConfigFinalizerName))
+		}, "5s", "1s").Should(Succeed())
+
+		By("deleting FinBackupConfig successfully")
+		Expect(k8sClient.Delete(ctx, fbc)).NotTo(HaveOccurred())
+		Eventually(func(g Gomega) {
+			err := k8sClient.Get(ctx, client.ObjectKeyFromObject(fbc), &finv1.FinBackupConfig{})
+			g.Expect(k8serrors.IsNotFound(err)).To(BeTrue())
+		}, "5s", "1s").Should(Succeed())
+	})
+})
 
 var _ = Describe("FinBackupConfig Controller", func() {
 	var fbcNamespace string
@@ -287,6 +376,8 @@ var _ = Describe("FinBackupConfig Controller", func() {
 			}, "5s", "1s").Should(Succeed())
 
 			Expect(cronJob.Spec.Schedule).To(Equal("15 3 * * *"))
+			Expect(cronJob.OwnerReferences).To(HaveLen(1))
+			Expect(cronJob.OwnerReferences[0].Name).To(Equal(fbc.Name))
 		})
 	})
 })
