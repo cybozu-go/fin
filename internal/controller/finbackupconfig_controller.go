@@ -18,6 +18,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
+const (
+	finBackupConfigFinalizerName = "finbackupconfig.fin.cybozu.io/finalizer"
+)
+
 // FinBackupConfigReconciler reconciles a FinBackupConfig object
 type FinBackupConfigReconciler struct {
 	client.Client
@@ -67,6 +71,16 @@ func (r *FinBackupConfigReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	if err := r.Get(ctx, req.NamespacedName, &fbc); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
+	if !fbc.DeletionTimestamp.IsZero() {
+		if controllerutil.ContainsFinalizer(&fbc, finBackupConfigFinalizerName) {
+			controllerutil.RemoveFinalizer(&fbc, finBackupConfigFinalizerName)
+			if err := r.Update(ctx, &fbc); err != nil {
+				return ctrl.Result{}, fmt.Errorf("failed to remove finalizer from FinBackupConfig: %w", err)
+			}
+		}
+		metrics.DeleteFinBackupConfigInfo(&fbc, r.managedCephClusterID)
+		return ctrl.Result{}, nil
+	}
 
 	var pvc corev1.PersistentVolumeClaim
 	if err := r.Get(ctx, types.NamespacedName{Namespace: fbc.Spec.PVCNamespace, Name: fbc.Spec.PVC}, &pvc); err != nil {
@@ -81,16 +95,21 @@ func (r *FinBackupConfigReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		logger.Info("the target pvc is not managed by this controller")
 		return ctrl.Result{}, nil
 	}
+
+	if !controllerutil.ContainsFinalizer(&fbc, finBackupConfigFinalizerName) {
+		controllerutil.AddFinalizer(&fbc, finBackupConfigFinalizerName)
+		if err := r.Update(ctx, &fbc); err != nil {
+			return ctrl.Result{}, fmt.Errorf("failed to add finalizer to FinBackupConfig: %w", err)
+		}
+	}
+
 	metrics.SetFinBackupConfigInfo(&fbc, r.managedCephClusterID)
 
 	image := r.podImage
-
 	serviceAccountName := r.serviceAccountName
-
 	if err := r.createOrUpdateCronJob(ctx, &fbc, fbc.Namespace, serviceAccountName, image); err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to create or update CronJob: %w", err)
 	}
-
 	return ctrl.Result{}, nil
 }
 

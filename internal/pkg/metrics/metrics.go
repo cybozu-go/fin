@@ -95,6 +95,13 @@ func SetFinBackupConfigInfo(fbc *finv1.FinBackupConfig, cephNamespace string) {
 	finbackupconfigInfo.WithLabelValues(cephNamespace, fbc.Spec.PVC, fbc.Spec.PVCNamespace, fbc.Namespace, fbc.Name, fbc.Spec.Node).Set(1)
 }
 
+func DeleteFinBackupConfigInfo(fbc *finv1.FinBackupConfig, cephNamespace string) {
+	if fbc == nil {
+		return
+	}
+	finbackupconfigInfo.DeleteLabelValues(cephNamespace, fbc.Spec.PVC, fbc.Spec.PVCNamespace, fbc.Namespace, fbc.Name, fbc.Spec.Node)
+}
+
 func SetBackupDurationSeconds(fb *finv1.FinBackup, untilCondition, cephNamespace string, fullBackup bool) {
 	if fb == nil {
 		return
