@@ -107,14 +107,14 @@ type RBDSnapshotListRepository interface {
 	ListSnapshots(poolName, imageName string) ([]*RBDSnapshot, error)
 }
 
-// RBDImageLocker is an interface for managing locks on RBD images.
-// It provides methods to add, remove, and list locks for a given image in a pool.
 type RBDSnapshotRepository interface {
 	RBDSnapshotCreateRepository
 	RBDSnapshotRemoveRepository
 	RBDSnapshotListRepository
 }
 
+// RBDImageLocker is an interface for managing locks on RBD images.
+// It provides methods to add, remove, and list locks for a given image in a pool.
 type RBDImageLocker interface {
 	// LockAdd adds a lock with the specified lockID to the given image in the pool.
 	LockAdd(pool, image, lockID string) error

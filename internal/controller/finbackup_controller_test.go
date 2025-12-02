@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strconv"
@@ -119,6 +120,7 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 			podImage:                podImage,
 			maxPartSize:             &defaultMaxPartSize,
 			snapRepo:                rbdRepo,
+			imageLocker:             rbdRepo,
 			rawImgExpansionUnitSize: 100 * 1 << 20,
 		}
 		err = reconciler.SetupWithManager(mgr)
@@ -766,6 +768,7 @@ var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
 			podImage:                podImage,
 			maxPartSize:             &defaultMaxPartSize,
 			snapRepo:                rbdRepo,
+			imageLocker:             rbdRepo,
 			rawImgExpansionUnitSize: 100 * 1 << 20,
 		}
 	})
@@ -1246,6 +1249,158 @@ var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
 			Expect(k8serrors.IsNotFound(err)).To(BeTrue())
 		})
 
+	})
+})
+
+var _ = Describe("FinBackup Controller Unit Tests", Ordered, func() {
+	Context("lockVolume", func() {
+		var reconciler *FinBackupReconciler
+		var rbdRepo *fake.RBDRepository2
+
+		lock := func(poolName, imageName, lockID string, rbdErr error) (bool, error) {
+			rbdRepo.SetError(rbdErr)
+			defer rbdRepo.SetError(nil)
+
+			locked, err := reconciler.lockVolume(poolName, imageName, lockID)
+			if err != nil {
+				return locked, err
+			}
+			// Check if the lock with lockID exists
+			locks, err := rbdRepo.LockLs(poolName, imageName)
+			if err != nil {
+				return locked, err
+			}
+			lockExists := false
+			for _, lock := range locks {
+				if lock.LockID == lockID {
+					lockExists = true
+					break
+				}
+			}
+			Expect(locked).To(Equal(lockExists))
+			return locked, nil
+		}
+
+		It("setup", func(ctx SpecContext) {
+			volumeInfo := &fake.VolumeInfo{
+				Namespace: utils.GetUniqueName("ns-"),
+				PVCName:   utils.GetUniqueName("pvc-"),
+				PVName:    utils.GetUniqueName("pv-"),
+				PoolName:  rbdPoolName,
+				ImageName: rbdImageName,
+			}
+			rbdRepo = fake.NewRBDRepository2(volumeInfo.PoolName, volumeInfo.ImageName)
+
+			mgr, err := ctrl.NewManager(cfg, ctrl.Options{Scheme: scheme.Scheme})
+			Expect(err).ToNot(HaveOccurred())
+			reconciler = &FinBackupReconciler{
+				Client:                  mgr.GetClient(),
+				Scheme:                  mgr.GetScheme(),
+				cephClusterNamespace:    namespace,
+				podImage:                podImage,
+				maxPartSize:             &defaultMaxPartSize,
+				snapRepo:                rbdRepo,
+				imageLocker:             rbdRepo,
+				rawImgExpansionUnitSize: 100 * 1 << 20,
+			}
+		})
+
+		It("lock a volume successfully", func() {
+			locked, err := lock("pool", "image1", "lock1", nil)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(locked).To(BeTrue())
+		})
+		It("lock a volume that is already locked by the same lockID", func() {
+			locked, err := lock("pool", "image1", "lock1", nil)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(locked).To(BeTrue())
+		})
+		It("fail to lock a volume that is already locked by a different lockID", func() {
+			locked, err := lock("pool", "image1", "lock2", nil)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(locked).To(BeFalse())
+		})
+		It("lock a different volume successfully", func() {
+			locked, err := lock("pool", "image2", "lock1", nil)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(locked).To(BeTrue())
+		})
+		It("error when rbd lock ls fails", func() {
+			locked, err := lock("pool", "image1", "lock1", errors.New("rbd lock ls error"))
+			Expect(err).To(HaveOccurred())
+			Expect(locked).To(BeFalse())
+		})
+	})
+
+	Context("unlockVolume", func() {
+		var reconciler *FinBackupReconciler
+		var rbdRepo *fake.RBDRepository2
+
+		It("setup", func(ctx SpecContext) {
+			volumeInfo := &fake.VolumeInfo{
+				Namespace: utils.GetUniqueName("ns-"),
+				PVCName:   utils.GetUniqueName("pvc-"),
+				PVName:    utils.GetUniqueName("pv-"),
+				PoolName:  rbdPoolName,
+				ImageName: rbdImageName,
+			}
+			rbdRepo = fake.NewRBDRepository2(volumeInfo.PoolName, volumeInfo.ImageName)
+
+			mgr, err := ctrl.NewManager(cfg, ctrl.Options{Scheme: scheme.Scheme})
+			Expect(err).ToNot(HaveOccurred())
+			reconciler = &FinBackupReconciler{
+				Client:                  mgr.GetClient(),
+				Scheme:                  mgr.GetScheme(),
+				cephClusterNamespace:    namespace,
+				podImage:                podImage,
+				maxPartSize:             &defaultMaxPartSize,
+				snapRepo:                rbdRepo,
+				imageLocker:             rbdRepo,
+				rawImgExpansionUnitSize: 100 * 1 << 20,
+			}
+		})
+
+		It("locks a volume", func(ctx SpecContext) {
+			locked, err := reconciler.lockVolume("pool", "image", "lock1")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(locked).To(BeTrue())
+		})
+
+		DescribeTable("", func(
+			ctx SpecContext,
+			poolName, imageName, lockID string, rbdErr error,
+			expectErr bool,
+		) {
+			rbdRepo.SetError(rbdErr)
+			defer rbdRepo.SetError(nil)
+
+			err := reconciler.unlockVolume(poolName, imageName, lockID)
+			if expectErr {
+				Expect(err).To(HaveOccurred())
+			} else {
+				Expect(err).NotTo(HaveOccurred())
+			}
+			// Check if the lock is removed
+			locks, err := rbdRepo.LockLs(poolName, imageName)
+			if expectErr {
+				Expect(err).To(HaveOccurred())
+			} else {
+				Expect(err).NotTo(HaveOccurred())
+				for _, l := range locks {
+					Expect(l.LockID).NotTo(Equal(lockID))
+				}
+			}
+		},
+			Entry("unlock a volume successfully",
+				"pool", "image", "lock1", nil,
+				false),
+			Entry("unlock the same volume again (no-op)",
+				"pool", "image", "lock1", nil,
+				false),
+			Entry("error when rbd unlock fails",
+				"pool", "image", "lock1", errors.New("rbd unlock error"),
+				true),
+		)
 	})
 })
 

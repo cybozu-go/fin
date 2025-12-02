@@ -68,6 +68,7 @@ const (
 var (
 	errNonRetryableReconcile = errors.New("non retryable reconciliation error; " +
 		"reconciliation must not keep going nor be retried")
+	errVolumeLockedByAnother = errors.New("the volume is locked by another process")
 )
 
 // FinBackupReconciler reconciles a FinBackup object
@@ -78,6 +79,7 @@ type FinBackupReconciler struct {
 	podImage                string
 	maxPartSize             *resource.Quantity
 	snapRepo                model.RBDSnapshotRepository
+	imageLocker             model.RBDImageLocker
 	rawImgExpansionUnitSize uint64
 }
 
@@ -88,6 +90,7 @@ func NewFinBackupReconciler(
 	podImage string,
 	maxPartSize *resource.Quantity,
 	snapRepo model.RBDSnapshotRepository,
+	imageLocker model.RBDImageLocker,
 	rawImgExpansionUnitSize uint64,
 ) *FinBackupReconciler {
 	return &FinBackupReconciler{
@@ -97,6 +100,7 @@ func NewFinBackupReconciler(
 		podImage:                podImage,
 		maxPartSize:             maxPartSize,
 		snapRepo:                snapRepo,
+		imageLocker:             imageLocker,
 		rawImgExpansionUnitSize: rawImgExpansionUnitSize,
 	}
 }
@@ -396,8 +400,13 @@ func (r *FinBackupReconciler) createSnapshot(ctx context.Context, backup *finv1.
 		return ctrl.Result{}, err
 	}
 
-	snap, err := r.createSnapshotIfNeeded(rbdPool, rbdImage, snapshotName(backup))
+	snap, err := r.createSnapshotIfNeeded(rbdPool, rbdImage, snapshotName(backup), lockID(backup))
 	if err != nil {
+		if errors.Is(err, errVolumeLockedByAnother) {
+			logger.Info("the volume is locked by another process", "uid", string(backup.GetUID()))
+			// FIXME: The following "requeue after" is temporary code.
+			return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+		}
 		logger.Error(err, "failed to create or get snapshot")
 		return ctrl.Result{}, err
 	}
@@ -571,11 +580,19 @@ func (r *FinBackupReconciler) reconcileDelete(
 	return ctrl.Result{}, nil
 }
 
-func (r *FinBackupReconciler) createSnapshotIfNeeded(rbdPool, rbdImage, snapName string) (*model.RBDSnapshot, error) {
+func (r *FinBackupReconciler) createSnapshotIfNeeded(rbdPool, rbdImage, snapName, lockID string) (*model.RBDSnapshot, error) {
 	snap, err := findSnapshot(r.snapRepo, rbdPool, rbdImage, snapName)
 	if err != nil {
 		if !errors.Is(err, model.ErrNotFound) {
 			return nil, fmt.Errorf("failed to get snapshot: %w", err)
+		}
+
+		lockSuccess, err := r.lockVolume(rbdPool, rbdImage, lockID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to lock image: %w", err)
+		}
+		if !lockSuccess {
+			return nil, errVolumeLockedByAnother
 		}
 		err = r.snapRepo.CreateSnapshot(rbdPool, rbdImage, snapName)
 		if err != nil {
@@ -586,6 +603,10 @@ func (r *FinBackupReconciler) createSnapshotIfNeeded(rbdPool, rbdImage, snapName
 			return nil, fmt.Errorf("failed to get snapshot after creation: %w", err)
 		}
 	}
+	if err := r.unlockVolume(rbdPool, rbdImage, lockID); err != nil {
+		return nil, fmt.Errorf("failed to unlock image: %w", err)
+	}
+
 	return snap, nil
 }
 
@@ -610,6 +631,70 @@ func (r *FinBackupReconciler) removeSnapshot(ctx context.Context, backup *finv1.
 	if err != nil {
 		return fmt.Errorf("failed to remove snapshot: %w", err)
 	}
+	return nil
+}
+
+// lockVolume adds a lock to the specified RBD volume if the lock is not already held.
+// It returns true if the lock is held by this caller, false if another lock is held or an error occurs.
+func (r *FinBackupReconciler) lockVolume(
+	poolName, imageName, lockID string,
+) (bool, error) {
+	// Add a lock.
+	if errAdd := r.imageLocker.LockAdd(poolName, imageName, lockID); errAdd != nil {
+		locks, errLs := r.imageLocker.LockLs(poolName, imageName)
+		if errLs != nil {
+			return false, fmt.Errorf("failed to add a lock and list locks on volume %s/%s: %w", poolName, imageName, errors.Join(errAdd, errLs))
+		}
+
+		switch len(locks) {
+		case 0:
+			// It may have been unlocked after the lock failed, but since other causes are also possible, an error is returned.
+			return false, fmt.Errorf("failed to add a lock to the volume %s/%s: %w", poolName, imageName, errAdd)
+
+		case 1:
+			if locks[0].LockID == lockID {
+				// Already locked by this FB.
+				return true, nil
+			}
+			// Locked by another process.
+			return false, nil
+
+		default:
+			// Multiple locks found; unexpected state.
+			return false, fmt.Errorf("multiple locks found on volume %s/%s after failed lock attempt(%v)", poolName, imageName, locks)
+		}
+	}
+
+	// Locked
+	return true, nil
+}
+
+// unlockVolume removes the specified lock from the RBD volume if the lock is held.
+// No action is taken if the lock is not found.
+func (r *FinBackupReconciler) unlockVolume(
+	poolName, imageName, lockID string,
+) error {
+	// List up locks to check if the lock is held.
+	locks, err := r.imageLocker.LockLs(poolName, imageName)
+	if err != nil {
+		return fmt.Errorf("failed to list locks of the volume %s/%s: %w", poolName, imageName, err)
+	}
+
+	if len(locks) >= 2 {
+		return fmt.Errorf("multiple locks found on volume %s/%s when unlocking (%v)", poolName, imageName, locks)
+	}
+
+	for _, lock := range locks {
+		if lock.LockID == lockID {
+			// Unlock
+			if err := r.imageLocker.LockRm(poolName, imageName, lock); err != nil {
+				return fmt.Errorf("failed to remove the lock from the volume %s/%s: %w", poolName, imageName, err)
+			}
+			return nil
+		}
+	}
+
+	// Already unlocked.
 	return nil
 }
 
@@ -731,6 +816,10 @@ func deletionJobName(backup *finv1.FinBackup) string {
 
 func cleanupJobName(backup *finv1.FinBackup) string {
 	return "fin-cleanup-" + string(backup.GetUID())
+}
+
+func lockID(backup *finv1.FinBackup) string {
+	return string(backup.GetUID())
 }
 
 func (r *FinBackupReconciler) createOrUpdateBackupJob(
