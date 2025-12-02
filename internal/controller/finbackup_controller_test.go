@@ -1202,7 +1202,7 @@ var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
 
 			By("calling deleteOldFinBackup()")
 			err := reconciler.deleteOldFinBackup(ctx, finBackup, pvc)
-			Expect(err).To(MatchError(ContainSubstring("only one older FinBackup is allowed on node")))
+			Expect(err).To(MatchError(ContainSubstring("only one older FinBackup is allowed")))
 
 			By("verifying both older FinBackups exist")
 			var fb finv1.FinBackup
@@ -1217,7 +1217,7 @@ var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
 		})
 
 		// Description:
-		//   Retain the older FinBackup that resides on a different node.
+		//   Delete the older FinBackup that resides on a different node.
 		//
 		// Preconditions:
 		//   - A backup-target PVC and PV exist.
@@ -1231,8 +1231,8 @@ var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
 		//
 		// Assert:
 		//   - deleteOldFinBackup() returns no error.
-		//   - The older FinBackup on the other node exists.
-		It("should retain the older FinBackup on a different node", func(ctx SpecContext) {
+		//   - The older FinBackup on the different node is deleted.
+		It("should delete the older FinBackup on a different node", func(ctx SpecContext) {
 			By("creating the newer FinBackup on a different node")
 			finBackup = newFinBackup(ctx, "finbackup-test", "different-node", labels, 2)
 
@@ -1240,10 +1240,10 @@ var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
 			err := reconciler.deleteOldFinBackup(ctx, finBackup, pvc)
 			Expect(err).ShouldNot(HaveOccurred())
 
-			By("verifying the older FinBackup on the other node exists")
+			By("verifying the older FinBackup on the different node is deleted")
 			var fb finv1.FinBackup
 			err = k8sClient.Get(ctx, client.ObjectKeyFromObject(oldFinBackup), &fb)
-			Expect(err).ShouldNot(HaveOccurred())
+			Expect(k8serrors.IsNotFound(err)).To(BeTrue())
 		})
 
 	})

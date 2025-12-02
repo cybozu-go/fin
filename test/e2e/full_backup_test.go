@@ -14,8 +14,8 @@ func fullBackupTestSuite() {
 	var ns *corev1.Namespace
 	var pvc *corev1.PersistentVolumeClaim
 	var podForBackupTargetPVC *corev1.Pod
-	var finbackup, finbackup2 *finv1.FinBackup
-	finrestores := make([]*finv1.FinRestore, 5)
+	var finbackup *finv1.FinBackup
+	var finrestores = make([]*finv1.FinRestore, 3)
 	var err error
 	var writtenData []byte
 	var dataSize int64 = 4 * 1024
@@ -196,139 +196,6 @@ func fullBackupTestSuite() {
 		VerifyNonExistenceOfRawImage(pvc, nodes[0])
 		VerifyDeletionOfJobsForBackup(ctx, k8sClient, finbackup)
 		VerifyDeletionOfSnapshotInFinBackup(ctx, ctrlClient, finbackup)
-	})
-
-	// CSATEST-1547
-	// Description:
-	//   Create two full backups on the different nodes with no error.
-	//
-	// Precondition:
-	//   - An RBD PVC exists.
-	//
-	// Arrange:
-	//   - Create a full backup on a node and is verified.
-	//
-	// Act:
-	//   - Create another full backup on a different node.
-	//
-	// Assert:
-	//   - The newly created backup is verified.
-	//   - The data in both raw.img files are the same as the data in the PVC.
-	It("should create two full backups on the different nodes", func(ctx SpecContext) {
-		/// Arrange
-		finbackup = CreateBackup(ctx, ctrlClient, rookNamespace, pvc, nodes[0])
-
-		// Act
-		finbackup2 = CreateBackup(ctx, ctrlClient, rookNamespace, pvc, nodes[1])
-
-		// Assert
-		VerifyRawImage(pvc, nodes[0], writtenData)
-		VerifyRawImage(pvc, nodes[1], writtenData)
-	})
-
-	// Description:
-	//   Restore from two full backups on the different nodes with no error.
-	//
-	// Precondition:
-	//   - An RBD PVC exists.
-	//   - Two backups exist referring to the PVC exist.
-	//     - These backups are on the different nodes.
-	//
-	// Arrange:
-	//   - Noting.
-	//
-	// Act:
-	//   - Restore from both backups.
-	//
-	// Assert:
-	//   - The first 4KiB of the restore PVC is filled with the same data
-	//     as the first 4KiB of the PVC.
-	//   - The size of the restore PVC is the same as the snapshot.
-	It("should restore from two full backups on the different nodes", func(ctx SpecContext) {
-		// Act
-		finrestores[3] = CreateRestore(ctx, ctrlClient,
-			finbackup, ns, utils.GetUniqueName("test-finrestore-"))
-		finrestores[4] = CreateRestore(ctx, ctrlClient,
-			finbackup2, ns, utils.GetUniqueName("test-finrestore-"))
-
-		// Assert
-		for _, fr := range []*finv1.FinRestore{finrestores[3], finrestores[4]} {
-			VerifyDataInRestorePVC(ctx, k8sClient, fr, writtenData)
-			VerifySizeOfRestorePVC(ctx, ctrlClient, fr)
-		}
-	})
-
-	// Description:
-	//   Delete two restores created from backups on the different nodes with no error.
-	//
-	// Precondition:
-	//   - An RBD PVC exists.
-	//   - Two backups referring to the PVC exist.
-	//     - These backups are on the different nodes.
-	//   - Two restores referring to these backups exist.
-	//
-	// Arrange:
-	//   - Noting.
-	//
-	// Act:
-	//   - Delete both restores.
-	//
-	// Assert:
-	//   - For both restores:
-	//     - FinRestore doesn't exists.
-	//     - Restore PVC still exists.
-	//     - Restore job PVC doesn't exist.
-	//     - Restore job PV doesn't exist.
-	It("should delete two full backups on the different nodes", func(ctx SpecContext) {
-		// Act
-		Expect(DeleteFinRestore(ctx, ctrlClient, finrestores[3])).NotTo(HaveOccurred())
-		Expect(DeleteFinRestore(ctx, ctrlClient, finrestores[4])).NotTo(HaveOccurred())
-
-		// Assert
-		By("verifying the restore deletion")
-		for _, fr := range []*finv1.FinRestore{finrestores[3], finrestores[4]} {
-			err = WaitForFinRestoreDeletion(ctx, ctrlClient, fr, 2*time.Minute)
-			Expect(err).NotTo(HaveOccurred())
-			VerifyDataInRestorePVC(ctx, k8sClient, fr, writtenData)
-			VerifyDeletionOfResourcesForRestore(ctx, k8sClient, fr)
-		}
-	})
-
-	// Description:
-	//   Delete two backups on the different nodes with no error.
-	//
-	// Precondition:
-	//   - An RBD PVC exists.
-	//   - Two backups referring to the PVC exist.
-	//     - These backups are on the different nodes.
-	//
-	// Arrange:
-	//   - Noting.
-	//
-	// Act:
-	//   - Delete both two backups.
-	//
-	// Assert:
-	//   - For both backups:
-	//     - Deleted the FinBackup resource.
-	//     - Deleted the raw.img file.
-	//     - Deleted the cleanup and deletion jobs.
-	//     - Deleted the snapshot reference in FinBackup.
-	It("should delete two full backups on the different nodes", func(ctx SpecContext) {
-		// Act
-		Expect(DeleteFinBackup(ctx, ctrlClient, finbackup)).NotTo(HaveOccurred())
-		Expect(DeleteFinBackup(ctx, ctrlClient, finbackup2)).NotTo(HaveOccurred())
-
-		// Assert
-		By("deleting the backup")
-		for _, fb := range []*finv1.FinBackup{finbackup, finbackup2} {
-			err = WaitForFinBackupDeletion(ctx, ctrlClient, fb, 2*time.Minute)
-			Expect(err).NotTo(HaveOccurred())
-			VerifyDeletionOfJobsForBackup(ctx, k8sClient, fb)
-			VerifyDeletionOfSnapshotInFinBackup(ctx, ctrlClient, fb)
-		}
-		VerifyNonExistenceOfRawImage(pvc, nodes[0])
-		VerifyNonExistenceOfRawImage(pvc, nodes[1])
 	})
 
 	AfterAll(func(ctx SpecContext) {

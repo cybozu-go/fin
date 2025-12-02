@@ -188,8 +188,6 @@ func (r *FinBackupReconciler) deleteOldFinBackup(
 	backup *finv1.FinBackup,
 	pvc *corev1.PersistentVolumeClaim,
 ) error {
-	logger := log.FromContext(ctx)
-
 	var finBackupList finv1.FinBackupList
 	err := r.List(ctx, &finBackupList, &client.ListOptions{
 		Namespace:     backup.Namespace,
@@ -200,9 +198,6 @@ func (r *FinBackupReconciler) deleteOldFinBackup(
 
 	var candidates []finv1.FinBackup
 	for _, fb := range finBackupList.Items {
-		if fb.Spec.Node != backup.Spec.Node {
-			continue
-		}
 		if fb.Status.SnapID == nil {
 			continue
 		}
@@ -212,26 +207,30 @@ func (r *FinBackupReconciler) deleteOldFinBackup(
 	}
 	if len(candidates) > 1 {
 		return fmt.Errorf(
-			"only one older FinBackup is allowed on node %q (snapID < %d); found %d FinBackups",
-			backup.Spec.Node, *backup.Status.SnapID, len(candidates),
+			"only one older FinBackup is allowed (snapID < %d); found %d FinBackups",
+			*backup.Status.SnapID, len(candidates),
 		)
 	}
+	var msg string
 	if len(candidates) == 1 {
 		targetFB := &candidates[0]
+		fbInfo := fmt.Sprintf("%s node=%s", client.ObjectKeyFromObject(targetFB), targetFB.Spec.Node)
+		msg = fmt.Sprintf("Deleted older FinBackup %s", fbInfo)
 		if err := r.Delete(ctx, targetFB); err != nil {
-			if k8serrors.IsNotFound(err) {
-				logger.Info("target FinBackup already deleted", "target", client.ObjectKeyFromObject(targetFB))
-				return nil
+			if !k8serrors.IsNotFound(err) {
+				return fmt.Errorf("failed to delete FinBackup %s: %w", fbInfo, err)
 			}
-			return fmt.Errorf("failed to delete FinBackup %s/%s: %w", targetFB.Namespace, targetFB.Name, err)
+			msg = fmt.Sprintf("Older FinBackup already deleted %s", fbInfo)
 		}
+	} else if len(candidates) == 0 {
+		msg = "No older FinBackup to delete"
 	}
 
 	_, err = patchFinBackupCondition(ctx, r.Client, backup, metav1.Condition{
 		Type:    finv1.BackupConditionAutoDeleteCompleted,
 		Status:  metav1.ConditionTrue,
 		Reason:  "AutoDeletionComplete",
-		Message: "Automatic deletion of older FinBackups completed",
+		Message: msg,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to set auto deletion condition: %w", err)
