@@ -5,6 +5,7 @@ import (
 	"time"
 
 	finv1 "github.com/cybozu-go/fin/api/v1"
+	"github.com/cybozu-go/fin/internal/controller"
 	"github.com/cybozu-go/fin/test/utils"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -62,7 +63,18 @@ func deleteIncrementalBackupTestSuite() {
 	It("should create an incremental backup", func(ctx SpecContext) {
 		// Arrange
 		finbackup1 = CreateBackup(ctx, ctrlClient, rookNamespace, pvc, nodes[0])
-		finbackup2 = CreateBackup(ctx, ctrlClient, rookNamespace, pvc, nodes[0])
+
+		finbackup2, err = NewFinBackup(rookNamespace, utils.GetUniqueName("test-finbackup-"), pvc, nodes[0])
+		finbackup2.Annotations = map[string]string{controller.AnnotationSkipVerify: "true"}
+		Expect(err).NotTo(HaveOccurred())
+		Expect(CreateFinBackup(ctx, ctrlClient, finbackup2)).NotTo(HaveOccurred())
+
+		Eventually(func(g Gomega) {
+			fb := &finv1.FinBackup{}
+			err := ctrlClient.Get(ctx, client.ObjectKeyFromObject(finbackup2), fb)
+			g.Expect(err).ShouldNot(HaveOccurred())
+			g.Expect(fb.IsVerificationSkipped()).To(BeTrue())
+		}, "10s", "1s").Should(Succeed())
 
 		// Act
 		Expect(DeleteFinBackup(ctx, ctrlClient, finbackup2)).NotTo(HaveOccurred())
