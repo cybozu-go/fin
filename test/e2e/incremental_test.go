@@ -8,6 +8,7 @@ import (
 	"time"
 
 	finv1 "github.com/cybozu-go/fin/api/v1"
+	"github.com/cybozu-go/fin/internal/controller"
 	"github.com/cybozu-go/fin/test/utils"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -85,7 +86,17 @@ func incrementalBackupTestSuite() {
 	//     2. A diff file under the diff directory for the incremental backup.
 	It("should create an incremental backup", func(ctx SpecContext) {
 		// Act
-		finbackup2 = CreateBackup(ctx, ctrlClient, rookNamespace, pvc, nodes[0])
+		finbackup2, err = NewFinBackup(rookNamespace, utils.GetUniqueName("test-finbackup-"), pvc, nodes[0])
+		finbackup2.Annotations = map[string]string{controller.AnnotationSkipVerify: "true"}
+		Expect(err).NotTo(HaveOccurred())
+		Expect(CreateFinBackup(ctx, ctrlClient, finbackup2)).NotTo(HaveOccurred())
+
+		Eventually(func(g Gomega) {
+			fb := &finv1.FinBackup{}
+			err := ctrlClient.Get(ctx, client.ObjectKeyFromObject(finbackup2), fb)
+			g.Expect(err).ShouldNot(HaveOccurred())
+			g.Expect(fb.IsVerificationSkipped()).To(BeTrue())
+		}, "10s", "1s").Should(Succeed())
 
 		// Assert
 		By("verifying the data in raw.img as full backup")
@@ -125,8 +136,12 @@ func incrementalBackupTestSuite() {
 	It("should restore from incremental backup", func(ctx SpecContext) {
 		// Act
 		By("restoring from the incremental backup")
-		restore := CreateRestore(ctx, ctrlClient,
-			finbackup2, ns, utils.GetUniqueName("test-finrestore-"))
+		name := utils.GetUniqueName("test-finrestore-")
+		restore, err := NewFinRestore(name, finbackup2, ns.Name, name)
+		restore.Spec.AllowUnverified = true
+		Expect(err).NotTo(HaveOccurred())
+		Expect(CreateFinRestore(ctx, ctrlClient, restore)).NotTo(HaveOccurred())
+		Expect(WaitForFinRestoreReady(ctx, ctrlClient, restore, 1*time.Minute)).NotTo(HaveOccurred())
 		DeferCleanup(func() {
 			_ = DeleteFinRestoreAndRestorePVC(context.Background(), ctrlClient, k8sClient, restore)
 		})
@@ -249,8 +264,12 @@ func incrementalBackupTestSuite() {
 	It("should restore from the remaining backup", func(ctx SpecContext) {
 		// Act
 		By("restoring from the remaining backup")
-		restore := CreateRestore(ctx, ctrlClient,
-			finbackup2, ns, utils.GetUniqueName("test-finrestore-"))
+		name := utils.GetUniqueName("test-finrestore-")
+		restore, err := NewFinRestore(name, finbackup2, ns.Name, name)
+		restore.Spec.AllowUnverified = true
+		Expect(err).NotTo(HaveOccurred())
+		Expect(CreateFinRestore(ctx, ctrlClient, restore)).NotTo(HaveOccurred())
+		Expect(WaitForFinRestoreReady(ctx, ctrlClient, restore, 1*time.Minute)).NotTo(HaveOccurred())
 		DeferCleanup(func() {
 			_ = DeleteFinRestoreAndRestorePVC(context.Background(), ctrlClient, k8sClient, restore)
 		})

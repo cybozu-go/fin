@@ -558,7 +558,7 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 			By("creating a full FinBackup")
 			finbackup1 := NewFinBackup(namespace, "fb1-sample", pvc.Name, pvc.Namespace, "test-node")
 			finbackup1.SetAnnotations(map[string]string{
-				annotationSkipVerify: "true", // Set skip-verify annotation to true
+				AnnotationSkipVerify: "true", // Set skip-verify annotation to true
 			})
 			Expect(k8sClient.Create(ctx, finbackup1)).Should(Succeed())
 			MakeFinBackupStoredToNode(ctx, finbackup1)
@@ -690,6 +690,47 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 				err := k8sClient.Get(ctx, verifJobKey, &job)
 				g.Expect(err).To(MatchError(k8serrors.IsNotFound, "should not find the Job"))
 			}, "5s", "1s").WithContext(ctx).Should(Succeed())
+		})
+	})
+
+	Describe("Auto Deletion Feature", func() {
+		var pvc *corev1.PersistentVolumeClaim
+
+		BeforeEach(func(ctx SpecContext) {
+			By("creating a pair of PVC and PV")
+			var pv *corev1.PersistentVolume
+			pvc, pv = NewPVCAndPV(sc1, namespace, "pvc-sample", "pv-sample", rbdImageName)
+			Expect(k8sClient.Create(ctx, pvc)).Should(Succeed())
+			Expect(k8sClient.Create(ctx, pv)).Should(Succeed())
+		})
+
+		AfterEach(func(ctx SpecContext) {
+			By("cleaning up PVC and PV")
+			DeletePVCAndPV(ctx, pvc.Namespace, pvc.Name)
+		})
+
+		It("should set AutoDeleteCompleted condition even when there is no old FinBackup to delete", func(ctx SpecContext) {
+			finbackup1 := NewFinBackup(namespace, "fb1-sample", pvc.Name, pvc.Namespace, "test-node")
+			Expect(k8sClient.Create(ctx, finbackup1)).Should(Succeed())
+			MakeFinBackupStoredToNode(ctx, finbackup1)
+
+			By("making the verification job succeed")
+			Eventually(func(g Gomega) {
+				jobKey := client.ObjectKey{Namespace: namespace, Name: verificationJobName(finbackup1)}
+				var job batchv1.Job
+				g.Expect(k8sClient.Get(ctx, jobKey, &job)).To(Succeed())
+				makeJobSucceeded(&job)
+				err := k8sClient.Status().Update(ctx, &job)
+				g.Expect(err).ShouldNot(HaveOccurred())
+			}, "5s", "1s").Should(Succeed())
+
+			By("checking the FinBackup has the condition AutoDeleteCompleted=True")
+			Eventually(func(g Gomega) {
+				var createdFinBackup finv1.FinBackup
+				err := k8sClient.Get(ctx, client.ObjectKeyFromObject(finbackup1), &createdFinBackup)
+				g.Expect(err).ShouldNot(HaveOccurred())
+				g.Expect(createdFinBackup.IsAutoDeleteCompleted()).Should(BeTrue(), "FinBackup should meet the condition")
+			}, "5s", "1s").Should(Succeed())
 		})
 	})
 })
