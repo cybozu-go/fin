@@ -242,7 +242,7 @@ var _ = Describe("FinBackupConfig Controller", func() {
 			Expect(container.Name).To(Equal("create-finbackup-job"))
 			Expect(container.Image).To(Equal("test:latest"))
 			Expect(container.Command).To(Equal([]string{
-				"/fin-controller",
+				"/manager",
 				"create-finbackup-job",
 				"--fin-backup-config-name=" + fbc.Name,
 				"--fin-backup-config-namespace=" + fbc.Namespace,
