@@ -31,17 +31,20 @@ var (
 )
 
 type RBDRepository struct {
+	command Command
 }
 
 var _ model.RBDRepository = &RBDRepository{}
+var _ model.RBDImageLocker = &RBDRepository{}
 
 func NewRBDRepository() *RBDRepository {
-	return &RBDRepository{}
+	return &RBDRepository{
+		command: newCommand(),
+	}
 }
 
 func (r *RBDRepository) CreateSnapshot(poolName, imageName, snapName string) error {
-	args := []string{"snap", "create", fmt.Sprintf("%s/%s@%s", poolName, imageName, snapName)}
-	_, stderr, err := runRBDCommand(args...)
+	_, stderr, err := r.command.execute("rbd", "snap", "create", fmt.Sprintf("%s/%s@%s", poolName, imageName, snapName))
 	if err != nil {
 		return fmt.Errorf("failed to create RBD snapshot: %w, stderr: %s", err, string(stderr))
 	}
@@ -50,8 +53,7 @@ func (r *RBDRepository) CreateSnapshot(poolName, imageName, snapName string) err
 }
 
 func (r *RBDRepository) RemoveSnapshot(poolName, imageName, snapName string) error {
-	args := []string{"snap", "rm", "--force", fmt.Sprintf("%s/%s@%s", poolName, imageName, snapName)}
-	_, stderr, err := runRBDCommand(args...)
+	_, stderr, err := r.command.execute("rbd", "snap", "rm", "--force", fmt.Sprintf("%s/%s@%s", poolName, imageName, snapName))
 	if err != nil {
 		return fmt.Errorf("failed to delete RBD snapshot: %w, stderr: %s", err, string(stderr))
 	}
@@ -60,8 +62,7 @@ func (r *RBDRepository) RemoveSnapshot(poolName, imageName, snapName string) err
 }
 
 func (r *RBDRepository) ListSnapshots(poolName, imageName string) ([]*model.RBDSnapshot, error) {
-	args := []string{"snap", "ls", "--format", "json", fmt.Sprintf("%s/%s", poolName, imageName)}
-	stdout, stderr, err := runRBDCommand(args...)
+	stdout, stderr, err := r.command.execute("rbd", "snap", "ls", "--format", "json", fmt.Sprintf("%s/%s", poolName, imageName))
 	if err != nil {
 		return nil, fmt.Errorf("failed to list RBD snapshots: %w, stderr: %s", err, string(stderr))
 	}
@@ -73,6 +74,39 @@ func (r *RBDRepository) ListSnapshots(poolName, imageName string) ([]*model.RBDS
 	}
 
 	return snapshots, nil
+}
+
+func (r *RBDRepository) LockAdd(pool, image, lockID string) error {
+	_, stderr, err := r.command.execute("rbd", "-p", pool, "lock", "add", image, lockID)
+	if err != nil {
+		return fmt.Errorf("failed to add lock to RBD image: %w, stderr: %s", err, string(stderr))
+	}
+
+	return nil
+}
+
+func (r *RBDRepository) LockRm(pool, image string, lock *model.RBDLock) error {
+	_, stderr, err := r.command.execute("rbd", "-p", pool, "lock", "rm", image, lock.LockID, lock.Locker)
+	if err != nil {
+		return fmt.Errorf("failed to remove lock from RBD image: %w, stderr: %s", err, string(stderr))
+	}
+
+	return nil
+}
+
+func (r *RBDRepository) LockLs(pool, image string) ([]*model.RBDLock, error) {
+	stdout, stderr, err := r.command.execute("rbd", "-p", pool, "--format", "json", "lock", "ls", image)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list locks on RBD image: %w, stderr: %s", err, string(stderr))
+	}
+
+	var locks []*model.RBDLock
+	err = json.Unmarshal(stdout, &locks)
+	if err != nil {
+		return nil, fmt.Errorf("failed to unmarshal RBD locks: %w", err)
+	}
+
+	return locks, nil
 }
 
 func (r *RBDRepository) ExportDiff(input *model.ExportDiffInput) (io.ReadCloser, error) {
