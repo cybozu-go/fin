@@ -672,9 +672,6 @@ func snapIDPreconditionSatisfied(backup *finv1.FinBackup, otherFinBackups []finv
 		if fb.Status.SnapID == nil {
 			return fmt.Errorf("found another FinBackup with nil SnapID: %s", fb.Name)
 		}
-		if fb.Spec.Node != backup.Spec.Node {
-			continue
-		}
 
 		snapID := *fb.Status.SnapID
 		if snapID > targetSnapID {
