@@ -52,6 +52,8 @@ const (
 	annotationRBDPool              = "fin.cybozu.io/rbd-pool"
 	AnnotationSkipVerify           = "fin.cybozu.io/skip-verify"
 	AnnotationFullBackup           = "fin.cybozu.io/full-backup"
+
+	maxOlderFinBackups = 1
 )
 
 type verificationJobStatus int
@@ -681,8 +683,8 @@ func snapIDPreconditionSatisfied(backup *finv1.FinBackup, otherFinBackups []finv
 			return fmt.Errorf("found FinBackup not yet stored to node or verified: %s/%d", fb.Name, snapID)
 		}
 		smallerIDs++
-		if smallerIDs >= 2 {
-			return errors.New("found incremental FinBackup")
+		if smallerIDs > maxOlderFinBackups {
+			return fmt.Errorf("found too many older finbackups: %d (max: %d)", smallerIDs, maxOlderFinBackups)
 		}
 	}
 	return nil
