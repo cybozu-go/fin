@@ -8,7 +8,6 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   name: backup-job
-  namespace: rook-ceph
 rules:
 - apiGroups:
   - ""
@@ -23,7 +22,6 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
   name: backup-job
-  namespace: rook-ceph
 subjects:
 - kind: ServiceAccount
   name: backup-job
@@ -31,4 +29,68 @@ subjects:
 roleRef:
   kind: ClusterRole
   name: backup-job
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: create-backup-job
+  namespace: rook-ceph
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: create-backup-job
+  namespace: rook-ceph
+rules:
+- apiGroups:
+  - batch
+  resources:
+  - cronjobs
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - batch
+  resources:
+  - jobs
+  verbs:
+  - get
+  - list
+- apiGroups:
+  - fin.cybozu.io
+  resources:
+  - finbackupconfigs
+  verbs:
+  - get
+  - list
+- apiGroups:
+  - fin.cybozu.io
+  resources:
+  - finbackups
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: create-backup-job
+subjects:
+- kind: ServiceAccount
+  name: create-backup-job
+  namespace: rook-ceph
+roleRef:
+  kind: ClusterRole
+  name: create-backup-job
   apiGroup: rbac.authorization.k8s.io

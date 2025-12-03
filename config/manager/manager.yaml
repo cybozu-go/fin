@@ -81,6 +81,8 @@ spec:
           value: 30Mi
         - name: RAW_IMAGE_CHUNK_SIZE
           value: 4Mi
+        - name: CREATE_FINBACKUP_JOB_SERVICE_ACCOUNT
+          value: fin-create-backup-job
         securityContext:
           allowPrivilegeEscalation: false
           capabilities:
