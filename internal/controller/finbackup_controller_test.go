@@ -1322,7 +1322,15 @@ func Test_snapIDPreconditionSatisfied(t *testing.T) {
 			backup: createFinBackup("new-backup", 3, "node1", true, nil),
 			otherFinBackups: []finv1.FinBackup{
 				*createFinBackup("backup", 2, "node1", true, nil),
-				*createFinBackup("other-backup", 1, "node2", false, nil),
+				*createFinBackup("other-backup", 1, "node2", true, nil),
+			},
+			wantErr: true,
+		},
+		{
+			name:   "only FinBackup in different node",
+			backup: createFinBackup("new-backup", 2, "node1", true, nil),
+			otherFinBackups: []finv1.FinBackup{
+				*createFinBackup("other-backup", 1, "node2", true, nil),
 			},
 			wantErr: false,
 		},
@@ -1368,16 +1376,6 @@ func Test_snapIDPreconditionSatisfied(t *testing.T) {
 				*createFinBackup("other", 2, "node1", true, nil),
 			},
 			wantErr: true,
-		},
-		{
-			name:   "two smaller SnapIDs on different node",
-			backup: createFinBackup("new-backup", 4, "node2", true, nil),
-			otherFinBackups: []finv1.FinBackup{
-				*createFinBackup("other-1", 3, "node1", true, nil),
-				*createFinBackup("backup", 1, "node2", true, nil),
-				*createFinBackup("other-2", 2, "node1", true, nil),
-			},
-			wantErr: false,
 		},
 	}
 	for _, tt := range tests {
