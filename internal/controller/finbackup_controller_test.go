@@ -29,7 +29,9 @@ import (
 )
 
 var (
-	defaultMaxPartSize = resource.MustParse("100Mi")
+	defaultMaxPartSize               = resource.MustParse("100Mi")
+	testRawChecksumChunkSize  uint64 = 4 * 1024 * 1024
+	testDiffChecksumChunkSize uint64 = 2 * 1024 * 1024
 )
 
 func makeJobFailWithExitCode(ctx SpecContext, jobName string, exitCode int32) {
@@ -103,6 +105,16 @@ func createFinBackupWithSkipChecksumVerifyAnnotation(ctx context.Context, pvc *c
 
 func expectEnableChecksumVerifyIsFalse(ctx SpecContext, jobName string) {
 	GinkgoHelper()
+	expectEnableChecksumVerifyEquals(ctx, jobName, "false")
+}
+
+func expectEnableChecksumVerifyIsTrue(ctx SpecContext, jobName string) {
+	GinkgoHelper()
+	expectEnableChecksumVerifyEquals(ctx, jobName, "true")
+}
+
+func expectEnableChecksumVerifyEquals(ctx SpecContext, jobName, expected string) {
+	GinkgoHelper()
 	jobKey := client.ObjectKey{Namespace: namespace, Name: jobName}
 	Eventually(func(g Gomega, ctx SpecContext) {
 		var job batchv1.Job
@@ -123,7 +135,25 @@ func expectEnableChecksumVerifyIsFalse(ctx SpecContext, jobName string) {
 		var cm corev1.ConfigMap
 		cmKey := client.ObjectKey{Namespace: namespace, Name: envVar.ValueFrom.ConfigMapKeyRef.Name}
 		g.Expect(k8sClient.Get(ctx, cmKey, &cm)).To(Succeed())
-		g.Expect(cm.Data).To(HaveKeyWithValue(EnvEnableChecksumVerify, "false"))
+		g.Expect(cm.Data).To(HaveKeyWithValue(EnvEnableChecksumVerify, expected))
+	}, "5s", "1s").WithContext(ctx).Should(Succeed())
+}
+
+func expectChecksumChunkSizesInBackupJob(ctx SpecContext, jobName string) {
+	GinkgoHelper()
+	jobKey := client.ObjectKey{Namespace: namespace, Name: jobName}
+	Eventually(func(g Gomega, ctx SpecContext) {
+		var job batchv1.Job
+		g.Expect(k8sClient.Get(ctx, jobKey, &job)).To(Succeed())
+		g.Expect(job.Spec.Template.Spec.Containers).ToNot(BeEmpty())
+		envMap := map[string]string{}
+		for _, e := range job.Spec.Template.Spec.Containers[0].Env {
+			if e.Value != "" {
+				envMap[e.Name] = e.Value
+			}
+		}
+		g.Expect(envMap).To(HaveKeyWithValue(EnvRawChecksumChunkSize, strconv.FormatUint(testRawChecksumChunkSize, 10)))
+		g.Expect(envMap).To(HaveKeyWithValue(EnvDiffChecksumChunkSize, strconv.FormatUint(testDiffChecksumChunkSize, 10)))
 	}, "5s", "1s").WithContext(ctx).Should(Succeed())
 }
 
@@ -156,6 +186,8 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 			maxPartSize:             &defaultMaxPartSize,
 			snapRepo:                rbdRepo,
 			rawImgExpansionUnitSize: 100 * 1 << 20,
+			rawChecksumChunkSize:    testRawChecksumChunkSize,
+			diffChecksumChunkSize:   testDiffChecksumChunkSize,
 		}
 		err = reconciler.SetupWithManager(mgr)
 		Expect(err).ToNot(HaveOccurred())
@@ -850,6 +882,36 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 			expectEnableChecksumVerifyIsFalse(ctx, deletionJobName(finbackup1))
 		})
 
+		It("should set ENABLE_CHECKSUM_VERIFY=true and checksum chunk sizes when skip-checksum-verify annotation is absent", func(ctx SpecContext) {
+			// Description:
+			//   Ensure that when a FinBackup does not have the skip-checksum-verify annotation,
+			//   the backup Job uses ENABLE_CHECKSUM_VERIFY=true and sets checksum chunk sizes.
+			//
+			// Arrange:
+			//   - Create a FinBackup without skip-checksum-verify annotation.
+			//
+			// Act:
+			//   - Make the FinBackup StoredToNode to trigger backup Job creation.
+			//
+			// Assert:
+			//   - The backup Job has ENABLE_CHECKSUM_VERIFY=true.
+			//   - The backup Job has checksum chunk sizes set.
+
+			By("creating a full FinBackup without skip-checksum-verify annotation")
+			finbackup1 := NewFinBackup(namespace, utils.GetUniqueName("fb-full-"), pvc.Name, pvc.Namespace, "test-node")
+			Expect(k8sClient.Create(ctx, finbackup1)).Should(Succeed())
+
+			// Act
+			By("making the FinBackup StoredToNode to trigger backup Job creation")
+			MakeFinBackupStoredToNode(ctx, finbackup1)
+
+			// Assert
+			By("checking ENABLE_CHECKSUM_VERIFY is true in the backup Job")
+			expectEnableChecksumVerifyIsTrue(ctx, backupJobName(finbackup1))
+			By("checking checksum chunk sizes are set in the backup Job")
+			expectChecksumChunkSizesInBackupJob(ctx, backupJobName(finbackup1))
+		})
+
 		It("should set ChecksumMismatched=True when backup Job exits with code 2", func(ctx SpecContext) {
 			// Description:
 			//   Ensure that when backup Job detects a checksum mismatch (exit code 2),
@@ -859,25 +921,20 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 			// Arrange:
 			//   - Create a full FinBackup to trigger backup Job creation.
 			//
-			// Act (1):
+			// Act:
 			//   - Wait for the backup Job to be created.
 			//   - Make the backup Job fail with exit code 2 (checksum mismatch).
 			//
-			// Assert (1):
+			// Assert:
 			//   - The first FinBackup has ChecksumMismatched=True condition.
-			//
-			// Act (2):
-			//   - Create a new incremental FinBackup.
-			//
-			// Assert (2):
-			//   - The incremental backup Job is not created due to checksum mismatch.
+			//   - The first FinBackup does not have StoredToNode=True condition.
 
 			// Arrange
 			By("creating a full FinBackup")
 			finbackup1 := NewFinBackup(namespace, utils.GetUniqueName("fb-full-"), pvc.Name, pvc.Namespace, "test-node")
 			Expect(k8sClient.Create(ctx, finbackup1)).Should(Succeed())
 
-			// Act (1)
+			// Act
 			By("waiting for the backup Job to be created")
 			backupJobKey := client.ObjectKey{Namespace: namespace, Name: backupJobName(finbackup1)}
 			Eventually(func(g Gomega, ctx SpecContext) {
@@ -888,7 +945,7 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 			By("making the backup Job fail with exit code 2")
 			makeJobFailWithExitCode(ctx, backupJobKey.Name, 2)
 
-			// Assert (1)
+			// Assert
 			By("checking the FinBackup has the condition ChecksumMismatched=True")
 			Eventually(func(g Gomega) {
 				var updated finv1.FinBackup
@@ -897,18 +954,12 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 				g.Expect(updated.IsChecksumMismatched()).Should(BeTrue())
 			}, "5s", "1s").Should(Succeed())
 
-			// Act (2)
-			By("creating an incremental FinBackup")
-			finbackup2 := NewFinBackup(namespace, utils.GetUniqueName("fb-incremental-"), pvc.Name, pvc.Namespace, "test-node")
-			Expect(k8sClient.Create(ctx, finbackup2)).Should(Succeed())
-
-			// Assert (2)
-			By("confirming backup Job is not created")
+			By("checking the FinBackup does not have StoredToNode=True condition")
 			Consistently(func(g Gomega) {
-				key := types.NamespacedName{Name: backupJobName(finbackup2), Namespace: namespace}
-				var job batchv1.Job
-				err := k8sClient.Get(ctx, key, &job)
-				g.Expect(err).To(MatchError(k8serrors.IsNotFound, "should not find the Job"))
+				var updated finv1.FinBackup
+				err := k8sClient.Get(ctx, client.ObjectKeyFromObject(finbackup1), &updated)
+				g.Expect(err).ShouldNot(HaveOccurred())
+				g.Expect(updated.IsStoredToNode()).Should(BeFalse())
 			}, "3s", "1s").Should(Succeed())
 		})
 
@@ -921,17 +972,12 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 			// Arrange:
 			//   - Create a full FinBackup and make it StoredToNode.
 			//
-			// Act (1):
+			// Act:
 			//   - Make the verification Job fail with exit code 2.
 			//
-			// Assert (1):
+			// Assert:
 			//   - The FinBackup has ChecksumMismatched=True condition.
-			//
-			// Act (2):
-			//   - Create a new incremental FinBackup.
-			//
-			// Assert (2):
-			//   - No backup Job is created for the incremental FinBackup.
+			//   - The FinBackup does not have Verified=True condition.
 
 			// Arrange
 			By("creating a full FinBackup")
@@ -939,11 +985,11 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 			Expect(k8sClient.Create(ctx, finbackup1)).Should(Succeed())
 			MakeFinBackupStoredToNode(ctx, finbackup1)
 
-			// Act (1)
+			// Act
 			By("making the verification Job fail with exit code 2")
 			makeJobFailWithExitCode(ctx, verificationJobName(finbackup1), 2)
 
-			// Assert (1)
+			// Assert
 			By("checking the FinBackup has the condition ChecksumMismatched=True")
 			Eventually(func(g Gomega) {
 				var updated finv1.FinBackup
@@ -952,18 +998,12 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 				g.Expect(updated.IsChecksumMismatched()).Should(BeTrue())
 			}, "5s", "1s").Should(Succeed())
 
-			// Act (2)
-			By("creating the incremental FinBackup")
-			finbackup2 := NewFinBackup(namespace, utils.GetUniqueName("fb-incremental-"), pvc.Name, pvc.Namespace, "test-node")
-			Expect(k8sClient.Create(ctx, finbackup2)).Should(Succeed())
-
-			// Assert (2)
-			By("confirming backup Job is not created")
+			By("checking the FinBackup does not have Verified=True condition")
 			Consistently(func(g Gomega) {
-				key := types.NamespacedName{Name: backupJobName(finbackup2), Namespace: namespace}
-				var job batchv1.Job
-				err := k8sClient.Get(ctx, key, &job)
-				g.Expect(err).To(MatchError(k8serrors.IsNotFound, "should not find the Job"))
+				var updated finv1.FinBackup
+				err := k8sClient.Get(ctx, client.ObjectKeyFromObject(finbackup1), &updated)
+				g.Expect(err).ShouldNot(HaveOccurred())
+				g.Expect(updated.IsVerifiedTrue()).Should(BeFalse())
 			}, "3s", "1s").Should(Succeed())
 		})
 
