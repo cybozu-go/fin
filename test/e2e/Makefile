@@ -88,10 +88,10 @@ create-loop-dev:
 setup-fin-volume: $(MINIKUBE_BIN) $(KUBECTL)
 	for node in $(MINIKUBE_PROFILE_NAME) $(MINIKUBE_PROFILE_NAME)-m02; do \
 		$(MINIKUBE) ssh -n $$node -- sudo dd if=/dev/zero of=fin-volume.img bs=1G seek=1 count=0; \
-		$(MINIKUBE) ssh -n $$node -- sudo losetup /dev/loop1 fin-volume.img || :; \
-		$(MINIKUBE) ssh -n $$node -- sudo mkfs.xfs /dev/loop1 || :; \
+		$(MINIKUBE) ssh -n $$node -- sudo losetup $(FIN_VOLUME_LOOP_DEV) fin-volume.img || :; \
+		$(MINIKUBE) ssh -n $$node -- sudo mkfs.xfs $(FIN_VOLUME_LOOP_DEV) || :; \
 		$(MINIKUBE) ssh -n $$node -- sudo mkdir -p /fin; \
-		$(MINIKUBE) ssh -n $$node -- sudo mount /dev/loop1 /fin; \
+		$(MINIKUBE) ssh -n $$node -- sudo mount $(FIN_VOLUME_LOOP_DEV) /fin; \
 		$(MINIKUBE) ssh -n $$node -- sudo chown -R 10000:10000 /fin; \
 		$(MINIKUBE) ssh -n $$node -- ls -ld /fin; \
 	done
@@ -149,6 +149,7 @@ setup-components:
 	# Disable webhooks for e2e tests
 	$(KUBECTL) -n $(NS) set env deployment/fin-controller-manager ENABLE_WEBHOOKS=false
 	$(KUBECTL) patch deploy -n $(NS) fin-controller-manager --type='json' -p='[{"op": "add", "path": "/spec/template/spec/containers/0/args/-", "value":"--raw-img-expansion-unit-size=10485760"}]'
+	$(KUBECTL) wait -n $(NS) --timeout=60s --for=condition=available deployment/fin-controller-manager
 
 .PHONY: do-test
 do-test: $(GINKGO) $(KUBECTL) $(MINIKUBE_BIN)
@@ -157,4 +158,9 @@ do-test: $(GINKGO) $(KUBECTL) $(MINIKUBE_BIN)
 	E2ETEST=1 \
 	KUBECTL=$(KUBECTL) \
 	MINIKUBE=$(MINIKUBE) \
-	$(GINKGO) --fail-fast -v $(GINKGO_FLAGS) .
+	$(GINKGO) --fail-fast -v $(GINKGO_FLAGS) .; \
+	if [ "$$?" -ne 0 ]; then \
+		echo "Controller logs"; \
+		$(KUBECTL) -n rook-ceph logs deployment/fin-controller-manager; \
+		exit 1; \
+	fi

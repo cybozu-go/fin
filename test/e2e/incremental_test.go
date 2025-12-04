@@ -240,7 +240,8 @@ func incrementalBackupTestSuite() {
 		Expect(rawImageData).To(Equal(dataOnIncrementalBackup), "Data in raw.img does not match the expected data")
 
 		VerifyDeletionOfJobsForBackup(ctx, k8sClient, finbackup1)
-		VerifyDeletionOfSnapshotInFinBackup(ctx, ctrlClient, finbackup1)
+		err = VerifyDeletionOfSnapshotInFinBackup(ctx, finbackup1)
+		Expect(err).NotTo(HaveOccurred())
 	})
 
 	// Description:

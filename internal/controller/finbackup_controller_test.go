@@ -326,7 +326,7 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(finbackup2), finbackup2)).Should(Succeed())
 			Expect(finbackup2.GetLabels()).To(HaveKeyWithValue(labelBackupTargetPVCUID, string(pvc1.GetUID())))
 			annotations := finbackup2.GetAnnotations()
-			Expect(annotations).To(HaveKeyWithValue(annotationBackupTargetRBDImage, rbdImageName))
+			Expect(annotations).To(HaveKeyWithValue(AnnotationBackupTargetRBDImage, rbdImageName))
 			Expect(annotations).To(HaveKeyWithValue(annotationRBDPool, rbdPoolName))
 
 			// Incremental backup specific: the diff-from annotation should exist and point to the SnapID of the full backup.
@@ -813,7 +813,7 @@ var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
 			var updated finv1.FinBackup
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(finbackup), &updated)).Should(Succeed())
 			Expect(updated.GetLabels()).To(HaveKeyWithValue(labelBackupTargetPVCUID, string(pvc.GetUID())))
-			Expect(updated.GetAnnotations()).To(HaveKeyWithValue(annotationBackupTargetRBDImage, rbdImageName))
+			Expect(updated.GetAnnotations()).To(HaveKeyWithValue(AnnotationBackupTargetRBDImage, rbdImageName))
 			Expect(updated.GetAnnotations()).To(HaveKeyWithValue(annotationRBDPool, rbdPoolName))
 		})
 	})

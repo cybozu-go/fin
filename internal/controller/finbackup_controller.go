@@ -45,7 +45,7 @@ const (
 	labelComponentDeletionJob = "deletion-job"
 
 	// Annotations
-	annotationBackupTargetRBDImage = "fin.cybozu.io/backup-target-rbd-image"
+	AnnotationBackupTargetRBDImage = "fin.cybozu.io/backup-target-rbd-image"
 	annotationDiffFrom             = "fin.cybozu.io/diff-from"
 	annotationFinBackupName        = "fin.cybozu.io/finbackup-name"
 	annotationFinBackupNamespace   = "fin.cybozu.io/finbackup-namespace"
@@ -390,7 +390,7 @@ func (r *FinBackupReconciler) createSnapshot(ctx context.Context, backup *finv1.
 	if annotations == nil {
 		annotations = map[string]string{}
 	}
-	annotations[annotationBackupTargetRBDImage] = rbdImage
+	annotations[AnnotationBackupTargetRBDImage] = rbdImage
 	annotations[annotationRBDPool] = rbdPool
 	backup.SetAnnotations(annotations)
 
@@ -722,7 +722,7 @@ func (r *FinBackupReconciler) getRBDPoolAndImageFromPVC(
 
 func (r *FinBackupReconciler) getRBDPoolAndImage(ctx context.Context, backup *finv1.FinBackup) (string, string, error) {
 	rbdPool := backup.GetAnnotations()[annotationRBDPool]
-	rbdImage := backup.GetAnnotations()[annotationBackupTargetRBDImage]
+	rbdImage := backup.GetAnnotations()[AnnotationBackupTargetRBDImage]
 	if rbdPool != "" && rbdImage != "" {
 		return rbdPool, rbdImage, nil
 	}
@@ -883,7 +883,7 @@ func (r *FinBackupReconciler) createOrUpdateBackupJob(
 					},
 					{
 						Name:  "RBD_IMAGE_NAME",
-						Value: backup.GetAnnotations()[annotationBackupTargetRBDImage],
+						Value: backup.GetAnnotations()[AnnotationBackupTargetRBDImage],
 					},
 					{
 						Name:  "BACKUP_SNAPSHOT_ID",
