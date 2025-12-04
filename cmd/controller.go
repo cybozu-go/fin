@@ -67,9 +67,9 @@ func controllerMain(args []string) error {
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
 	fs.Uint64Var(&rawImgExpansionUnitSize, "raw-img-expansion-unit-size", ceph.DefaultExpansionUnitSize,
 		fmt.Sprintf("Set %s in jobs.", controller.EnvRawImgExpansionUnitSize))
-	fs.Uint64Var(&rawChecksumChunkSize, "raw-checksum-chunk-size", defaultRawChecksumChunkSize,
+	fs.Uint64Var(&rawChecksumChunkSize, "raw-checksum-chunk-size", 64*1024,
 		fmt.Sprintf("Set %s in jobs.", controller.EnvRawChecksumChunkSize))
-	fs.Uint64Var(&diffChecksumChunkSize, "diff-checksum-chunk-size", defaultDiffChecksumChunkSize,
+	fs.Uint64Var(&diffChecksumChunkSize, "diff-checksum-chunk-size", 2*1024*1024,
 		fmt.Sprintf("Set %s in jobs.", controller.EnvDiffChecksumChunkSize))
 	fs.StringVar(&webhookCertPath, "webhook-cert-path", "",
 		"The file path of the webhook certificate file.")

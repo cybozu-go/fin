@@ -61,7 +61,6 @@ const (
 var (
 	errNonRetryableReconcile = errors.New("non retryable reconciliation error; " +
 		"reconciliation must not keep going nor be retried")
-	errChecksumMismatchDetected = errors.New("checksum mismatched detected")
 )
 
 // FinBackupReconciler reconciles a FinBackup object
@@ -150,7 +149,8 @@ func (r *FinBackupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	if backup.IsChecksumMismatched() {
 		annotations := backup.GetAnnotations()
 		if annotations != nil && annotations[annotationSkipChecksumVerify] != annotationValueTrue {
-			return ctrl.Result{}, errChecksumMismatchDetected
+			logger.Info("checksum mismatch detected")
+			return ctrl.Result{}, nil
 		}
 	}
 
@@ -170,9 +170,6 @@ func (r *FinBackupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		}
 		if err != nil || !result.IsZero() {
 			return result, err
-		}
-		if !backup.IsStoredToNode() {
-			return ctrl.Result{}, nil
 		}
 	}
 
@@ -329,7 +326,7 @@ func (r *FinBackupReconciler) reconcileBackup(
 	case JobStatusComplete:
 		// do nothing
 	case JobStatusInProgress:
-		return ctrl.Result{}, nil
+		return ctrl.Result{}, errNonRetryableReconcile
 	case JobStatusFailedWithExitCode2:
 		if _, err := patchFinBackupCondition(ctx, r.Client, &backup, metav1.Condition{
 			Type:    finv1.BackupConditionChecksumMismatched,
@@ -353,23 +350,6 @@ func (r *FinBackupReconciler) reconcileBackup(
 			return ctrl.Result{}, err
 		}
 		metrics.SetBackupCreateStatus(updatedBackup, r.cephClusterNamespace, true, isFullBackup(updatedBackup))
-	}
-	var job batchv1.Job
-	err = r.Get(ctx, client.ObjectKey{Namespace: r.cephClusterNamespace, Name: backupJobName(&backup)}, &job)
-	if err != nil {
-		if k8serrors.IsNotFound(err) {
-			return ctrl.Result{}, errNonRetryableReconcile
-		}
-		return ctrl.Result{}, err
-	}
-
-	done, err := jobCompleted(&job)
-	if err != nil {
-		logger.Error(err, "job failed")
-		return ctrl.Result{}, err
-	}
-	if !done {
-		return ctrl.Result{}, errNonRetryableReconcile
 	}
 
 	updatedBackup := backup.DeepCopy()
@@ -539,7 +519,7 @@ func (r *FinBackupReconciler) reconcileDelete(
 				Type:    finv1.BackupConditionChecksumMismatched,
 				Status:  metav1.ConditionTrue,
 				Reason:  "ChecksumMismatch",
-				Message: "CData corruption detected: checksum mismatch",
+				Message: "Data corruption detected: checksum mismatch",
 			}); err != nil {
 				return ctrl.Result{}, fmt.Errorf("failed to set FinBackup ChecksumMismatched condition to true: %w", err)
 			}

@@ -262,21 +262,6 @@ func (r *FinRestoreReconciler) reconcileCreateOrUpdate(
 		return ctrl.Result{}, fmt.Errorf("unknown restore job status: %d", jobStatus.Status)
 	}
 
-	var job batchv1.Job
-	err = r.Get(ctx, client.ObjectKey{Namespace: r.cephClusterNamespace, Name: restoreJobName(restore)}, &job)
-	if err != nil {
-		return ctrl.Result{}, fmt.Errorf("failed to get restore job: %w", err)
-	}
-
-	done, err := jobCompleted(&job)
-	if err != nil {
-		logger.Error(err, "restore job failed")
-		return ctrl.Result{}, err
-	}
-	if !done {
-		return ctrl.Result{}, nil
-	}
-
 	updatedRestore := restore.DeepCopy()
 	meta.SetStatusCondition(&updatedRestore.Status.Conditions, metav1.Condition{
 		Type:    finv1.RestoreConditionReadyToUse,
