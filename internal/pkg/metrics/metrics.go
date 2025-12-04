@@ -102,7 +102,7 @@ func DeleteFinBackupConfigInfo(fbc *finv1.FinBackupConfig, cephNamespace string)
 	finbackupconfigInfo.DeleteLabelValues(cephNamespace, fbc.Spec.PVC, fbc.Spec.PVCNamespace, fbc.Namespace, fbc.Name, fbc.Spec.Node)
 }
 
-func SetBackupDurationSeconds(fb *finv1.FinBackup, untilCondition, cephNamespace string, fullBackup bool) {
+func SetBackupDurationSeconds(fb *finv1.FinBackup, untilCondition, cephNamespace string) {
 	if fb == nil {
 		return
 	}
@@ -129,15 +129,6 @@ func SetBackupCreateStatus(fb *finv1.FinBackup, cephNamespace string, inProgress
 	}
 	backupCreateStatus.WithLabelValues(cephNamespace, fb.Spec.PVCNamespace, fb.Spec.PVC, backupKindFull).Set(fullValue)
 	backupCreateStatus.WithLabelValues(cephNamespace, fb.Spec.PVCNamespace, fb.Spec.PVC, backupKindIncremental).Set(incrementalValue)
-}
-
-func DeleteBackupMetrics(fb *finv1.FinBackup, cephNamespace string) {
-	if fb == nil {
-		return
-	}
-	backupCreateStatus.DeleteLabelValues(cephNamespace, fb.Spec.PVCNamespace, fb.Spec.PVC, backupKindFull)
-	backupCreateStatus.DeleteLabelValues(cephNamespace, fb.Spec.PVCNamespace, fb.Spec.PVC, backupKindIncremental)
-	backupDurationSeconds.DeleteLabelValues(cephNamespace, fb.Spec.PVC, fb.Spec.PVCNamespace)
 }
 
 func SetRestoreInfo(fr *finv1.FinRestore, cephNamespace, pvcNamespace, pvcName string) {
