@@ -528,7 +528,6 @@ func (r *FinBackupReconciler) reconcileDelete(
 		logger.Error(err, "failed to remove finalizer")
 		return ctrl.Result{}, err
 	}
-	metrics.DeleteBackupMetrics(backup, r.cephClusterNamespace)
 
 	/*
 		The following Get loop is to make the deletion
@@ -1133,7 +1132,7 @@ func (r *FinBackupReconciler) reconcileVerification(
 	logger := log.FromContext(ctx)
 	if r.checkSkipVerificationCondition(backup) {
 		logger.Info("Set metrics and skip verification as per condition")
-		metrics.SetBackupDurationSeconds(backup, finv1.BackupConditionStoredToNode, r.cephClusterNamespace, isFullBackup(backup))
+		metrics.SetBackupDurationSeconds(backup, finv1.BackupConditionStoredToNode, r.cephClusterNamespace)
 		metrics.SetBackupCreateStatus(backup, r.cephClusterNamespace, false, isFullBackup(backup))
 		return r.skipVerification(ctx, backup)
 	}
@@ -1176,7 +1175,7 @@ func (r *FinBackupReconciler) reconcileVerification(
 	}
 
 	logger.Info("Verification completed successfully")
-	metrics.SetBackupDurationSeconds(backup, finv1.BackupConditionVerified, r.cephClusterNamespace, isFullBackup(backup))
+	metrics.SetBackupDurationSeconds(backup, finv1.BackupConditionVerified, r.cephClusterNamespace)
 	metrics.SetBackupCreateStatus(backup, r.cephClusterNamespace, false, isFullBackup(backup))
 	return ctrl.Result{}, nil
 }
