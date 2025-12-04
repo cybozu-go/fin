@@ -106,6 +106,7 @@ func NewFinBackupReconciler(
 //+kubebuilder:rbac:groups=core,resources=persistentvolumeclaims,verbs=get;list;watch
 //+kubebuilder:rbac:groups=core,resources=persistentvolumes,verbs=get;list;watch
 //+kubebuilder:rbac:groups=core,resources=pods,verbs=get;list;watch
+//+kubebuilder:rbac:groups=core,resources=configmaps,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;update;patch;delete
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
@@ -552,6 +553,10 @@ func (r *FinBackupReconciler) reconcileDelete(
 		}
 	}
 
+	if err := r.deleteChecksumVerifyConfigMap(ctx, backup); err != nil {
+		return ctrl.Result{}, err
+	}
+
 	controllerutil.RemoveFinalizer(backup, FinBackupFinalizerName)
 	if err = r.Update(ctx, backup); err != nil {
 		logger.Error(err, "failed to remove finalizer")
@@ -763,10 +768,70 @@ func cleanupJobName(backup *finv1.FinBackup) string {
 	return "fin-cleanup-" + string(backup.GetUID())
 }
 
+func checksumVerifyConfigMapName(backup *finv1.FinBackup) string {
+	return "fin-checksum-verify-" + string(backup.GetUID())
+}
+
+func (r *FinBackupReconciler) createOrUpdateChecksumVerifyConfigMap(
+	ctx context.Context,
+	backup *finv1.FinBackup,
+) error {
+	cm := corev1.ConfigMap{}
+	cm.SetName(checksumVerifyConfigMapName(backup))
+	cm.SetNamespace(r.cephClusterNamespace)
+
+	_, err := ctrl.CreateOrUpdate(ctx, r.Client, &cm, func() error {
+		labels := cm.GetLabels()
+		if labels == nil {
+			labels = map[string]string{}
+		}
+		labels["app.kubernetes.io/name"] = labelAppNameValue
+		labels["app.kubernetes.io/component"] = labelComponentBackupJob
+		cm.SetLabels(labels)
+
+		annotations := cm.GetAnnotations()
+		if annotations == nil {
+			annotations = map[string]string{}
+		}
+		annotations[annotationFinBackupName] = backup.GetName()
+		annotations[annotationFinBackupNamespace] = backup.GetNamespace()
+		cm.SetAnnotations(annotations)
+
+		if cm.Data == nil {
+			cm.Data = map[string]string{}
+		}
+		cm.Data[EnvEnableChecksumVerify] = strconv.FormatBool(
+			backup.GetAnnotations()[annotationSkipChecksumVerify] != annotationValueTrue,
+		)
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create or update checksum verify ConfigMap: %w", err)
+	}
+	return nil
+}
+
+func (r *FinBackupReconciler) deleteChecksumVerifyConfigMap(ctx context.Context, backup *finv1.FinBackup) error {
+	cm := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      checksumVerifyConfigMapName(backup),
+			Namespace: r.cephClusterNamespace,
+		},
+	}
+	if err := r.Delete(ctx, cm); err != nil && !k8serrors.IsNotFound(err) {
+		return fmt.Errorf("failed to delete checksum verify ConfigMap: %w", err)
+	}
+	return nil
+}
+
 func (r *FinBackupReconciler) createOrUpdateBackupJob(
 	ctx context.Context, backup *finv1.FinBackup, diffFrom string,
 	backupTargetPVCUID string, maxPartSize *resource.Quantity,
 ) error {
+	if err := r.createOrUpdateChecksumVerifyConfigMap(ctx, backup); err != nil {
+		return err
+	}
+
 	var job batchv1.Job
 	job.SetName(backupJobName(backup))
 	job.SetNamespace(r.cephClusterNamespace)
@@ -919,8 +984,15 @@ func (r *FinBackupReconciler) createOrUpdateBackupJob(
 						Value: strconv.FormatUint(r.diffChecksumChunkSize, 10),
 					},
 					{
-						Name:  "ENABLE_CHECKSUM_VERIFY",
-						Value: strconv.FormatBool(backup.GetAnnotations()[annotationSkipChecksumVerify] != annotationValueTrue),
+						Name: EnvEnableChecksumVerify,
+						ValueFrom: &corev1.EnvVarSource{
+							ConfigMapKeyRef: &corev1.ConfigMapKeySelector{
+								LocalObjectReference: corev1.LocalObjectReference{
+									Name: checksumVerifyConfigMapName(backup),
+								},
+								Key: EnvEnableChecksumVerify,
+							},
+						},
 					},
 				},
 				Image:           r.podImage,
@@ -991,6 +1063,10 @@ func (r *FinBackupReconciler) createOrUpdateBackupJob(
 
 //nolint:dupl
 func (r *FinBackupReconciler) createOrUpdateDeletionJob(ctx context.Context, backup *finv1.FinBackup) error {
+	if err := r.createOrUpdateChecksumVerifyConfigMap(ctx, backup); err != nil {
+		return err
+	}
+
 	var job batchv1.Job
 	job.SetName(deletionJobName(backup))
 	job.SetNamespace(r.cephClusterNamespace)
@@ -1074,8 +1150,15 @@ func (r *FinBackupReconciler) createOrUpdateDeletionJob(ctx context.Context, bac
 						Value: strconv.FormatUint(r.rawImgExpansionUnitSize, 10),
 					},
 					{
-						Name:  "ENABLE_CHECKSUM_VERIFY",
-						Value: strconv.FormatBool(backup.GetAnnotations()[annotationSkipChecksumVerify] != annotationValueTrue),
+						Name: EnvEnableChecksumVerify,
+						ValueFrom: &corev1.EnvVarSource{
+							ConfigMapKeyRef: &corev1.ConfigMapKeySelector{
+								LocalObjectReference: corev1.LocalObjectReference{
+									Name: checksumVerifyConfigMapName(backup),
+								},
+								Key: EnvEnableChecksumVerify,
+							},
+						},
 					},
 				},
 				Image:           r.podImage,
@@ -1325,6 +1408,10 @@ func (r *FinBackupReconciler) createOrUpdateVerificationJob(
 	backup *finv1.FinBackup,
 	pvc *corev1.PersistentVolumeClaim,
 ) error {
+	if err := r.createOrUpdateChecksumVerifyConfigMap(ctx, backup); err != nil {
+		return err
+	}
+
 	var job batchv1.Job
 	job.SetName(verificationJobName(backup))
 	job.SetNamespace(r.cephClusterNamespace)
@@ -1402,8 +1489,15 @@ func (r *FinBackupReconciler) createOrUpdateVerificationJob(
 						Value: strconv.FormatUint(r.rawImgExpansionUnitSize, 10),
 					},
 					{
-						Name:  "ENABLE_CHECKSUM_VERIFY",
-						Value: strconv.FormatBool(backup.GetAnnotations()[annotationSkipChecksumVerify] != annotationValueTrue),
+						Name: EnvEnableChecksumVerify,
+						ValueFrom: &corev1.EnvVarSource{
+							ConfigMapKeyRef: &corev1.ConfigMapKeySelector{
+								LocalObjectReference: corev1.LocalObjectReference{
+									Name: checksumVerifyConfigMapName(backup),
+								},
+								Key: EnvEnableChecksumVerify,
+							},
+						},
 					},
 				},
 				Image:           r.podImage,

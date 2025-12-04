@@ -108,12 +108,22 @@ func expectEnableChecksumVerifyIsFalse(ctx SpecContext, jobName string) {
 		var job batchv1.Job
 		g.Expect(k8sClient.Get(ctx, jobKey, &job)).To(Succeed())
 		g.Expect(job.Spec.Template.Spec.Containers).ToNot(BeEmpty())
-		envs := job.Spec.Template.Spec.Containers[0].Env
-		envMap := map[string]string{}
-		for _, e := range envs {
-			envMap[e.Name] = e.Value
+		var envVar *corev1.EnvVar
+		for i := range job.Spec.Template.Spec.Containers[0].Env {
+			if job.Spec.Template.Spec.Containers[0].Env[i].Name == EnvEnableChecksumVerify {
+				envVar = &job.Spec.Template.Spec.Containers[0].Env[i]
+				break
+			}
 		}
-		g.Expect(envMap).To(HaveKeyWithValue("ENABLE_CHECKSUM_VERIFY", "false"))
+		g.Expect(envVar).ToNot(BeNil())
+		g.Expect(envVar.ValueFrom).ToNot(BeNil())
+		g.Expect(envVar.ValueFrom.ConfigMapKeyRef).ToNot(BeNil())
+		g.Expect(envVar.ValueFrom.ConfigMapKeyRef.Key).To(Equal(EnvEnableChecksumVerify))
+
+		var cm corev1.ConfigMap
+		cmKey := client.ObjectKey{Namespace: namespace, Name: envVar.ValueFrom.ConfigMapKeyRef.Name}
+		g.Expect(k8sClient.Get(ctx, cmKey, &cm)).To(Succeed())
+		g.Expect(cm.Data).To(HaveKeyWithValue(EnvEnableChecksumVerify, "false"))
 	}, "5s", "1s").WithContext(ctx).Should(Succeed())
 }
 
