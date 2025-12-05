@@ -56,6 +56,11 @@ func verificationTestSuite() {
 		// Arrange
 		finbackup := CreateBackup(ctx, ctrlClient, rookNamespace, pvc, nodes[0])
 
+		By("verifying checksum file is created")
+		rawChecksumPath := filepath.Join("/fin", pvc.Namespace, pvc.Name, "raw.img.csum")
+		_, stderr, err := minikubeSSH(nodes[0], nil, "test", "-f", rawChecksumPath)
+		Expect(err).NotTo(HaveOccurred(), "raw.img.csum should exist. stderr: "+string(stderr))
+
 		// Act
 		By("restoring from the backup")
 		finrestore := CreateRestore(ctx, ctrlClient,
