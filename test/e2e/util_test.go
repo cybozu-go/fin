@@ -733,3 +733,46 @@ func VerifyDeletionOfResourcesForRestore(
 	_, stderr, err = kubectl("wait", "pv", restoreJobName, "--for=delete", "--timeout=3m")
 	Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
 }
+
+func WaitForFinBackupChecksumMismatch(ctx context.Context, c client.Client, finbackup *finv1.FinBackup, timeout time.Duration) error {
+	return wait.PollUntilContextTimeout(ctx, time.Second, timeout, true, func(ctx context.Context) (bool, error) {
+		fb := &finv1.FinBackup{}
+		err := c.Get(ctx, client.ObjectKeyFromObject(finbackup), fb)
+		if err != nil {
+			return false, err
+		}
+
+		// Look for ChecksumMismatched condition
+		for _, cond := range fb.Status.Conditions {
+			if cond.Type == finv1.BackupConditionChecksumMismatched && cond.Status == metav1.ConditionTrue {
+				return true, nil
+			}
+		}
+		return false, nil
+	})
+}
+
+func CorruptFileOnNode(node, path string) {
+	GinkgoHelper()
+
+	By("corrupting file " + path)
+	_, stderr, err := minikubeSSH(node, nil,
+		"sudo", "dd", "if=/dev/urandom", "of="+path, "bs=1", "count=1", "conv=notrunc")
+	Expect(err).NotTo(HaveOccurred(), "failed to corrupt file. stderr: "+string(stderr))
+}
+
+func ExpectDiffChecksumExists(node string, finbackup *finv1.FinBackup, pvc *corev1.PersistentVolumeClaim) {
+	GinkgoHelper()
+	Expect(finbackup.Status.SnapID).NotTo(BeNil())
+	diffChecksumPath := filepath.Join("/fin", pvc.Namespace, pvc.Name, "diff", fmt.Sprintf("%d", *finbackup.Status.SnapID), "part-0.csum")
+	_, stderr, err := minikubeSSH(node, nil, "test", "-f", diffChecksumPath)
+	Expect(err).NotTo(HaveOccurred(), "diff checksum file should exist. stderr: "+string(stderr))
+}
+
+func ExpectDiffChecksumNotExists(node string, finbackup *finv1.FinBackup, pvc *corev1.PersistentVolumeClaim) {
+	GinkgoHelper()
+	Expect(finbackup.Status.SnapID).NotTo(BeNil())
+	diffChecksumPath := filepath.Join("/fin", pvc.Namespace, pvc.Name, "diff", fmt.Sprintf("%d", *finbackup.Status.SnapID), "part-0.csum")
+	_, stderr, err := minikubeSSH(node, nil, "test", "!", "-e", diffChecksumPath)
+	Expect(err).NotTo(HaveOccurred(), "diff checksum file should be deleted. stderr: "+string(stderr))
+}

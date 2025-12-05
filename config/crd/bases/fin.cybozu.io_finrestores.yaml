@@ -49,6 +49,13 @@ spec:
           spec:
             description: FinRestoreSpec defines the desired state of FinRestore
             properties:
+              allowChecksumMismatched:
+                description: '''allowChecksumMismatched'' specifies whether to allow
+                  restore from a checksum-mismatched backup'
+                type: boolean
+                x-kubernetes-validations:
+                - message: allowChecksumMismatched is immutable
+                  rule: self == oldSelf
               allowUnverified:
                 description: '''allowUnverified'' specifies whether to allow restore
                   from an unverified backup'

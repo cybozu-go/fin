@@ -29,6 +29,10 @@ type FinRestoreSpec struct {
 	// 'allowUnverified' specifies whether to allow restore from an unverified backup
 	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="allowUnverified is immutable"
 	AllowUnverified bool `json:"allowUnverified,omitempty"`
+
+	// 'allowChecksumMismatched' specifies whether to allow restore from a checksum-mismatched backup
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="allowChecksumMismatched is immutable"
+	AllowChecksumMismatched bool `json:"allowChecksumMismatched,omitempty"`
 }
 
 // FinRestoreStatus defines the observed state of FinRestore

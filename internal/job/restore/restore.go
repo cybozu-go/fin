@@ -12,30 +12,28 @@ import (
 )
 
 type Restore struct {
-	repo                  model.FinRepository
-	rbdRepo               model.RBDRepository
-	nodeLocalVolumeRepo   model.NodeLocalVolumeRepository
-	restoreVol            model.RestoreVolume
-	actionUID             string
-	targetSnapshotID      int
-	rawImageChunkSize     uint64
-	diffChecksumChunkSize uint64
-	enableChecksumVerify  bool
-	targetPVCUID          string
+	repo                 model.FinRepository
+	rbdRepo              model.RBDRepository
+	nodeLocalVolumeRepo  model.NodeLocalVolumeRepository
+	restoreVol           model.RestoreVolume
+	actionUID            string
+	targetSnapshotID     int
+	rawImageChunkSize    uint64
+	enableChecksumVerify bool
+	targetPVCUID         string
 }
 
 func NewRestore(in *input.Restore) *Restore {
 	return &Restore{
-		repo:                  in.Repo,
-		rbdRepo:               in.RBDRepo,
-		nodeLocalVolumeRepo:   in.NodeLocalVolumeRepo,
-		restoreVol:            in.RestoreVol,
-		actionUID:             in.ActionUID,
-		targetSnapshotID:      in.TargetSnapshotID,
-		rawImageChunkSize:     in.RawImageChunkSize,
-		diffChecksumChunkSize: in.DiffChecksumChunkSize,
-		enableChecksumVerify:  in.EnableChecksumVerify,
-		targetPVCUID:          in.TargetPVCUID,
+		repo:                 in.Repo,
+		rbdRepo:              in.RBDRepo,
+		nodeLocalVolumeRepo:  in.NodeLocalVolumeRepo,
+		restoreVol:           in.RestoreVol,
+		actionUID:            in.ActionUID,
+		targetSnapshotID:     in.TargetSnapshotID,
+		rawImageChunkSize:    in.RawImageChunkSize,
+		enableChecksumVerify: in.EnableChecksumVerify,
+		targetPVCUID:         in.TargetPVCUID,
 	}
 }
 
@@ -176,7 +174,7 @@ func (r *Restore) doRestoreDiffPhase(privateData *restorePrivateData, metadata *
 	case 0:
 		// No diffs to apply, just return.
 	case 1:
-		err := r.loopApplyDiff(privateData, metadata.Raw, metadata.Diff[0])
+		err := r.loopApplyDiff(privateData, metadata.Raw, metadata.Diff[0], uint64(metadata.DiffChecksumChunkSize))
 		if err != nil {
 			return fmt.Errorf("failed to apply diffs: %w", err)
 		}
@@ -191,7 +189,9 @@ func (r *Restore) doRestoreDiffPhase(privateData *restorePrivateData, metadata *
 func (r *Restore) loopApplyDiff(
 	privateData *restorePrivateData,
 	source *job.BackupMetadataEntry,
-	target *job.BackupMetadataEntry) error {
+	target *job.BackupMetadataEntry,
+	diffChecksumChunkSize uint64,
+) error {
 	partCount := int(math.Ceil(float64(target.SnapSize) / float64(target.PartSize)))
 	for i := privateData.NextDiffPart; i < partCount; i++ {
 		sourceSnapshotName, targetSnapshotName :=
@@ -203,7 +203,8 @@ func (r *Restore) loopApplyDiff(
 			diffPartPath,
 			sourceSnapshotName,
 			targetSnapshotName,
-			r.diffChecksumChunkSize,
+			diffChecksumChunkSize,
+			r.enableChecksumVerify,
 		); err != nil {
 			return fmt.Errorf("failed to apply diff part %d: %w", i, err)
 		}
