@@ -78,4 +78,5 @@ var _ = Describe("Fin", func() {
 	Context("delete incremental backup", Label("delete-incremental-backup"), Label("misc"), Ordered,
 		deleteIncrementalBackupTestSuite)
 	Context("pvc", Label("pvc-deletion"), Label("misc"), Ordered, pvcDeletionTestSuite)
+	Context("checksum mismatch", Label("checksum"), Label("misc"), Ordered, checksumMismatchTestSuite)
 })

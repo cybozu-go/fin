@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"path"
+	"path/filepath"
 	"time"
 
 	"github.com/cybozu-go/fin/test/utils"
@@ -53,6 +54,11 @@ func verificationTestSuite() {
 	It("should verify and restore backup data", func(ctx SpecContext) {
 		// Arrange
 		finbackup := CreateBackup(ctx, ctrlClient, rookNamespace, pvc, nodes[0])
+
+		By("verifying checksum file is created")
+		rawChecksumPath := filepath.Join("/fin", pvc.Namespace, pvc.Name, "raw.img.csum")
+		_, stderr, err := minikubeSSH(nodes[0], nil, "test", "-f", rawChecksumPath)
+		Expect(err).NotTo(HaveOccurred(), "raw.img.csum should exist. stderr: "+string(stderr))
 
 		// Act
 		By("restoring from the backup")

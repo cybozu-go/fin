@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"path/filepath"
 	"time"
 
 	finv1 "github.com/cybozu-go/fin/api/v1"
@@ -8,6 +9,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 )
 
 func fullBackupTestSuite() {
@@ -50,6 +52,11 @@ func fullBackupTestSuite() {
 	//     with the same data as the first 4KiB of the PVC.
 	It("should create full backup", func(ctx SpecContext) {
 		finbackup = CreateBackup(ctx, ctrlClient, rookNamespace, pvc, nodes[0])
+
+		By("verifying checksum file is created")
+		rawChecksumPath := filepath.Join("/fin", pvc.Namespace, pvc.Name, "raw.img.csum")
+		_, stderr, err := minikubeSSH(nodes[0], nil, "test", "-f", rawChecksumPath)
+		Expect(err).NotTo(HaveOccurred(), "raw.img.csum should exist. stderr: "+string(stderr))
 
 		VerifyRawImage(pvc, nodes[0], writtenData)
 	})
@@ -203,6 +210,21 @@ func fullBackupTestSuite() {
 		for _, fr := range finrestores {
 			err = DeleteRestorePVC(ctx, k8sClient, fr)
 			Expect(err).NotTo(HaveOccurred())
+		}
+
+		By("deleting the backup and verifying checksum file is also removed")
+		if finbackup != nil {
+			err = DeleteFinBackup(ctx, ctrlClient, finbackup)
+			if err != nil && !apierrors.IsNotFound(err) {
+				Expect(err).NotTo(HaveOccurred())
+			}
+			err = WaitForFinBackupDeletion(ctx, ctrlClient, finbackup, 2*time.Minute)
+			Expect(err).NotTo(HaveOccurred())
+
+			By("verifying checksum file is deleted")
+			rawChecksumPath := filepath.Join("/fin", pvc.Namespace, pvc.Name, "raw.img.csum")
+			_, _, err := minikubeSSH(nodes[0], nil, "test", "!", "-e", rawChecksumPath)
+			Expect(err).NotTo(HaveOccurred(), "raw.img.csum should be deleted")
 		}
 
 		By("deleting the pod to write data to the PVC")

@@ -106,11 +106,17 @@ func incrementalBackupTestSuite() {
 		Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
 		Expect(rawImageData).To(Equal(dataOnFullBackup), "Data in raw.img does not match the expected data")
 
+		By("verifying the existence of checksum files")
+		rawChecksumPath := filepath.Join(volumePath, "raw.img.csum")
+		_, stderr, err = minikubeSSH(nodes[0], nil, "test", "-f", rawChecksumPath)
+		Expect(err).NotTo(HaveOccurred(), "raw.img.csum should exist. stderr: "+string(stderr))
+
 		By("verifying the existence of the diff file")
 		Expect(ctrlClient.Get(ctx, client.ObjectKeyFromObject(finbackup2), finbackup2)).NotTo(HaveOccurred())
 		_, stderr, err = minikubeSSH(nodes[0], nil,
 			"ls", filepath.Join(volumePath, "diff", strconv.Itoa(*finbackup2.Status.SnapID), "part-0"))
 		Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr), "diff file does not exist")
+		ExpectDiffChecksumExists(nodes[0], finbackup2, pvc)
 	})
 
 	// CSATEST-1618
@@ -225,12 +231,18 @@ func incrementalBackupTestSuite() {
 		err = ctrlClient.Get(ctx, client.ObjectKeyFromObject(finbackup2), &dummy)
 		Expect(err).NotTo(HaveOccurred())
 
-		By("verifying the non-existence of the diff file")
+		By("verifying the non-existence of the diff file and its checksum")
 		Expect(ctrlClient.Get(ctx, client.ObjectKeyFromObject(finbackup2), finbackup2)).NotTo(HaveOccurred())
 		var stderr []byte
 		_, stderr, err = minikubeSSH(nodes[0], nil,
 			"ls", filepath.Join(volumePath, "diff", strconv.Itoa(*finbackup2.Status.SnapID), "part-0"))
-		Expect(err).To(HaveOccurred(), "stderr: "+string(stderr), "diff file does not exist")
+		Expect(err).To(HaveOccurred(), "stderr: "+string(stderr), "diff file should not exist")
+		ExpectDiffChecksumNotExists(nodes[0], finbackup2, pvc)
+
+		By("verifying raw.img.csum still exists after merge")
+		rawChecksumPath := filepath.Join(volumePath, "raw.img.csum")
+		_, stderr, err = minikubeSSH(nodes[0], nil, "test", "-f", rawChecksumPath)
+		Expect(err).NotTo(HaveOccurred(), "raw.img.csum should still exist after merge. stderr: "+string(stderr))
 
 		By("verifying the data in raw.img as incremental backup")
 		var rawImageData []byte
@@ -280,4 +292,5 @@ func incrementalBackupTestSuite() {
 		VerifyDataInRestorePVC(ctx, k8sClient, restore, dataOnIncrementalBackup)
 		VerifySizeOfRestorePVC(ctx, ctrlClient, restore)
 	})
+
 }

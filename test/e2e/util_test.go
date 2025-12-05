@@ -8,6 +8,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"time"
 
 	finv1 "github.com/cybozu-go/fin/api/v1"
@@ -732,4 +734,65 @@ func VerifyDeletionOfResourcesForRestore(
 	By("verifying the deletion of the restore job PV")
 	_, stderr, err = kubectl("wait", "pv", restoreJobName, "--for=delete", "--timeout=3m")
 	Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
+}
+
+func WaitForFinBackupChecksumMismatch(ctx context.Context, c client.Client, finbackup *finv1.FinBackup, timeout time.Duration) error {
+	return wait.PollUntilContextTimeout(ctx, time.Second, timeout, true, func(ctx context.Context) (bool, error) {
+		fb := &finv1.FinBackup{}
+		err := c.Get(ctx, client.ObjectKeyFromObject(finbackup), fb)
+		if err != nil {
+			return false, err
+		}
+
+		for _, cond := range fb.Status.Conditions {
+			if cond.Type == finv1.BackupConditionChecksumMismatched && cond.Status == metav1.ConditionTrue {
+				return true, nil
+			}
+		}
+		return false, nil
+	})
+}
+
+func CorruptFileOnNode(node, path string) {
+	GinkgoHelper()
+
+	By("corrupting file " + path)
+	stdout, stderr, err := minikubeSSH(node, nil, "sudo", "stat", "-c", "%s", path)
+	Expect(err).NotTo(HaveOccurred(), "failed to stat file before corrupting. stderr: "+string(stderr))
+	sizeStr := strings.TrimSpace(string(stdout))
+	size, err := strconv.ParseInt(sizeStr, 10, 64)
+	Expect(err).NotTo(HaveOccurred(), "failed to parse file size: "+sizeStr)
+
+	if size == 0 {
+		_, stderr, err = minikubeSSH(node, nil, "sudo", "truncate", "-s", "0", path)
+		Expect(err).NotTo(HaveOccurred(), "failed to truncate zero-length file. stderr: "+string(stderr))
+		return
+	}
+
+	stdout, stderr, err = minikubeSSH(node, nil, "sudo", "od", "-An", "-N1", "-t", "u1", path)
+	Expect(err).NotTo(HaveOccurred(), "failed to read first byte for corruption. stderr: "+string(stderr))
+	firstByteStr := strings.TrimSpace(string(stdout))
+	firstByte, err := strconv.Atoi(firstByteStr)
+	Expect(err).NotTo(HaveOccurred(), "failed to parse first byte: "+firstByteStr)
+
+	flipped := byte(firstByte) ^ 0x01
+	_, stderr, err = minikubeSSH(node, []byte{flipped},
+		"sudo", "dd", "of="+path, "bs=1", "count=1", "conv=notrunc", "status=none")
+	Expect(err).NotTo(HaveOccurred(), "failed to overwrite first byte with flipped bit. stderr: "+string(stderr))
+}
+
+func ExpectDiffChecksumExists(node string, finbackup *finv1.FinBackup, pvc *corev1.PersistentVolumeClaim) {
+	GinkgoHelper()
+	Expect(finbackup.Status.SnapID).NotTo(BeNil())
+	diffChecksumPath := filepath.Join("/fin", pvc.Namespace, pvc.Name, "diff", fmt.Sprintf("%d", *finbackup.Status.SnapID), "part-0.csum")
+	_, stderr, err := minikubeSSH(node, nil, "test", "-f", diffChecksumPath)
+	Expect(err).NotTo(HaveOccurred(), "diff checksum file should exist. stderr: "+string(stderr))
+}
+
+func ExpectDiffChecksumNotExists(node string, finbackup *finv1.FinBackup, pvc *corev1.PersistentVolumeClaim) {
+	GinkgoHelper()
+	Expect(finbackup.Status.SnapID).NotTo(BeNil())
+	diffChecksumPath := filepath.Join("/fin", pvc.Namespace, pvc.Name, "diff", fmt.Sprintf("%d", *finbackup.Status.SnapID), "part-0.csum")
+	_, stderr, err := minikubeSSH(node, nil, "test", "!", "-e", diffChecksumPath)
+	Expect(err).NotTo(HaveOccurred(), "diff checksum file should be deleted. stderr: "+string(stderr))
 }
