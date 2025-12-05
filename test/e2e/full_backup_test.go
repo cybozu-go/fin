@@ -51,6 +51,7 @@ func fullBackupTestSuite() {
 	It("should create full backup", func(ctx SpecContext) {
 		finbackup = CreateBackup(ctx, ctrlClient, rookNamespace, pvc, nodes[0])
 
+		VerifyChecksumFileExists(pvc, nodes[0])
 		VerifyRawImage(pvc, nodes[0], writtenData)
 	})
 
@@ -193,6 +194,7 @@ func fullBackupTestSuite() {
 		err = WaitForFinBackupDeletion(ctx, ctrlClient, finbackup, 2*time.Minute)
 		Expect(err).NotTo(HaveOccurred())
 
+		VerifyChecksumFileDeleted(pvc, nodes[0])
 		VerifyNonExistenceOfRawImage(pvc, nodes[0])
 		VerifyDeletionOfJobsForBackup(ctx, k8sClient, finbackup)
 		err = VerifyDeletionOfSnapshotInFinBackup(ctx, finbackup)
