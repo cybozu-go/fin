@@ -162,7 +162,7 @@ func controllerMain(args []string) error {
 	// Register custom metrics
 	finmetrics.Register()
 
-	snapRepo := ceph.NewRBDRepository()
+	rbdRepo := ceph.NewRBDRepository()
 	maxPartSize, err := resource.ParseQuantity(os.Getenv("MAX_PART_SIZE"))
 	if err != nil {
 		return fmt.Errorf("failed to parse MAX_PART_SIZE environment variable: %w", err)
@@ -173,7 +173,8 @@ func controllerMain(args []string) error {
 		os.Getenv("POD_NAMESPACE"),
 		os.Getenv("POD_IMAGE"),
 		&maxPartSize,
-		snapRepo,
+		rbdRepo,
+		rbdRepo,
 		rawImgExpansionUnitSize,
 	)
 	if err = finBackupReconciler.SetupWithManager(mgr); err != nil {

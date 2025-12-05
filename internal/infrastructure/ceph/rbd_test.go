@@ -15,11 +15,13 @@ import (
 
 	"github.com/cespare/xxhash/v2"
 	"github.com/cybozu-go/fin/internal/diffgenerator"
+	"github.com/cybozu-go/fin/internal/model"
 	"github.com/cybozu-go/fin/internal/pkg/csumio"
 	"github.com/cybozu-go/fin/internal/pkg/zeroreader"
 	"github.com/cybozu-go/fin/test/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	gomock "go.uber.org/mock/gomock"
 	"golang.org/x/sys/unix"
 )
 
@@ -39,6 +41,121 @@ func TestMain(m *testing.M) {
 	code := m.Run()
 	cleanup()
 	os.Exit(code)
+}
+
+func mockedRBDRepository(command Command) *RBDRepository {
+	return &RBDRepository{
+		command: command,
+	}
+}
+
+func TestLockAdd_success(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	m := NewMockCommand(ctrl)
+	m.EXPECT().execute("rbd", "-p", "pool", "lock", "add", "image", "lockID").Return([]byte{}, []byte{}, nil)
+
+	rbd := mockedRBDRepository(m)
+	err := rbd.LockAdd("pool", "image", "lockID")
+	require.NoError(t, err)
+}
+
+func TestLockAdd_failed(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	m := NewMockCommand(ctrl)
+	m.EXPECT().execute(gomock.Any()).Return([]byte{}, []byte{}, fmt.Errorf("error"))
+
+	rbd := mockedRBDRepository(m)
+	err := rbd.LockAdd("pool", "image", "lockID")
+	require.Error(t, err)
+}
+
+func TestLockRm_success(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	m := NewMockCommand(ctrl)
+	m.EXPECT().
+		execute("rbd", "-p", "pool", "lock", "rm", "image", "lockID", "client.12345").
+		Return([]byte{}, []byte{}, nil)
+
+	rbd := mockedRBDRepository(m)
+	lock := &model.RBDLock{
+		LockID: "lockID",
+		Locker: "client.12345",
+	}
+	err := rbd.LockRm("pool", "image", lock)
+	require.NoError(t, err)
+}
+
+func TestLockRm_failed(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	m := NewMockCommand(ctrl)
+	m.EXPECT().execute(gomock.Any()).Return([]byte{}, []byte{}, fmt.Errorf("error"))
+
+	rbd := mockedRBDRepository(m)
+	lock := &model.RBDLock{
+		LockID: "lockID",
+		Locker: "client.12345",
+	}
+	err := rbd.LockRm("pool", "image", lock)
+	require.Error(t, err)
+}
+
+func TestLockLs_many(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	m := NewMockCommand(ctrl)
+	m.EXPECT().
+		execute("rbd", "-p", "pool", "--format", "json", "lock", "ls", "image").
+		Return([]byte(`
+		[
+			{"id": "HOGE","locker": "client.12345","address": "192.168.0.1:0/12345"},
+			{"id": "FOO","locker": "client.67890","address": "192.168.0.2:0/67890"}
+		]
+		`), []byte{}, nil)
+
+	rbd := mockedRBDRepository(m)
+	locks, err := rbd.LockLs("pool", "image")
+	require.NoError(t, err)
+	require.Len(t, locks, 2)
+	require.Equal(t, "HOGE", locks[0].LockID)
+	require.Equal(t, "client.12345", locks[0].Locker)
+	require.Equal(t, "192.168.0.1:0/12345", locks[0].Address)
+	require.Equal(t, "FOO", locks[1].LockID)
+	require.Equal(t, "client.67890", locks[1].Locker)
+	require.Equal(t, "192.168.0.2:0/67890", locks[1].Address)
+}
+
+func TestLockLs_empty(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	m := NewMockCommand(ctrl)
+	m.EXPECT().
+		execute("rbd", "-p", "pool", "--format", "json", "lock", "ls", "image").
+		Return([]byte(`[]`), []byte{}, nil)
+
+	rbd := mockedRBDRepository(m)
+	locks, err := rbd.LockLs("pool", "image")
+	require.NoError(t, err)
+	require.Len(t, locks, 0)
+}
+
+func TestLockLs_failed(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	m := NewMockCommand(ctrl)
+	m.EXPECT().execute(gomock.Any()).Return([]byte{}, []byte{}, fmt.Errorf("error"))
+
+	rbd := mockedRBDRepository(m)
+	_, err := rbd.LockLs("pool", "image")
+	require.Error(t, err)
 }
 
 func prepareTestdataChecksums() (func(), error) {

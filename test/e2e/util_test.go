@@ -1,16 +1,21 @@
 package e2e
 
 import (
+	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"html/template"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"time"
 
 	finv1 "github.com/cybozu-go/fin/api/v1"
+	"github.com/cybozu-go/fin/internal/controller"
+	"github.com/cybozu-go/fin/internal/model"
 	"github.com/cybozu-go/fin/test/utils"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -26,6 +31,7 @@ import (
 )
 
 const (
+	finDeploymentName      = "fin-controller-manager"
 	rookNamespace          = "rook-ceph"
 	rookStorageClass       = "rook-ceph-block"
 	poolName               = "rook-ceph-block-pool"
@@ -80,7 +86,7 @@ func checkDeploymentReady(namespace, name string) error {
 func waitEnvironment() {
 	It("wait for fin-controller to be ready", func() {
 		Eventually(func() error {
-			return checkDeploymentReady(rookNamespace, "fin-controller-manager")
+			return checkDeploymentReady(rookNamespace, finDeploymentName)
 		}).Should(Succeed())
 	})
 }
@@ -372,16 +378,18 @@ func DeleteFinRestore(ctx context.Context, client client.Client, finrestore *fin
 	return client.Delete(ctx, target)
 }
 
-func WaitForFinBackupStoredToNodeAndVerified(ctx context.Context, c client.Client, finbackup *finv1.FinBackup, timeout time.Duration) error {
-	return wait.PollUntilContextTimeout(ctx, time.Second, timeout, true, func(ctx context.Context) (bool, error) {
-		fb := &finv1.FinBackup{}
-		err := c.Get(ctx, client.ObjectKeyFromObject(finbackup), fb)
+func WaitForFinBackupStoredToNodeAndVerified(ctx context.Context, c client.Client, finbackup *finv1.FinBackup, timeout time.Duration) (*finv1.FinBackup, error) {
+	GinkgoHelper()
+	currentFB := &finv1.FinBackup{}
+	err := wait.PollUntilContextTimeout(ctx, time.Second, timeout, true, func(ctx context.Context) (bool, error) {
+		err := c.Get(ctx, client.ObjectKeyFromObject(finbackup), currentFB)
 		if err != nil {
 			return false, err
 		}
 
-		return fb.IsStoredToNode() && fb.IsVerifiedTrue(), nil
+		return currentFB.IsStoredToNode() && currentFB.IsVerifiedTrue(), nil
 	})
+	return currentFB, err
 }
 
 func WaitForFinRestoreReady(ctx context.Context, c client.Client, finrestore *finv1.FinRestore, timeout time.Duration) error {
@@ -453,6 +461,58 @@ func WaitForPVCDeletion(ctx context.Context, k8sClient kubernetes.Interface, pvc
 		_, err := k8sClient.CoreV1().PersistentVolumeClaims(pvc.GetNamespace()).Get(ctx, pvc.GetName(), metav1.GetOptions{})
 		return err
 	})
+}
+
+// WaitControllerLog waits until the controller log matches the given pattern or the duration is exceeded.
+func WaitControllerLog(ctx SpecContext, pattern string, duration time.Duration) error {
+	GinkgoHelper()
+
+	timeoutCtx, cancel := context.WithTimeout(ctx, duration)
+	defer cancel()
+
+	matcher := regexp.MustCompile(pattern)
+
+	command := exec.CommandContext(timeoutCtx, "kubectl", "logs", "-n", rookNamespace, "deployment/"+finDeploymentName, "-f")
+	stdoutPipe, err := command.StdoutPipe()
+	if err != nil {
+		panic(err)
+	}
+	err = command.Start()
+	if err != nil {
+		panic(err)
+	}
+	defer func() {
+		_ = command.Process.Kill()
+		_ = command.Wait()
+	}()
+
+	// read stdout line by line until the pattern is found
+	scanner := bufio.NewScanner(stdoutPipe)
+	found := make(chan struct{})
+	go func() {
+		for scanner.Scan() {
+			select {
+			case <-timeoutCtx.Done():
+				return
+			default:
+			}
+			line := scanner.Text()
+			if matcher.MatchString(line) {
+				close(found)
+				return
+			}
+		}
+		if scanner.Err() != nil {
+			panic(scanner.Err())
+		}
+	}()
+
+	select {
+	case <-timeoutCtx.Done():
+		return timeoutCtx.Err()
+	case <-found:
+		return nil
+	}
 }
 
 func VerifySizeOfRestorePVC(ctx context.Context, c client.Client, restore *finv1.FinRestore) {
@@ -626,8 +686,8 @@ func CreateBackup(
 		pvc, node)
 	Expect(err).NotTo(HaveOccurred())
 	Expect(CreateFinBackup(ctx, ctrlClient, backup)).NotTo(HaveOccurred())
-	Expect(WaitForFinBackupStoredToNodeAndVerified(ctx, ctrlClient, backup, 1*time.Minute)).
-		NotTo(HaveOccurred())
+	backup, err = WaitForFinBackupStoredToNodeAndVerified(ctx, ctrlClient, backup, 1*time.Minute)
+	Expect(err).NotTo(HaveOccurred())
 	return backup
 }
 
@@ -679,6 +739,30 @@ func GetNodeNames(ctx context.Context, k8sClient kubernetes.Interface) ([]string
 	return nodeNames, nil
 }
 
+func GetPvByPvc(ctx context.Context, k8sClient kubernetes.Interface, pvc *corev1.PersistentVolumeClaim) (*corev1.PersistentVolume, error) {
+	GinkgoHelper()
+
+	return k8sClient.CoreV1().PersistentVolumes().Get(ctx, pvc.Spec.VolumeName, metav1.GetOptions{})
+}
+
+func ListRBDSnapshots(ctx context.Context, poolName, imageName string) ([]*model.RBDSnapshot, error) {
+	GinkgoHelper()
+
+	stdout, stderr, err := kubectl("exec", "-n", rookNamespace, "deploy/rook-ceph-tools", "--",
+		"rbd", "-p", poolName, "snap", "ls", imageName, "--format", "json")
+	if err != nil {
+		return nil, fmt.Errorf("failed to list RBD snapshots. stdout: %s, stderr: %s, err: %w",
+			string(stdout), string(stderr), err)
+	}
+
+	var snapshots []*model.RBDSnapshot
+	if err := json.Unmarshal(stdout, &snapshots); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal RBD snapshot list. err: %w", err)
+	}
+
+	return snapshots, nil
+}
+
 func VerifyRawImage(pvc *corev1.PersistentVolumeClaim, node string, expected []byte) {
 	GinkgoHelper()
 
@@ -706,13 +790,26 @@ func VerifyDeletionOfJobsForBackup(ctx context.Context, client kubernetes.Interf
 	Expect(err).NotTo(HaveOccurred(), "Deletion job should be deleted.")
 }
 
-func VerifyDeletionOfSnapshotInFinBackup(ctx context.Context, ctrlClient client.Client, finbackup *finv1.FinBackup) {
+func VerifyDeletionOfSnapshotInFinBackup(ctx context.Context, finbackup *finv1.FinBackup) error {
 	GinkgoHelper()
 
-	rbdImage := finbackup.Annotations["fin.cybozu.io/backup-target-rbd-image"]
-	stdout, stderr, err := kubectl("exec", "-n", rookNamespace, "deploy/rook-ceph-tools", "--",
-		"rbd", "info", fmt.Sprintf("%s/%s@fin-backup-%s", poolName, rbdImage, finbackup.UID))
-	Expect(err).To(HaveOccurred(), "Snapshot should be deleted. stdout: %s, stderr: %s", stdout, stderr)
+	imageName := finbackup.Annotations[controller.AnnotationBackupTargetRBDImage]
+	if len(imageName) == 0 {
+		return fmt.Errorf("finbackup %s/%s does not have %s annotation",
+			finbackup.Namespace, finbackup.Name, controller.AnnotationBackupTargetRBDImage)
+	}
+	snapshots, err := ListRBDSnapshots(ctx, poolName, imageName)
+	if err != nil {
+		return err
+	}
+
+	expectedSnapName := fmt.Sprintf("fin-backup-%s", finbackup.UID)
+	for _, snapshot := range snapshots {
+		if snapshot.Name == expectedSnapName {
+			return fmt.Errorf("snapshot %s still exists", expectedSnapName)
+		}
+	}
+	return nil
 }
 
 func VerifyDeletionOfResourcesForRestore(
