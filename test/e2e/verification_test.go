@@ -2,6 +2,8 @@ package e2e
 
 import (
 	"path"
+	"path/filepath"
+	"strconv"
 	"time"
 
 	"github.com/cybozu-go/fin/test/utils"
@@ -289,4 +291,86 @@ func verificationTestSuite() {
 			Expect(err).NotTo(HaveOccurred())
 		},
 	)
+
+	// Description:
+	//   Backup Job fails with checksum mismatch when diff checksum file is corrupted.
+	//
+	// Precondition (set by BeforeEach):
+	//   - A filesystem PVC exists.
+	//
+	// Arrange:
+	//   - Create a block PVC and write test data.
+	//   - Create first backup to establish baseline.
+	//   - Write additional data to create diff.
+	//   - Create second backup.
+	//
+	// Act:
+	//   - Corrupt diff checksum file during backup process.
+	//
+	// Assert:
+	//   - FinBackup sets ChecksumMismatched=True.
+	//   - StoredToNode condition remains False.
+	It("should fail backup job when diff checksum is corrupted", func(ctx SpecContext) {
+		// Arrange
+		By("creating a block PVC for diff checksum test")
+		testNS := NewNamespace(utils.GetUniqueName("test-ns-"))
+		err := CreateNamespace(ctx, k8sClient, testNS)
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func() {
+			_ = DeleteNamespace(ctx, k8sClient, testNS)
+		})
+
+		testPVC := CreateBackupTargetPVC(ctx, k8sClient, testNS, "Block", rookStorageClass, "ReadWriteOnce", "100Mi")
+		testPod := CreatePodForBlockPVC(ctx, k8sClient, testPVC)
+		DeferCleanup(func() {
+			_ = DeletePod(ctx, k8sClient, testPod)
+			_ = DeletePVC(ctx, k8sClient, testPVC)
+		})
+
+		testDataSize := int64(4 * 1024)
+		_ = WriteRandomDataToPVC(ctx, testPod, devicePathInPodForPVC, testDataSize)
+
+		By("creating first backup")
+		backup1 := CreateBackup(ctx, ctrlClient, rookNamespace, testPVC, nodes[0])
+		DeferCleanup(func() {
+			_ = DeleteFinBackup(ctx, ctrlClient, backup1)
+		})
+
+		By("writing additional data for incremental backup")
+		_ = WriteRandomDataToPVC(ctx, testPod, devicePathInPodForPVC, testDataSize)
+
+		By("creating second backup")
+		backup2, err := NewFinBackup(rookNamespace, utils.GetUniqueName("test-finbackup-"), testPVC, nodes[0])
+		Expect(err).NotTo(HaveOccurred())
+		err = CreateFinBackup(ctx, ctrlClient, backup2)
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func() {
+			_ = DeleteFinBackup(ctx, ctrlClient, backup2)
+		})
+
+		By("waiting for SnapID to be assigned")
+		Eventually(func(g Gomega, ctx SpecContext) {
+			err := ctrlClient.Get(ctx, client.ObjectKeyFromObject(backup2), backup2)
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(backup2.Status.SnapID).NotTo(BeNil())
+		}, "30s", "1s").WithContext(ctx).Should(Succeed())
+
+		// Act
+		By("corrupting diff checksum file")
+		diffChecksumPath := filepath.Join("/fin", testPVC.Namespace, testPVC.Name, "diff", strconv.Itoa(*backup2.Status.SnapID), "part-0.csum")
+		CorruptFileOnNode(nodes[0], diffChecksumPath)
+
+		// Assert
+		By("waiting for checksum mismatch detection")
+		err = WaitForFinBackupChecksumMismatch(ctx, ctrlClient, backup2, 2*time.Minute)
+		Expect(err).NotTo(HaveOccurred())
+
+		By("verifying ChecksumMismatched condition is True")
+		err = ctrlClient.Get(ctx, client.ObjectKeyFromObject(backup2), backup2)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(backup2.IsChecksumMismatched()).To(BeTrue())
+
+		By("verifying StoredToNode condition is not True")
+		Expect(backup2.IsStoredToNode()).To(BeFalse())
+	})
 }

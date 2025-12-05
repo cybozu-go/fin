@@ -111,6 +111,7 @@ func incrementalBackupTestSuite() {
 		_, stderr, err = minikubeSSH(nodes[0], nil,
 			"ls", filepath.Join(volumePath, "diff", strconv.Itoa(*finbackup2.Status.SnapID), "part-0"))
 		Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr), "diff file does not exist")
+		ExpectDiffChecksumExists(nodes[0], finbackup2, pvc)
 	})
 
 	// CSATEST-1618
@@ -231,6 +232,7 @@ func incrementalBackupTestSuite() {
 		_, stderr, err = minikubeSSH(nodes[0], nil,
 			"ls", filepath.Join(volumePath, "diff", strconv.Itoa(*finbackup2.Status.SnapID), "part-0"))
 		Expect(err).To(HaveOccurred(), "stderr: "+string(stderr), "diff file does not exist")
+		ExpectDiffChecksumNotExists(nodes[0], finbackup2, pvc)
 
 		By("verifying the data in raw.img as incremental backup")
 		var rawImageData []byte
@@ -280,4 +282,5 @@ func incrementalBackupTestSuite() {
 		VerifyDataInRestorePVC(ctx, k8sClient, restore, dataOnIncrementalBackup)
 		VerifySizeOfRestorePVC(ctx, ctrlClient, restore)
 	})
+
 }
