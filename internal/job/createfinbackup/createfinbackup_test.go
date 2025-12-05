@@ -135,8 +135,8 @@ func TestCreateFinBackup_Perform(t *testing.T) {
 				makeJob("job-0001", "job-ns", now),
 			},
 			input: &input.CreateFinBackup{
-				FinBackupConfigName:      "fbc-ok",
-				FinBackupConfigNamespace: "ns",
+				FinBackupConfigName:      fbc.Name,
+				FinBackupConfigNamespace: fbc.Namespace,
 				JobName:                  "job-0001",
 				JobNamespace:             "job-ns",
 			},
@@ -155,8 +155,8 @@ func TestCreateFinBackup_Perform(t *testing.T) {
 				},
 			},
 			input: &input.CreateFinBackup{
-				FinBackupConfigName:      "fbc-ok",
-				FinBackupConfigNamespace: "ns",
+				FinBackupConfigName:      fbc.Name,
+				FinBackupConfigNamespace: fbc.Namespace,
 				JobName:                  "job-0002",
 				JobNamespace:             "job-ns",
 			},
@@ -169,7 +169,7 @@ func TestCreateFinBackup_Perform(t *testing.T) {
 			},
 			input: &input.CreateFinBackup{
 				FinBackupConfigName:      "no-such-fbc",
-				FinBackupConfigNamespace: "ns",
+				FinBackupConfigNamespace: fbc.Namespace,
 				JobName:                  "job-0003",
 				JobNamespace:             "job-ns",
 			},
@@ -182,8 +182,8 @@ func TestCreateFinBackup_Perform(t *testing.T) {
 				makeJob("job-0004", "job-ns", now),
 			},
 			input: &input.CreateFinBackup{
-				FinBackupConfigName:      "fbc-ok",
-				FinBackupConfigNamespace: "ns",
+				FinBackupConfigName:      fbc.Name,
+				FinBackupConfigNamespace: fbc.Namespace,
 				JobName:                  "job-0004",
 				JobNamespace:             "job-ns",
 			},
@@ -193,6 +193,26 @@ func TestCreateFinBackup_Perform(t *testing.T) {
 				},
 			},
 			wantErr: true,
+		},
+		{
+			name: "fallback-to-creation-timestamp",
+			existingObjects: []client.Object{
+				fbc,
+				&batchv1.Job{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:              "job-0005",
+						Namespace:         "job-ns",
+						CreationTimestamp: metav1.NewTime(now),
+					},
+				},
+			},
+			input: &input.CreateFinBackup{
+				FinBackupConfigName:      fbc.Name,
+				FinBackupConfigNamespace: fbc.Namespace,
+				JobName:                  "job-0005",
+				JobNamespace:             "job-ns",
+			},
+			wantErr: false,
 		},
 	}
 

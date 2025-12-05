@@ -70,7 +70,8 @@ func (c *CreateFinBackup) Perform() error {
 }
 
 // getJobCreationTimestamp retrieves the Job creation timestamp from the
-// batch.kubernetes.io/cronjob-scheduled-timestamp annotation
+// batch.kubernetes.io/cronjob-scheduled-timestamp annotation.
+// If the annotation is not found, it falls back to the Job's CreationTimestamp.
 func (c *CreateFinBackup) getJobCreationTimestamp(ctx context.Context) (time.Time, error) {
 	job := &batchv1.Job{}
 	if err := c.client.Get(ctx, types.NamespacedName{Namespace: c.jobNamespace, Name: c.jobName}, job); err != nil {
@@ -79,18 +80,16 @@ func (c *CreateFinBackup) getJobCreationTimestamp(ctx context.Context) (time.Tim
 
 	tsStr, ok := job.Annotations["batch.kubernetes.io/cronjob-scheduled-timestamp"]
 	if !ok {
-		return time.Time{}, fmt.Errorf(
-			"job %s/%s missing annotation batch.kubernetes.io/cronjob-scheduled-timestamp",
-			c.jobNamespace,
-			c.jobName,
-		)
+		if job.CreationTimestamp.IsZero() {
+			return time.Time{}, fmt.Errorf("job %s/%s has no creation timestamp available", c.jobNamespace, c.jobName)
+		}
+		return job.CreationTimestamp.Time, nil
 	}
 
 	jobCreatedAt, err := time.Parse(time.RFC3339, tsStr)
 	if err != nil {
 		return time.Time{}, fmt.Errorf("invalid batch.kubernetes.io/cronjob-scheduled-timestamp: %w", err)
 	}
-
 	return jobCreatedAt, nil
 }
 
