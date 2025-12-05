@@ -194,6 +194,26 @@ func TestCreateFinBackup_Perform(t *testing.T) {
 			},
 			wantErr: true,
 		},
+		{
+			name: "fallback-to-creation-timestamp",
+			existingObjects: []client.Object{
+				fbc,
+				&batchv1.Job{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:              "job-0005",
+						Namespace:         "job-ns",
+						CreationTimestamp: metav1.NewTime(now),
+					},
+				},
+			},
+			input: &input.CreateFinBackup{
+				FinBackupConfigName:      "fbc-ok",
+				FinBackupConfigNamespace: "ns",
+				JobName:                  "job-0005",
+				JobNamespace:             "job-ns",
+			},
+			wantErr: false,
+		},
 	}
 
 	for _, tt := range tests {
