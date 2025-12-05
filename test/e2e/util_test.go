@@ -23,9 +23,11 @@ import (
 	. "github.com/onsi/gomega"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -39,6 +41,7 @@ const (
 	poolName               = "rook-ceph-block-pool"
 	devicePathInPodForPVC  = "/data"
 	mountPathInPodForFSPVC = "/data"
+	rbacName               = "fin-create-backup-job"
 )
 
 var (
@@ -902,4 +905,123 @@ func ExpectDiffChecksumNotExists(node string, finbackup *finv1.FinBackup, pvc *c
 	diffChecksumPath := filepath.Join("/fin", pvc.Namespace, pvc.Name, "diff", fmt.Sprintf("%d", *finbackup.Status.SnapID), "part-0.csum")
 	_, stderr, err := minikubeSSH(node, nil, "test", "!", "-e", diffChecksumPath)
 	Expect(err).NotTo(HaveOccurred(), "diff checksum file should be deleted. stderr: "+string(stderr))
+}
+
+func NewFinBackupConfig(namespace, name string, pvc *corev1.PersistentVolumeClaim, node, schedule string) (*finv1.FinBackupConfig, error) {
+	tmpl := `apiVersion: fin.cybozu.io/v1
+kind: FinBackupConfig
+metadata:
+  name: {{.Name}}
+  namespace: {{.Namespace}}
+spec:
+  pvc: {{.PVCName}}
+  pvcNamespace: {{.PVCNamespace}}
+  node: {{.Node}}
+  schedule: {{.Schedule}}`
+
+	t := template.Must(template.New("finbackupconfig").Parse(tmpl))
+	var buf bytes.Buffer
+	err := t.Execute(&buf, struct {
+		Name         string
+		Namespace    string
+		PVCName      string
+		PVCNamespace string
+		Node         string
+		Schedule     string
+	}{
+		Name:         name,
+		Namespace:    namespace,
+		PVCName:      pvc.Name,
+		PVCNamespace: pvc.Namespace,
+		Node:         node,
+		Schedule:     schedule,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	var fbc finv1.FinBackupConfig
+	err = yaml.Unmarshal(buf.Bytes(), &fbc)
+	if err != nil {
+		return nil, err
+	}
+	return &fbc, nil
+}
+
+func CreateJobFromCronJob(ctx context.Context, cronJob *batchv1.CronJob) (string, error) {
+	GinkgoHelper()
+	name := utils.GetUniqueName(cronJob.Name + "-")
+	_, stderr, err := kubectl("create", "job", name, "-n", cronJob.Namespace, "--from", "cronjob/"+cronJob.Name)
+	if err != nil {
+		return "", fmt.Errorf("%w: stderr: %s", err, string(stderr))
+	}
+	return name, nil
+}
+
+func WaitForFinBackupVerifiedFromJobName(ctx context.Context, c client.Client, fbc *finv1.FinBackupConfig, jobName string, timeout time.Duration) *finv1.FinBackup {
+	GinkgoHelper()
+	fb := &finv1.FinBackup{}
+	Eventually(func(g Gomega) {
+		fbName, err := GetFinBackupNameFromJobName(ctx, c, string(fbc.UID), jobName)
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(c.Get(ctx, client.ObjectKey{Namespace: fbc.Namespace, Name: fbName}, fb)).NotTo(HaveOccurred())
+		g.Expect(fb.IsVerifiedTrue()).To(BeTrue())
+	}, timeout, "1s").Should(Succeed())
+	return fb
+}
+
+func WaitForFinBackupNotFound(ctx context.Context, c client.Client, fb *finv1.FinBackup, timeout time.Duration) {
+	GinkgoHelper()
+	Eventually(func(g Gomega) {
+		retrieved := &finv1.FinBackup{}
+		err := c.Get(ctx, client.ObjectKeyFromObject(fb), retrieved)
+		g.Expect(errors.IsNotFound(err)).To(BeTrue())
+	}, timeout, "1s").Should(Succeed())
+}
+
+func UpdateFinBackupConfigNode(ctx context.Context, c client.Client, fbc *finv1.FinBackupConfig, newNode string) {
+	GinkgoHelper()
+	updated := &finv1.FinBackupConfig{}
+	Expect(c.Get(ctx, client.ObjectKeyFromObject(fbc), updated)).NotTo(HaveOccurred())
+	updated.Spec.Node = newNode
+	Expect(c.Update(ctx, updated)).NotTo(HaveOccurred())
+}
+
+func CopyFBCServiceAccount(ctx context.Context, client kubernetes.Interface, srcNS, dstNS string) {
+	GinkgoHelper()
+
+	sa, err := client.CoreV1().ServiceAccounts(srcNS).Get(ctx, rbacName, metav1.GetOptions{})
+	Expect(err).ShouldNot(HaveOccurred())
+	sa.Annotations = nil
+	sa.Namespace = dstNS
+	sa.ResourceVersion = ""
+	_, err = client.CoreV1().ServiceAccounts(dstNS).Create(ctx, sa, metav1.CreateOptions{})
+	Expect(err).ShouldNot(HaveOccurred())
+
+	crb, err := client.RbacV1().ClusterRoleBindings().Get(ctx, rbacName, metav1.GetOptions{})
+	Expect(err).ShouldNot(HaveOccurred())
+	subject := rbacv1.Subject{Kind: "ServiceAccount", Name: rbacName, Namespace: dstNS}
+	crb.Subjects = append(crb.Subjects, subject)
+
+	_, err = client.RbacV1().ClusterRoleBindings().Update(ctx, crb, metav1.UpdateOptions{})
+	Expect(err).ShouldNot(HaveOccurred())
+}
+
+func GetFinBackupNameFromJobName(ctx context.Context, c client.Client, fbcUID, jobName string) (string, error) {
+	finbackups := &finv1.FinBackupList{}
+	s := labels.SelectorFromSet(map[string]string{
+		controller.LabelFinBackupConfigUID: fbcUID,
+	})
+	err := c.List(ctx, finbackups, &client.ListOptions{LabelSelector: s})
+	if err != nil {
+		return "", err
+	}
+
+	parts := strings.Split(jobName, "-")
+	for _, fb := range finbackups.Items {
+		if strings.HasSuffix(fb.Name, parts[len(parts)-1]) {
+			return fb.Name, nil
+		}
+	}
+	return "", fmt.Errorf("FinBackup not found for job name: %s", jobName)
 }
