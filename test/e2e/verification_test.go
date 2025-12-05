@@ -295,9 +295,6 @@ func verificationTestSuite() {
 	// Description:
 	//   Backup Job fails with checksum mismatch when diff checksum file is corrupted.
 	//
-	// Precondition (set by BeforeEach):
-	//   - A filesystem PVC exists.
-	//
 	// Arrange:
 	//   - Create a block PVC and write test data.
 	//   - Create first backup to establish baseline.
@@ -372,5 +369,74 @@ func verificationTestSuite() {
 
 		By("verifying StoredToNode condition is not True")
 		Expect(backup2.IsStoredToNode()).To(BeFalse())
+	})
+
+	// Description:
+	//   Verification Job fails with checksum mismatch when raw checksum file is corrupted after backup completion.
+	//
+	// Arrange:
+	//   - Create a block PVC and write test data.
+	//   - Create backup and wait for it to be stored.
+	//   - Corrupt raw.img.csum file after backup is complete.
+	//
+	// Act:
+	//   - Verification job runs and detects corrupted checksum.
+	//
+	// Assert:
+	//   - FinBackup sets ChecksumMismatched=True.
+	//   - Verified condition remains False.
+	It("should fail verification job when raw checksum is corrupted", func(ctx SpecContext) {
+		// Arrange
+		By("creating a block PVC for verification checksum test")
+		verifyNS := NewNamespace(utils.GetUniqueName("test-ns-"))
+		err := CreateNamespace(ctx, k8sClient, verifyNS)
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func() {
+			_ = DeleteNamespace(ctx, k8sClient, verifyNS)
+		})
+
+		verifyPVC := CreateBackupTargetPVC(ctx, k8sClient, verifyNS, "Block", rookStorageClass, "ReadWriteOnce", "100Mi")
+		verifyPod := CreatePodForBlockPVC(ctx, k8sClient, verifyPVC)
+		DeferCleanup(func() {
+			_ = DeletePod(ctx, k8sClient, verifyPod)
+			_ = DeletePVC(ctx, k8sClient, verifyPVC)
+		})
+
+		verifyDataSize := int64(4 * 1024)
+		_ = WriteRandomDataToPVC(ctx, verifyPod, devicePathInPodForPVC, verifyDataSize)
+
+		By("creating backup")
+		backup, err := NewFinBackup(rookNamespace, utils.GetUniqueName("test-finbackup-"), verifyPVC, nodes[0])
+		Expect(err).NotTo(HaveOccurred())
+		err = CreateFinBackup(ctx, ctrlClient, backup)
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func() {
+			_ = DeleteFinBackup(ctx, ctrlClient, backup)
+		})
+
+		By("waiting for backup to be stored to node")
+		Eventually(func(g Gomega, ctx SpecContext) {
+			err := ctrlClient.Get(ctx, client.ObjectKeyFromObject(backup), backup)
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(backup.IsStoredToNode()).To(BeTrue())
+		}, "60s", "1s").WithContext(ctx).Should(Succeed())
+
+		// Act
+		By("corrupting raw.img.csum file")
+		rawChecksumPath := filepath.Join("/fin", verifyPVC.Namespace, verifyPVC.Name, "raw.img.csum")
+		CorruptFileOnNode(nodes[0], rawChecksumPath)
+
+		// Assert
+		By("waiting for checksum mismatch detection during verification")
+		err = WaitForFinBackupChecksumMismatch(ctx, ctrlClient, backup, 3*time.Minute)
+		Expect(err).NotTo(HaveOccurred())
+
+		By("verifying ChecksumMismatched condition is True")
+		err = ctrlClient.Get(ctx, client.ObjectKeyFromObject(backup), backup)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(backup.IsChecksumMismatched()).To(BeTrue())
+
+		By("verifying Verified condition is not True")
+		Expect(backup.IsVerifiedTrue()).To(BeFalse())
 	})
 }

@@ -283,4 +283,96 @@ func incrementalBackupTestSuite() {
 		VerifySizeOfRestorePVC(ctx, ctrlClient, restore)
 	})
 
+	// Description:
+	//   Deletion Job fails with checksum mismatch when diff checksum is corrupted during incremental merge.
+	//
+	// Arrange:
+	//   - Create full backup and incremental backup with diff files.
+	//   - Corrupt diff checksum file before deleting full backup.
+	//
+	// Act:
+	//   - Delete full backup to trigger incremental merge.
+	//
+	// Assert:
+	//   - Incremental backup sets ChecksumMismatched=True.
+	//   - Deletion process fails due to checksum error.
+	It("should fail deletion job when diff checksum is corrupted during merge", func(ctx SpecContext) {
+		// Arrange
+		By("creating isolated environment for deletion checksum test")
+		delNS := NewNamespace(utils.GetUniqueName("test-ns-"))
+		err := CreateNamespace(ctx, k8sClient, delNS)
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func() {
+			_ = DeleteNamespace(ctx, k8sClient, delNS)
+		})
+
+		delPVC := CreateBackupTargetPVC(ctx, k8sClient, delNS, "Block", rookStorageClass, "ReadWriteOnce", "100Mi")
+		delPod := CreatePodForBlockPVC(ctx, k8sClient, delPVC)
+		DeferCleanup(func() {
+			_ = DeletePod(ctx, k8sClient, delPod)
+			_ = DeletePVC(ctx, k8sClient, delPVC)
+		})
+
+		delDataSize := int64(4 * 1024)
+		_ = WriteRandomDataToPVC(ctx, delPod, devicePathInPodForPVC, delDataSize)
+
+		By("creating full backup")
+		fullBackup := CreateBackup(ctx, ctrlClient, rookNamespace, delPVC, nodes[0])
+		DeferCleanup(func() {
+			fb := &finv1.FinBackup{}
+			if err := ctrlClient.Get(ctx, client.ObjectKeyFromObject(fullBackup), fb); err == nil {
+				fb.Finalizers = nil
+				_ = ctrlClient.Update(ctx, fb)
+			}
+			_ = DeleteFinBackup(ctx, ctrlClient, fullBackup)
+		})
+
+		By("writing additional data for incremental backup")
+		_ = WriteRandomDataToPVC(ctx, delPod, devicePathInPodForPVC, delDataSize)
+
+		By("creating incremental backup")
+		incBackup, err := NewFinBackup(rookNamespace, utils.GetUniqueName("test-finbackup-"), delPVC, nodes[0])
+		Expect(err).NotTo(HaveOccurred())
+		err = CreateFinBackup(ctx, ctrlClient, incBackup)
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func() {
+			fb := &finv1.FinBackup{}
+			if err := ctrlClient.Get(ctx, client.ObjectKeyFromObject(incBackup), fb); err == nil {
+				fb.Finalizers = nil
+				_ = ctrlClient.Update(ctx, fb)
+			}
+			_ = DeleteFinBackup(ctx, ctrlClient, incBackup)
+		})
+
+		By("waiting for incremental backup to be stored")
+		Eventually(func(g Gomega, ctx SpecContext) {
+			err := ctrlClient.Get(ctx, client.ObjectKeyFromObject(incBackup), incBackup)
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(incBackup.IsStoredToNode()).To(BeTrue())
+			g.Expect(incBackup.Status.SnapID).NotTo(BeNil())
+		}, "60s", "1s").WithContext(ctx).Should(Succeed())
+
+		By("verifying diff file exists")
+		ExpectDiffChecksumExists(nodes[0], incBackup, delPVC)
+
+		By("corrupting diff checksum file before deletion")
+		diffChecksumPath := filepath.Join("/fin", delPVC.Namespace, delPVC.Name, "diff", strconv.Itoa(*incBackup.Status.SnapID), "part-0.csum")
+		CorruptFileOnNode(nodes[0], diffChecksumPath)
+
+		// Act
+		By("deleting full backup to trigger incremental merge")
+		err = DeleteFinBackup(ctx, ctrlClient, fullBackup)
+		Expect(err).NotTo(HaveOccurred())
+
+		// Assert
+		By("waiting for checksum mismatch during incremental merge")
+		err = WaitForFinBackupChecksumMismatch(ctx, ctrlClient, incBackup, 3*time.Minute)
+		Expect(err).NotTo(HaveOccurred())
+
+		By("verifying incremental backup has ChecksumMismatched condition")
+		err = ctrlClient.Get(ctx, client.ObjectKeyFromObject(incBackup), incBackup)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(incBackup.IsChecksumMismatched()).To(BeTrue())
+	})
+
 }
