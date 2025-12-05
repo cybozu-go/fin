@@ -217,6 +217,7 @@ func (r *RBDRepository2) ApplyDiffToBlockDevice(
 	fromSnapName,
 	toSnapName string,
 	diffChecksumChunkSize uint64,
+	enableChecksumVerify bool,
 ) error {
 	return ceph.NewRBDRepository().ApplyDiffToBlockDevice(
 		blockDevicePath,
@@ -224,6 +225,7 @@ func (r *RBDRepository2) ApplyDiffToBlockDevice(
 		fromSnapName,
 		toSnapName,
 		diffChecksumChunkSize,
+		enableChecksumVerify,
 	)
 }
 

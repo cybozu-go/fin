@@ -14,6 +14,7 @@ import (
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/types"
 	storagehelpers "k8s.io/component-helpers/storage/volume"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -27,6 +28,9 @@ const (
 	maxJobBackoffLimit = 65535
 
 	EnvRawImgExpansionUnitSize = "FIN_RAW_IMG_EXPANSION_UNIT_SIZE"
+	EnvRawChecksumChunkSize    = "FIN_RAW_CHECKSUM_CHUNK_SIZE"
+	EnvDiffChecksumChunkSize   = "FIN_DIFF_CHECKSUM_CHUNK_SIZE"
+	EnvEnableChecksumVerify    = "ENABLE_CHECKSUM_VERIFY"
 )
 
 func jobCompleted(job *batchv1.Job) (done bool, err error) {
@@ -43,6 +47,85 @@ func jobCompleted(job *batchv1.Job) (done bool, err error) {
 		}
 	}
 	return false, nil
+}
+
+type JobStatus int
+
+const (
+	JobStatusComplete JobStatus = iota
+	JobStatusInProgress
+	JobStatusFailedWithExitCode1
+	JobStatusFailedWithExitCode2
+	JobStatusFailedWithExitCode3
+	JobStatusUnknown
+)
+
+type JobStatusResult struct {
+	Status   JobStatus
+	ExitCode int32
+}
+
+func CheckJobStatus(
+	ctx context.Context,
+	r client.Client,
+	jobName string,
+	namespace string,
+) (JobStatusResult, error) {
+	var job batchv1.Job
+	err := r.Get(ctx, client.ObjectKey{Namespace: namespace, Name: jobName}, &job)
+	if err != nil {
+		return JobStatusResult{Status: JobStatusUnknown}, fmt.Errorf("failed to get Job %s: %w", jobName, err)
+	}
+
+	done, err := jobCompleted(&job)
+	if done { // Complete=True
+		return JobStatusResult{Status: JobStatusComplete}, nil
+	} else if err == nil { // not Complete=True nor Failed=True
+		return JobStatusResult{Status: JobStatusInProgress}, nil
+	}
+
+	// Failed=True, so check the exit code
+	pods := corev1.PodList{}
+	if err := r.List(ctx, &pods, &client.ListOptions{
+		Namespace: namespace,
+		LabelSelector: labels.SelectorFromSet(map[string]string{
+			"batch.kubernetes.io/job-name": jobName,
+		}),
+	}); err != nil {
+		return JobStatusResult{Status: JobStatusUnknown}, fmt.Errorf("failed to list pods of Job %s: %w", jobName, err)
+	}
+	if len(pods.Items) != 1 {
+		return JobStatusResult{Status: JobStatusUnknown}, fmt.Errorf("expected 1 pod for Job %s, got %d", jobName, len(pods.Items))
+	}
+
+	containerStatuses := pods.Items[0].Status.ContainerStatuses
+	if len(containerStatuses) != 1 {
+		return JobStatusResult{Status: JobStatusUnknown},
+			fmt.Errorf("expected 1 container in pod for Job %s, got %d", jobName, len(containerStatuses))
+	}
+
+	state := containerStatuses[0].State
+	if state.Terminated == nil {
+		return JobStatusResult{Status: JobStatusUnknown}, fmt.Errorf("container is not terminated")
+	}
+
+	exitCode := state.Terminated.ExitCode
+	var status JobStatus
+	switch exitCode {
+	case 1:
+		status = JobStatusFailedWithExitCode1
+	case 2:
+		status = JobStatusFailedWithExitCode2
+	case 3:
+		status = JobStatusFailedWithExitCode3
+	default:
+		status = JobStatusUnknown
+	}
+
+	return JobStatusResult{
+		Status:   status,
+		ExitCode: exitCode,
+	}, nil
 }
 
 func enqueueOnJobEvent(resourceName, resourceNamespace string) handler.MapFunc {
