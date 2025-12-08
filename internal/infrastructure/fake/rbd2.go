@@ -24,6 +24,12 @@ type writtenHistory struct {
 
 type RBDRepository2 struct {
 	r *rand.ChaCha8
+
+	// if this is set, all methods return this error
+	err error
+	// key: pool/image
+	locks map[string][]*model.RBDLock
+
 	// In this fake, divideSize is used as the basis size for calculating
 	// which areas on the volume have been rewritten by which snapshots or are unused.
 	// The divideSize is a specific idea for fake. It's not related to sector or block size.
@@ -36,6 +42,7 @@ type RBDRepository2 struct {
 
 var _ model.RBDRepository = &RBDRepository2{}
 var _ model.RBDSnapshotRepository = &RBDRepository2{}
+var _ model.RBDImageLocker = &RBDRepository2{}
 
 func NewRBDRepository2(poolName, imageName string) *RBDRepository2 {
 	s := make([]byte, 32)
@@ -48,6 +55,7 @@ func NewRBDRepository2(poolName, imageName string) *RBDRepository2 {
 
 	return &RBDRepository2{
 		r:          rand.NewChaCha8(seed),
+		locks:      make(map[string][]*model.RBDLock),
 		divideSize: 1024,
 		poolName:   poolName,
 		imageName:  imageName,
@@ -55,6 +63,10 @@ func NewRBDRepository2(poolName, imageName string) *RBDRepository2 {
 		snapshots:        []*model.RBDSnapshot{},
 		writtenHistories: []*writtenHistory{},
 	}
+}
+
+func (r *RBDRepository2) SetError(err error) {
+	r.err = err
 }
 
 func (r *RBDRepository2) CreateSnapshot(poolName, imageName, snapName string) error {
@@ -133,6 +145,61 @@ func (r *RBDRepository2) RemoveSnapshot(poolName, imageName, snapName string) er
 	}
 	r.snapshots = slices.Delete(r.snapshots, i, i+1)
 	return nil
+}
+
+func (r *RBDRepository2) LockAdd(pool, image, lockID string) error {
+	if r.err != nil {
+		return r.err
+	}
+
+	key := pool + "/" + image
+	if r.locks[key] == nil {
+		r.locks[key] = []*model.RBDLock{}
+	}
+
+	if len(r.locks[key]) > 0 {
+		return fmt.Errorf("lock already exists: %s", lockID)
+	}
+
+	r.locks[key] = append(r.locks[key], &model.RBDLock{
+		LockID: lockID,
+		Locker: fmt.Sprintf("client:%d", rand.Int64()), // ignore collision for test
+		Address: fmt.Sprintf("%d,%d,%d,%d:%d/%d",
+			rand.Int32N(256), rand.Int32N(256), rand.Int32N(256), rand.Int32N(256),
+			rand.Int32N(65536), rand.Int64()),
+	})
+
+	return nil
+}
+
+func (r *RBDRepository2) LockRm(pool, image string, lock *model.RBDLock) error {
+	if r.err != nil {
+		return r.err
+	}
+
+	key := pool + "/" + image
+	for _, l := range r.locks[key] {
+		if l.LockID == lock.LockID && l.Locker == lock.Locker {
+			r.locks[key] = slices.DeleteFunc(r.locks[key], func(lockItem *model.RBDLock) bool {
+				return lockItem.LockID == lock.LockID && lockItem.Locker == lock.Locker
+			})
+			return nil
+		}
+	}
+
+	return fmt.Errorf("lock not found: %s", lock.LockID)
+}
+
+func (r *RBDRepository2) LockLs(pool, image string) ([]*model.RBDLock, error) {
+	if r.err != nil {
+		return nil, r.err
+	}
+
+	key := pool + "/" + image
+	if locks, ok := r.locks[key]; ok {
+		return locks, nil
+	}
+	return []*model.RBDLock{}, nil
 }
 
 func (r *RBDRepository2) ExportDiff(input *model.ExportDiffInput) (io.ReadCloser, error) {

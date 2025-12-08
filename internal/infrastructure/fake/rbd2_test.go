@@ -98,6 +98,43 @@ type testVolume struct {
 	data     []byte
 }
 
+func TestRBDRepository2_ImageLocker(t *testing.T) {
+	rbdRepo := NewRBDRepository2(poolName, imageName)
+
+	// checking adding a lock succeeds
+	err := rbdRepo.LockAdd("pool", "image1", "lock1")
+	require.NoError(t, err)
+
+	// checking adding the same lock fails
+	err = rbdRepo.LockAdd("pool", "image1", "lock1")
+	require.Error(t, err)
+
+	// checking adding a different lock fails
+	err = rbdRepo.LockAdd("pool", "image1", "lock2")
+	require.Error(t, err)
+
+	// checking adding another lock succeeds
+	err = rbdRepo.LockAdd("pool", "image2", "lock1")
+	require.NoError(t, err)
+
+	// checking listing locks succeeds
+	locks1, err := rbdRepo.LockLs("pool", "image1")
+	require.NoError(t, err)
+	require.Len(t, locks1, 1)
+	require.Equal(t, "lock1", locks1[0].LockID)
+	locks2, err := rbdRepo.LockLs("pool", "image2")
+	require.NoError(t, err)
+	require.Len(t, locks2, 1)
+	require.Equal(t, "lock1", locks2[0].LockID)
+
+	// checking removing a lock succeeds
+	err = rbdRepo.LockRm("pool", "image1", locks1[0])
+	require.NoError(t, err)
+	locks1, err = rbdRepo.LockLs("pool", "image1")
+	require.NoError(t, err)
+	require.Empty(t, locks1)
+}
+
 func TestRBDRepository2_exportDiff_random(t *testing.T) {
 	rbdRepo := NewRBDRepository2(poolName, imageName)
 

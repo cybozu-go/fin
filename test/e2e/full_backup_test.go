@@ -195,7 +195,8 @@ func fullBackupTestSuite() {
 
 		VerifyNonExistenceOfRawImage(pvc, nodes[0])
 		VerifyDeletionOfJobsForBackup(ctx, k8sClient, finbackup)
-		VerifyDeletionOfSnapshotInFinBackup(ctx, ctrlClient, finbackup)
+		err = VerifyDeletionOfSnapshotInFinBackup(ctx, finbackup)
+		Expect(err).NotTo(HaveOccurred())
 	})
 
 	AfterAll(func(ctx SpecContext) {

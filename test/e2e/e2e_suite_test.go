@@ -74,6 +74,7 @@ var _ = Describe("Fin", func() {
 	Context("wait environment", waitEnvironment)
 	Context("full backup", Label("full-backup"), Ordered, fullBackupTestSuite)
 	Context("incremental backup", Label("incremental-backup"), Ordered, incrementalBackupTestSuite)
+	Context("lock", Label("lock"), Label("misc"), Ordered, lockTestSuite)
 	Context("verification", Label("verification"), Label("misc"), Ordered, verificationTestSuite)
 	Context("delete incremental backup", Label("delete-incremental-backup"), Label("misc"), Ordered,
 		deleteIncrementalBackupTestSuite)
