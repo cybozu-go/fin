@@ -29,6 +29,7 @@ const (
 	rawChecksumChunkSize  = 64 * 1024
 	diffChecksumChunkSize = 2 * 1024 * 1024
 	expansionUnitSize     = 8 * 1024 * 1024
+	enableChecksumVerify  = true
 )
 
 func TestMain(m *testing.M) {
@@ -1642,6 +1643,7 @@ func TestApplyDiffToBlockDevice_error_MissingDiffFileName(t *testing.T) {
 		"fromSnap",
 		"toSnap",
 		diffChecksumChunkSize,
+		enableChecksumVerify,
 	)
 
 	// Assert

@@ -111,6 +111,21 @@ func backupJobMain() error {
 		return err
 	}
 
+	rawChecksumChunkSize, err := getRawChecksumChunkSize()
+	if err != nil {
+		return err
+	}
+
+	diffChecksumChunkSize, err := getDiffChecksumChunkSize()
+	if err != nil {
+		return err
+	}
+
+	enableChecksumVerify, err := getEnableChecksumVerify()
+	if err != nil {
+		return err
+	}
+
 	b := backup.NewBackup(&input.Backup{
 		Repo:                      finRepo,
 		K8sClient:                 clientSet,
@@ -126,9 +141,9 @@ func backupJobMain() error {
 		TargetPVCUID:              pvcUID,
 		MaxPartSize:               maxPartSize,
 		ExpansionUnitSize:         expansionUnitSize,
-		RawChecksumChunkSize:      defaultRawChecksumChunkSize,  // this could be configurable in the future
-		DiffChecksumChunkSize:     defaultDiffChecksumChunkSize, // this could be configurable in the future
-		EnableChecksumVerify:      defaultEnableChecksumVerify,  // this could be configurable in the future
+		RawChecksumChunkSize:      rawChecksumChunkSize,
+		DiffChecksumChunkSize:     diffChecksumChunkSize,
+		EnableChecksumVerify:      enableChecksumVerify,
 	})
 	for {
 		err = b.Perform()

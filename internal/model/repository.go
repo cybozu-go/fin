@@ -136,7 +136,7 @@ type RBDRepository interface {
 	ExportDiff(input *ExportDiffInput) (io.ReadCloser, error)
 
 	// ApplyDiffToBlockDevice applies the difference from the diff file to the block device.
-	ApplyDiffToBlockDevice(blockDevicePath, diffFilePath, fromSnapName, toSnapName string, diffChecksumChunkSize uint64) error
+	ApplyDiffToBlockDevice(blockDevicePath, diffFilePath, fromSnapName, toSnapName string, diffChecksumChunkSize uint64, enableChecksumVerify bool) error
 
 	// ApplyDiffToRawImage applies the difference from the diff file to the raw image file.
 	ApplyDiffToRawImage(rawImageFilePath, diffFilePath, fromSnapName, toSnapName string, expansionUnitSize, rawChecksumChunkSize, diffChecksumChunkSize uint64, enableChecksumVerify bool) error

@@ -161,7 +161,14 @@ func (c *commandReadCloser) Close() error {
 	return nil
 }
 
-func (r *RBDRepository) ApplyDiffToBlockDevice(blockDevicePath, diffFilePath, fromSnapName, toSnapName string, diffChecksumChunkSize uint64) error {
+func (r *RBDRepository) ApplyDiffToBlockDevice(
+	blockDevicePath,
+	diffFilePath,
+	fromSnapName,
+	toSnapName string,
+	diffChecksumChunkSize uint64,
+	enableChecksumVerify bool,
+) error {
 	diffFile, err := os.Open(diffFilePath)
 	if err != nil {
 		return fmt.Errorf("failed to open diff file: %s: %w", diffFilePath, err)
@@ -174,7 +181,7 @@ func (r *RBDRepository) ApplyDiffToBlockDevice(blockDevicePath, diffFilePath, fr
 		return fmt.Errorf("failed to open checksum file: %s: %w", diffChecksumPath, err)
 	}
 	defer func() { _ = diffChecksumFile.Close() }()
-	diffReader, err := csumio.NewReader(diffFile, diffChecksumFile, int(diffChecksumChunkSize), false)
+	diffReader, err := csumio.NewReader(diffFile, diffChecksumFile, int(diffChecksumChunkSize), enableChecksumVerify)
 	if err != nil {
 		return fmt.Errorf("failed to create checksum reader: %w", err)
 	}
