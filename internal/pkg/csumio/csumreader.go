@@ -55,6 +55,9 @@ func (cr *Reader) Read(p []byte) (int, error) {
 			checksumBytes := make([]byte, ChecksumLen)
 			_, err := io.ReadFull(cr.checksumReader, checksumBytes)
 			if err != nil {
+				if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+					return 0, fmt.Errorf("%w: checksum data is shorter than expected", ErrChecksumMismatch)
+				}
 				return 0, fmt.Errorf("failed to read checksum: %w", err)
 			}
 

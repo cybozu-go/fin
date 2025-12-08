@@ -61,6 +61,37 @@ func TestReader_ChecksumMismatch_VerificationEnabled(t *testing.T) {
 	}
 }
 
+func TestReader_ChecksumShorterThanData(t *testing.T) {
+	// Description:
+	// Check that a short checksum file returns ErrChecksumMismatch.
+	//
+	// Arrange:
+	// - Data file has exactly one chunk.
+	// - Checksum file is shorter than the required checksum length.
+	//
+	// Act:
+	// Read once with checksum verification enabled.
+	//
+	// Assert:
+	// ErrChecksumMismatch is returned.
+
+	// Arrange
+	chunkSize := csumio.MinimumChunkSize
+	data := bytes.Repeat([]byte("a"), chunkSize)
+	truncatedChecksum := []byte{0x01}
+
+	reader, err := csumio.NewReader(bytes.NewReader(data), bytes.NewReader(truncatedChecksum), chunkSize, true)
+	require.NoError(t, err)
+
+	buf := make([]byte, chunkSize)
+
+	// Act
+	_, err = reader.Read(buf)
+
+	// Assert
+	assert.ErrorIs(t, err, csumio.ErrChecksumMismatch)
+}
+
 func TestReader_ChecksumMismatch_VerificationDisabled(t *testing.T) {
 	// Description:
 	// Check that checksum verification is ignored when verification is disabled
