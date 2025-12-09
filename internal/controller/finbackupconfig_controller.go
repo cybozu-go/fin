@@ -84,7 +84,7 @@ func (r *FinBackupConfigReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 
 	var pvc corev1.PersistentVolumeClaim
 	if err := r.Get(ctx, types.NamespacedName{Namespace: fbc.Spec.PVCNamespace, Name: fbc.Spec.PVC}, &pvc); err != nil {
-		return ctrl.Result{}, fmt.Errorf("failed to get PVC %s/%s: %w", fbc.Namespace, fbc.Spec.PVC, err)
+		return ctrl.Result{}, fmt.Errorf("failed to get PVC %s/%s: %w", fbc.Spec.PVCNamespace, fbc.Spec.PVC, err)
 	}
 
 	ok, err := checkCephCluster(ctx, r.Client, &pvc, r.managedCephClusterID)
