@@ -11,6 +11,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
+	"strings"
 	"time"
 
 	finv1 "github.com/cybozu-go/fin/api/v1"
@@ -774,6 +776,24 @@ func VerifyRawImage(pvc *corev1.PersistentVolumeClaim, node string, expected []b
 	Expect(expectedData).To(Equal(expected), "Data in raw.img does not match the expected data")
 }
 
+func VerifyChecksumFileExists(pvc *corev1.PersistentVolumeClaim, node string) {
+	GinkgoHelper()
+
+	By("verifying the existence of raw.img.csum")
+	rawChecksumPath := filepath.Join("/fin", pvc.Namespace, pvc.Name, "raw.img.csum")
+	_, stderr, err := minikubeSSH(node, nil, "test", "-f", rawChecksumPath)
+	Expect(err).NotTo(HaveOccurred(), "raw.img.csum should exist. stderr: "+string(stderr))
+}
+
+func VerifyChecksumFileDeleted(pvc *corev1.PersistentVolumeClaim, node string) {
+	GinkgoHelper()
+
+	By("verifying raw.img.csum is deleted")
+	rawChecksumPath := filepath.Join("/fin", pvc.Namespace, pvc.Name, "raw.img.csum")
+	_, _, err := minikubeSSH(node, nil, "test", "!", "-e", rawChecksumPath)
+	Expect(err).NotTo(HaveOccurred(), "raw.img.csum should be deleted")
+}
+
 func VerifyNonExistenceOfRawImage(pvc *corev1.PersistentVolumeClaim, node string) {
 	GinkgoHelper()
 
@@ -829,4 +849,57 @@ func VerifyDeletionOfResourcesForRestore(
 	By("verifying the deletion of the restore job PV")
 	_, stderr, err = kubectl("wait", "pv", restoreJobName, "--for=delete", "--timeout=3m")
 	Expect(err).NotTo(HaveOccurred(), "stderr: "+string(stderr))
+}
+
+func WaitForFinBackupChecksumMismatch(ctx context.Context, c client.Client, finbackup *finv1.FinBackup, timeout time.Duration) {
+	GinkgoHelper()
+
+	Eventually(func(g Gomega) {
+		fb := &finv1.FinBackup{}
+		err := c.Get(ctx, client.ObjectKeyFromObject(finbackup), fb)
+		g.Expect(err).NotTo(HaveOccurred())
+
+		var checksumMismatchCondition *metav1.Condition
+		for _, cond := range fb.Status.Conditions {
+			if cond.Type == finv1.BackupConditionChecksumMismatched {
+				checksumMismatchCondition = &cond
+				break
+			}
+		}
+
+		g.Expect(checksumMismatchCondition).NotTo(BeNil(), "ChecksumMismatched condition should exist")
+		g.Expect(checksumMismatchCondition.Status).To(Equal(metav1.ConditionTrue), "ChecksumMismatched condition should be True")
+	}).WithTimeout(timeout).WithPolling(time.Second).Should(Succeed())
+}
+
+func CorruptFileOnNode(node, path string) {
+	GinkgoHelper()
+
+	By("corrupting file " + path)
+	stdout, stderr, err := minikubeSSH(node, nil, "sudo", "od", "-An", "-N1", "-t", "u1", path)
+	Expect(err).NotTo(HaveOccurred(), "failed to read first byte for corruption. stderr: "+string(stderr))
+	firstByteStr := strings.TrimSpace(string(stdout))
+	firstByte, err := strconv.Atoi(firstByteStr)
+	Expect(err).NotTo(HaveOccurred(), "failed to parse first byte: "+firstByteStr)
+
+	flipped := byte(firstByte) ^ 0x01
+	_, stderr, err = minikubeSSH(node, []byte{flipped},
+		"sudo", "dd", "of="+path, "bs=1", "count=1", "conv=notrunc", "status=none")
+	Expect(err).NotTo(HaveOccurred(), "failed to overwrite first byte with flipped bit. stderr: "+string(stderr))
+}
+
+func ExpectDiffChecksumExists(node string, finbackup *finv1.FinBackup, pvc *corev1.PersistentVolumeClaim) {
+	GinkgoHelper()
+	Expect(finbackup.Status.SnapID).NotTo(BeNil())
+	diffChecksumPath := filepath.Join("/fin", pvc.Namespace, pvc.Name, "diff", fmt.Sprintf("%d", *finbackup.Status.SnapID), "part-0.csum")
+	_, stderr, err := minikubeSSH(node, nil, "test", "-f", diffChecksumPath)
+	Expect(err).NotTo(HaveOccurred(), "diff checksum file should exist. stderr: "+string(stderr))
+}
+
+func ExpectDiffChecksumNotExists(node string, finbackup *finv1.FinBackup, pvc *corev1.PersistentVolumeClaim) {
+	GinkgoHelper()
+	Expect(finbackup.Status.SnapID).NotTo(BeNil())
+	diffChecksumPath := filepath.Join("/fin", pvc.Namespace, pvc.Name, "diff", fmt.Sprintf("%d", *finbackup.Status.SnapID), "part-0.csum")
+	_, stderr, err := minikubeSSH(node, nil, "test", "!", "-e", diffChecksumPath)
+	Expect(err).NotTo(HaveOccurred(), "diff checksum file should be deleted. stderr: "+string(stderr))
 }
