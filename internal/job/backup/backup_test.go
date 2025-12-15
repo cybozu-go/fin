@@ -816,3 +816,82 @@ func Test_FullBackup_Error_ChecksumMismatch(t *testing.T) {
 	assert.Error(t, err)
 	assert.ErrorIs(t, err, ceph.ErrChecksumMismatch)
 }
+
+func Test_loopApplyDiff_RemovesDiffPartFiles(t *testing.T) {
+	// Description:
+	//   Test that loopApplyDiff removes diff part files after they are applied to
+	//   the raw image.
+	//
+	// Arrange:
+	//   - Create diff files for all parts.
+	//   - Set up Backup struct.
+	//
+	// Act:
+	//   Call loopApplyDiff.
+	//
+	// Assert:
+	//   Check that all diff part files are removed after loopApplyDiff completes.
+
+	// Arrange
+	cfg := setup(t, &setupInput{})
+	numParts := int(math.Ceil(float64(cfg.fullSnapshot.Size) / float64(cfg.fullBackupInput.MaxPartSize)))
+	require.Greater(t, numParts, 0)
+
+	// Create diff files for all parts
+	err := cfg.nlvRepo.MakeDiffDir(cfg.fullSnapshot.ID)
+	require.NoError(t, err)
+	for i := range numParts {
+		stream, err := cfg.rbdRepo.ExportDiff(&model.ExportDiffInput{
+			PoolName:       cfg.fullBackupInput.TargetRBDPoolName,
+			ReadOffset:     cfg.fullBackupInput.MaxPartSize * uint64(i),
+			ReadLength:     cfg.fullBackupInput.MaxPartSize,
+			FromSnap:       nil,
+			MidSnapPrefix:  cfg.fullSnapshot.Name,
+			ImageName:      cfg.fullBackupInput.TargetRBDImageName,
+			TargetSnapName: cfg.fullSnapshot.Name,
+		})
+		require.NoError(t, err)
+		err = WriteDiffPartAndCloseStream(
+			stream,
+			cfg.nlvRepo.GetDiffPartPath(cfg.fullBackupInput.TargetSnapshotID, i),
+			cfg.nlvRepo.GetDiffChecksumPath(cfg.fullBackupInput.TargetSnapshotID, i),
+			cfg.fullBackupInput.DiffChecksumChunkSize,
+		)
+		require.NoError(t, err)
+	}
+
+	// Verify diff files exist before loopApplyDiff
+	for i := range numParts {
+		diffPartPath := cfg.nlvRepo.GetDiffPartPath(cfg.fullBackupInput.TargetSnapshotID, i)
+		require.FileExists(t, diffPartPath)
+		diffChecksumPath := cfg.nlvRepo.GetDiffChecksumPath(cfg.fullBackupInput.TargetSnapshotID, i)
+		require.FileExists(t, diffChecksumPath)
+	}
+
+	// Set up fin.sqlite3 for the test
+	err = cfg.finRepo.StartOrRestartAction(cfg.fullBackupInput.ActionUID, model.Backup)
+	require.NoError(t, err)
+
+	// Create Backup struct directly
+	backup := NewBackup(cfg.fullBackupInput)
+	privateData := &backupPrivateData{
+		NextPatchPart: 0,
+		Mode:          modeFull,
+	}
+
+	// Act
+	err = backup.loopApplyDiff(privateData, cfg.fullSnapshot)
+	require.NoError(t, err)
+
+	// Assert
+	// Check that each diff part file does not exist after loopApplyDiff
+	for i := range numParts {
+		diffPartPath := cfg.nlvRepo.GetDiffPartPath(cfg.fullBackupInput.TargetSnapshotID, i)
+		require.NoFileExists(t, diffPartPath)
+		diffChecksumPath := cfg.nlvRepo.GetDiffChecksumPath(cfg.fullBackupInput.TargetSnapshotID, i)
+		require.NoFileExists(t, diffChecksumPath)
+	}
+
+	// Verify privateData.NextPatchPart is updated correctly
+	assert.Equal(t, numParts, privateData.NextPatchPart)
+}

@@ -60,8 +60,12 @@ func getDiffRelPath(snapshotID int) string {
 	return filepath.Join("diff", fmt.Sprintf("%d", snapshotID))
 }
 
+func getDiffPartRelPath(snapshotID, partIndex int) string {
+	return filepath.Join(getDiffRelPath(snapshotID), fmt.Sprintf("part-%d", partIndex))
+}
+
 func (r *NodeLocalVolumeRepository) GetDiffPartPath(snapshotID, partIndex int) string {
-	return filepath.Join(r.root.Name(), getDiffRelPath(snapshotID), fmt.Sprintf("part-%d", partIndex))
+	return filepath.Join(r.root.Name(), getDiffPartRelPath(snapshotID, partIndex))
 }
 
 func (r *NodeLocalVolumeRepository) GetDiffChecksumPath(snapshotID, partIndex int) string {
@@ -180,6 +184,17 @@ func (r *NodeLocalVolumeRepository) MakeDiffDir(snapshotID int) error {
 			return model.ErrAlreadyExists
 		}
 		return fmt.Errorf("failed to create directory: %w", err)
+	}
+	return nil
+}
+
+func (r *NodeLocalVolumeRepository) RemoveDiffPartFile(snapshotID, partIndex int) error {
+	path := getDiffPartRelPath(snapshotID, partIndex)
+	if err := r.root.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("failed to remove diff part file: %s: %w", path, err)
+	}
+	if err := r.root.Remove(ChecksumFilePath(path)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("failed to remove diff part checksum file: %s: %w", path, err)
 	}
 	return nil
 }
