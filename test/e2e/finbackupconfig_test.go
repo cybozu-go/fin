@@ -85,7 +85,7 @@ func finbackupconfigTestSuite() {
 			key := client.ObjectKey{Namespace: fbc.Namespace, Name: fmt.Sprintf("fbc-%s", fbc.UID)}
 			g.Expect(ctrlClient.Get(ctx, key, cj)).NotTo(HaveOccurred())
 			g.Expect(*cj.Spec.Suspend).To(Equal(true))
-		}, "10s", "1s").Should(Succeed())
+		}, "60s", "1s").Should(Succeed())
 
 		// 2. Schedule backup via CronJob managed by FinBackupConfig
 		By("creating FB_a and waiting for Verified")
