@@ -361,6 +361,10 @@ func (b *Backup) loopApplyDiff(privateData *backupPrivateData, targetSnapshot *m
 		if err := setBackupPrivateData(b.repo, b.actionUID, privateData); err != nil {
 			return fmt.Errorf("failed to set nextPatchPart to %d: %w", privateData.NextPatchPart, err)
 		}
+
+		if err := b.nodeLocalVolumeRepo.RemoveDiffPartFile(b.targetSnapshotID, i); err != nil {
+			return fmt.Errorf("failed to remove diff part file: %w", err)
+		}
 	}
 	return nil
 }

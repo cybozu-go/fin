@@ -179,6 +179,9 @@ type NodeLocalVolumeRepository interface {
 	// If the directory already exists, it returns `ErrAlreadyExists`.
 	MakeDiffDir(snapshotID int) error
 
+	// RemoveDiffPartFile removes a diff part file.
+	RemoveDiffPartFile(snapshotID, partIndex int) error
+
 	// RemoveDiffDirRecursively removes a diff directory and its contents.
 	RemoveDiffDirRecursively(snapshotID int) error
 
