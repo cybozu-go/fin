@@ -317,6 +317,17 @@ func (r *FinBackupReconciler) reconcileBackup(
 		}
 	}
 
+	if backup.Status.BackupStartTime.IsZero() {
+		base := backup.DeepCopy()
+		backup.Status.BackupStartTime = metav1.Now()
+		err = r.Status().Patch(ctx, &backup, client.MergeFrom(base))
+		if err != nil {
+			logger.Error(err, "failed to update FinBackup status")
+			return ctrl.Result{}, err
+		}
+	}
+	metrics.SetBackupCreateStatus(&backup, r.cephClusterNamespace, true, isFullBackup(&backup))
+
 	err = r.createOrUpdateBackupJob(ctx, &backup, diffFromStr, string(pvc.GetUID()), r.maxPartSize)
 	if err != nil {
 		logger.Error(err, "failed to create or update backup job")
@@ -344,17 +355,6 @@ func (r *FinBackupReconciler) reconcileBackup(
 		return ctrl.Result{}, nil
 	default:
 		return ctrl.Result{}, fmt.Errorf("unknown backup job status: %d", jobStatus.Status)
-	}
-
-	if backup.Status.BackupStartTime.IsZero() {
-		updatedBackup := backup.DeepCopy()
-		updatedBackup.Status.BackupStartTime = metav1.Now()
-		err = r.Status().Patch(ctx, updatedBackup, client.MergeFrom(&backup))
-		if err != nil {
-			logger.Error(err, "failed to update FinBackup status")
-			return ctrl.Result{}, err
-		}
-		metrics.SetBackupCreateStatus(updatedBackup, r.cephClusterNamespace, true, isFullBackup(updatedBackup))
 	}
 
 	updatedBackup := backup.DeepCopy()
