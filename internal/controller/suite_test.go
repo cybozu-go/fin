@@ -1,7 +1,6 @@
 package controller
 
 import (
-	"context"
 	"fmt"
 	"path/filepath"
 	"runtime"
@@ -29,7 +28,6 @@ import (
 var cfg *rest.Config
 var k8sClient client.Client
 var testEnv *envtest.Environment
-var otherNamespace *corev1.Namespace
 
 func TestControllers(t *testing.T) {
 	RegisterFailHandler(Fail)
@@ -37,7 +35,7 @@ func TestControllers(t *testing.T) {
 	RunSpecs(t, "Controller Suite")
 }
 
-var _ = BeforeSuite(func() {
+var _ = BeforeSuite(func(ctx SpecContext) {
 	logf.SetLogger(zap.New(zap.WriteTo(GinkgoWriter), zap.UseDevMode(true)))
 
 	By("bootstrapping test environment")
@@ -68,8 +66,21 @@ var _ = BeforeSuite(func() {
 	k8sClient, err = client.New(cfg, client.Options{Scheme: scheme.Scheme})
 	Expect(err).NotTo(HaveOccurred())
 	Expect(k8sClient).NotTo(BeNil())
-	otherNamespace = &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "test-namespace-2"}}
-	Expect(k8sClient.Create(context.Background(), otherNamespace)).Should(Succeed())
+
+	for _, ns := range []string{
+		cephNamespace,
+		workNamespace,
+		userNamespace,
+		otherNamespace,
+	} {
+		Expect(k8sClient.Create(ctx,
+			&corev1.Namespace{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: ns,
+				},
+			},
+		)).Should(Succeed())
+	}
 })
 
 var _ = AfterSuite(func() {

@@ -19,24 +19,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-func newControllerPod(name, namespace string) *corev1.Pod {
-	return &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: namespace,
-		},
-		Spec: corev1.PodSpec{
-			ServiceAccountName: "test-sa",
-			Containers: []corev1.Container{
-				{
-					Name:  "manager",
-					Image: "test:latest",
-				},
-			},
-		},
-	}
-}
-
 func findEnvVar(envVars []corev1.EnvVar, name string) *corev1.EnvVar {
 	for i := range envVars {
 		if envVars[i].Name == name {
@@ -59,11 +41,11 @@ var _ = Describe("FinBackupConfig Controller under Manager", Ordered, func() {
 		fbcNS = &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: utils.GetUniqueName("fbc-namespace")}}
 		Expect(k8sClient.Create(ctx, fbcNS)).NotTo(HaveOccurred())
 
-		sc = NewRBDStorageClass(utils.GetUniqueName("sc"), namespace, rbdPoolName)
+		sc = NewRBDStorageClass(utils.GetUniqueName("sc"), cephNamespace, rbdPoolName)
 		err := k8sClient.Create(ctx, sc)
 		Expect(err).NotTo(HaveOccurred())
 
-		pvc, pv = NewPVCAndPV(sc, namespace, "test-pvc", "test-pv", rbdImageName)
+		pvc, pv = NewPVCAndPV(sc, userNamespace, "test-pvc", "test-pv", rbdImageName)
 		err = k8sClient.Create(ctx, pvc)
 		Expect(err).NotTo(HaveOccurred())
 		err = k8sClient.Create(ctx, pv)
@@ -73,7 +55,7 @@ var _ = Describe("FinBackupConfig Controller under Manager", Ordered, func() {
 			k8sClient,
 			scheme.Scheme,
 			"",
-			namespace,
+			cephClusterID,
 			"test:latest",
 			"test-sa",
 		)
@@ -96,7 +78,7 @@ var _ = Describe("FinBackupConfig Controller under Manager", Ordered, func() {
 		stopFunc()
 		Expect(k8sClient.Delete(ctx, fbcNS)).To(Succeed())
 		Expect(k8sClient.Delete(ctx, sc)).To(Succeed())
-		DeletePVCAndPV(ctx, namespace, pvc.Name)
+		DeletePVCAndPV(ctx, userNamespace, pvc.Name)
 	})
 
 	It("should delete FinBackupConfig", func(ctx SpecContext) {
@@ -140,10 +122,6 @@ var _ = Describe("FinBackupConfig Controller", func() {
 
 		fbcNSObj := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: fbcNamespace}}
 		Expect(k8sClient.Create(ctx, fbcNSObj)).NotTo(HaveOccurred())
-
-		pod := newControllerPod(utils.GetUniqueName("test-controller"), namespace)
-		Expect(k8sClient.Create(ctx, pod)).NotTo(HaveOccurred())
-		DeferCleanup(func() { _ = k8sClient.Delete(ctx, pod) })
 	})
 
 	AfterEach(func(ctx SpecContext) {
@@ -172,18 +150,18 @@ var _ = Describe("FinBackupConfig Controller", func() {
 				k8sClient,
 				scheme.Scheme,
 				"",
-				namespace,
+				cephClusterID,
 				"test:latest",
 				"test-sa",
 			)
 			By("creating RBD StorageClass")
-			sc := NewRBDStorageClass("test", namespace, rbdPoolName)
+			sc := NewRBDStorageClass("test", cephNamespace, rbdPoolName)
 			err := k8sClient.Create(ctx, sc)
 			Expect(err).NotTo(HaveOccurred())
 			defer func() { _ = k8sClient.Delete(ctx, sc) }()
 
 			By("creating PVC and PV using the StorageClass")
-			pvc, pv := NewPVCAndPV(sc, namespace, "test-pvc", "test-pv", rbdImageName)
+			pvc, pv := NewPVCAndPV(sc, userNamespace, "test-pvc", "test-pv", rbdImageName)
 			err = k8sClient.Create(ctx, pvc)
 			Expect(err).NotTo(HaveOccurred())
 			err = k8sClient.Create(ctx, pv)
@@ -285,7 +263,7 @@ var _ = Describe("FinBackupConfig Controller", func() {
 				k8sClient,
 				scheme.Scheme,
 				"",
-				namespace,
+				cephClusterID,
 				"test:latest",
 				"test-sa",
 			)
@@ -293,7 +271,7 @@ var _ = Describe("FinBackupConfig Controller", func() {
 			Expect(k8sClient.Create(ctx, sc)).NotTo(HaveOccurred())
 			defer func() { _ = k8sClient.Delete(ctx, sc) }()
 
-			pvc, pv := NewPVCAndPV(sc, namespace, "pvc-mismatch", "pv-mismatch", rbdImageName)
+			pvc, pv := NewPVCAndPV(sc, userNamespace, "pvc-mismatch", "pv-mismatch", rbdImageName)
 			Expect(k8sClient.Create(ctx, pvc)).NotTo(HaveOccurred())
 			Expect(k8sClient.Create(ctx, pv)).NotTo(HaveOccurred())
 			defer func() { DeletePVCAndPV(ctx, pvc.Namespace, pvc.Name) }()
@@ -340,13 +318,13 @@ var _ = Describe("FinBackupConfig Controller", func() {
 
 			// Arrange
 			reconciler := NewFinBackupConfigReconciler(
-				k8sClient, scheme.Scheme, "15 3 * * *", namespace, "test:latest", "test-sa")
+				k8sClient, scheme.Scheme, "15 3 * * *", cephClusterID, "test:latest", "test-sa")
 
-			sc := NewRBDStorageClass("test-overwrite", namespace, rbdPoolName)
+			sc := NewRBDStorageClass("test-overwrite", cephNamespace, rbdPoolName)
 			Expect(k8sClient.Create(ctx, sc)).NotTo(HaveOccurred())
 			defer func() { _ = k8sClient.Delete(ctx, sc) }()
 
-			pvc, pv := NewPVCAndPV(sc, namespace, "pvc-overwrite", "pv-overwrite", rbdImageName)
+			pvc, pv := NewPVCAndPV(sc, userNamespace, "pvc-overwrite", "pv-overwrite", rbdImageName)
 			Expect(k8sClient.Create(ctx, pvc)).NotTo(HaveOccurred())
 			Expect(k8sClient.Create(ctx, pv)).NotTo(HaveOccurred())
 			defer func() { DeletePVCAndPV(ctx, pvc.Namespace, pvc.Name) }()

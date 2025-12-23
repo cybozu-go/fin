@@ -23,10 +23,14 @@ import (
 )
 
 const (
-	namespace    = "default"
-	podImage     = "sample-image"
-	rbdPoolName  = "test-pool"
-	rbdImageName = "test-image"
+	cephNamespace  = "rook-ceph" // Ceph, FinController, Jobs, PVCs for job are in this namespace
+	cephClusterID  = "rook-ceph"
+	workNamespace  = "work" // FinBackup, FinRestore are in this namespace
+	userNamespace  = "user" // Users's PVCs are in this namespace
+	otherNamespace = "other"
+	podImage       = "sample-image"
+	rbdPoolName    = "test-pool"
+	rbdImageName   = "test-image"
 )
 
 func makeJobSucceeded(job *batchv1.Job) {
@@ -108,7 +112,7 @@ func makeFinBackupMeetConditionAfterJobCompletes(
 ) {
 	GinkgoHelper()
 	Eventually(func(g Gomega) {
-		key := types.NamespacedName{Name: jobName, Namespace: namespace}
+		key := types.NamespacedName{Name: jobName, Namespace: cephNamespace}
 		var job batchv1.Job
 		g.Expect(k8sClient.Get(ctx, key, &job)).To(Succeed())
 		makeJobSucceeded(&job)
@@ -157,7 +161,7 @@ func WaitForFinBackupRemoved(ctx context.Context, finbackup *finv1.FinBackup) {
 	}
 	for _, jobName := range []string{cleanupJobName(finbackup), deletionJobName(finbackup)} {
 		Eventually(func(g Gomega) {
-			key := types.NamespacedName{Name: jobName, Namespace: namespace}
+			key := types.NamespacedName{Name: jobName, Namespace: cephNamespace}
 			var job batchv1.Job
 			g.Expect(k8sClient.Get(ctx, key, &job)).To(Succeed())
 			makeJobSucceeded(&job)

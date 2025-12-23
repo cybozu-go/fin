@@ -71,7 +71,7 @@ var _ = Describe("FinRestore Controller Reconcile Test", Ordered, func() {
 	var sc *storagev1.StorageClass
 
 	BeforeAll(func(ctx SpecContext) {
-		sc = NewRBDStorageClass("unit", namespace, rbdPoolName)
+		sc = NewRBDStorageClass("unit", cephNamespace, rbdPoolName)
 		Expect(k8sClient.Create(ctx, sc)).Should(Succeed())
 	})
 
@@ -83,7 +83,7 @@ var _ = Describe("FinRestore Controller Reconcile Test", Ordered, func() {
 		reconciler = NewFinRestoreReconciler(
 			k8sClient,
 			scheme.Scheme,
-			namespace,
+			cephNamespace,
 			podImage,
 			ptr.To(resource.MustParse("4096")),
 		)
@@ -113,20 +113,20 @@ var _ = Describe("FinRestore Controller Reconcile Test", Ordered, func() {
 
 		BeforeEach(func(ctx SpecContext) {
 			By("creating another storage class for another ceph cluster")
-			otherStorageClass = NewRBDStorageClass("other", otherNamespace.Name, rbdPoolName)
+			otherStorageClass = NewRBDStorageClass("other", otherNamespace, rbdPoolName)
 			Expect(k8sClient.Create(ctx, otherStorageClass)).Should(Succeed())
 
 			By("creating PVC with the storage class")
-			pvc2, pv2 = NewPVCAndPV(otherStorageClass, otherNamespace.Name, "test-pvc-2", "test-pv-2", rbdImageName)
+			pvc2, pv2 = NewPVCAndPV(otherStorageClass, otherNamespace, "test-pvc-2", "test-pv-2", rbdImageName)
 			Expect(k8sClient.Create(ctx, pvc2)).Should(Succeed())
 			Expect(k8sClient.Create(ctx, pv2)).Should(Succeed())
 
 			By("creating a FinBackup targeting a PVC in a different CephCluster")
-			finbackup = NewFinBackup(namespace, "test-fin-backup-1", pvc2.Name, pvc2.Namespace, "test-node")
+			finbackup = NewFinBackup(workNamespace, "test-fin-backup-1", pvc2.Name, pvc2.Namespace, "test-node")
 			Expect(k8sClient.Create(ctx, finbackup)).Should(Succeed())
 
 			By("creating a FinRestore targeting the FinBackup")
-			finrestore = NewFinRestore(namespace, "test-restore-1", finbackup.Name, "restore-pvc", pvc2.Namespace)
+			finrestore = NewFinRestore(workNamespace, "test-restore-1", finbackup.Name, "restore-pvc", pvc2.Namespace)
 			Expect(k8sClient.Create(ctx, finrestore)).Should(Succeed())
 		})
 
@@ -143,7 +143,7 @@ var _ = Describe("FinRestore Controller Reconcile Test", Ordered, func() {
 			Expect(err).ShouldNot(HaveOccurred())
 
 			By("checking that no restore job is created")
-			ExpectNoJob(ctx, k8sClient, restoreJobName(finrestore), finrestore.Namespace)
+			ExpectNoJob(ctx, k8sClient, restoreJobName(finrestore), cephNamespace)
 		})
 	})
 
@@ -170,15 +170,15 @@ var _ = Describe("FinRestore Controller Reconcile Test", Ordered, func() {
 
 		BeforeEach(func(ctx SpecContext) {
 			By("creating PVC and PV")
-			pvc, pv = NewPVCAndPV(sc, namespace, "test-pvc-1560", "test-pv-1560", rbdImageName)
+			pvc, pv = NewPVCAndPV(sc, userNamespace, "test-pvc-1560", "test-pv-1560", rbdImageName)
 			Expect(k8sClient.Create(ctx, pvc)).Should(Succeed())
 			Expect(k8sClient.Create(ctx, pv)).Should(Succeed())
 
 			By("creating FinBackup targeting the PVC")
-			finbackup = CreateFinBackupStoredAndVerified(ctx, k8sClient, namespace, "test-fin-backup-1560", pvc, 1, "test-node")
+			finbackup = CreateFinBackupStoredAndVerified(ctx, k8sClient, workNamespace, "test-fin-backup-1560", pvc, 1, "test-node")
 
 			By("Creating a FinRestore with a PVC of a different name and namespace.")
-			finrestore = NewFinRestore(namespace, "test-restore-1560", finbackup.Name, "restore-pvc", otherNamespace.Name)
+			finrestore = NewFinRestore(workNamespace, "test-restore-1560", finbackup.Name, "restore-pvc", otherNamespace)
 			Expect(k8sClient.Create(ctx, finrestore)).Should(Succeed())
 		})
 
@@ -224,15 +224,15 @@ var _ = Describe("FinRestore Controller Reconcile Test", Ordered, func() {
 
 		BeforeEach(func(ctx SpecContext) {
 			By("creating PVC and PV")
-			pvc, pv = NewPVCAndPV(sc, namespace, "test-pvc-1623", "test-pv-1623", rbdImageName)
+			pvc, pv = NewPVCAndPV(sc, userNamespace, "test-pvc-1623", "test-pv-1623", rbdImageName)
 			Expect(k8sClient.Create(ctx, pvc)).Should(Succeed())
 			Expect(k8sClient.Create(ctx, pv)).Should(Succeed())
 
 			By("creating FinBackup targeting the PVC")
-			finbackup = CreateFinBackupStoredAndVerified(ctx, k8sClient, namespace, "test-fin-backup-1623", pvc, 1, "test-node")
+			finbackup = CreateFinBackupStoredAndVerified(ctx, k8sClient, workNamespace, "test-fin-backup-1623", pvc, 1, "test-node")
 
 			By("creating FinRestore without specifying PVC name and namespace")
-			finrestore = NewFinRestore(namespace, "test-restore-1623", finbackup.Name, "", "")
+			finrestore = NewFinRestore(workNamespace, "test-restore-1623", finbackup.Name, "", "")
 			Expect(k8sClient.Create(ctx, finrestore)).Should(Succeed())
 		})
 
@@ -272,7 +272,7 @@ var _ = Describe("FinRestore Controller Reconcile Test", Ordered, func() {
 
 		BeforeEach(func(ctx SpecContext) {
 			By("creating FinRestore referring to non-existent FinBackup")
-			finrestore = NewFinRestore(namespace, "test-restore-1555", "no-exists-fb", "restore-pvc", namespace)
+			finrestore = NewFinRestore(workNamespace, "test-restore-1555", "no-exists-fb", "restore-pvc", userNamespace)
 			Expect(k8sClient.Create(ctx, finrestore)).Should(Succeed())
 		})
 
@@ -309,16 +309,16 @@ var _ = Describe("FinRestore Controller Reconcile Test", Ordered, func() {
 
 		BeforeEach(func(ctx SpecContext) {
 			By("creating PVC and PV")
-			pvc, pv = NewPVCAndPV(sc, namespace, "test-pvc-1557", "test-pv-1557", rbdImageName)
+			pvc, pv = NewPVCAndPV(sc, userNamespace, "test-pvc-1557", "test-pv-1557", rbdImageName)
 			Expect(k8sClient.Create(ctx, pvc)).Should(Succeed())
 			Expect(k8sClient.Create(ctx, pv)).Should(Succeed())
 
 			By("creating FinBackup that is not ready")
-			finbackup = NewFinBackup(namespace, "test-fin-backup-1557", pvc.Name, pvc.Namespace, "test-node")
+			finbackup = NewFinBackup(workNamespace, "test-fin-backup-1557", pvc.Name, pvc.Namespace, "test-node")
 			Expect(k8sClient.Create(ctx, finbackup)).Should(Succeed())
 
 			By("creating FinRestore targeting the not-ready FinBackup")
-			finrestore = NewFinRestore(namespace, "test-restore-1557", finbackup.Name, "restore-pvc", pvc.Namespace)
+			finrestore = NewFinRestore(workNamespace, "test-restore-1557", finbackup.Name, "restore-pvc", pvc.Namespace)
 			Expect(k8sClient.Create(ctx, finrestore)).Should(Succeed())
 		})
 
@@ -362,21 +362,21 @@ var _ = Describe("FinRestore Controller Reconcile Test", Ordered, func() {
 
 		BeforeEach(func(ctx SpecContext) {
 			By("creating PVC1 and PV1")
-			pvc1, pv1 = NewPVCAndPV(sc, namespace, "test-pvc-1558-1", "test-pv-1558-1", rbdImageName)
+			pvc1, pv1 = NewPVCAndPV(sc, userNamespace, "test-pvc-1558-1", "test-pv-1558-1", rbdImageName)
 			Expect(k8sClient.Create(ctx, pvc1)).Should(Succeed())
 			Expect(k8sClient.Create(ctx, pv1)).Should(Succeed())
 
 			By("creating PVC2 and PV2 with restored_by annotation")
-			pvc2, pv2 = NewPVCAndPV(sc, namespace, "test-pvc-1558-2", "test-pv-1558-2", rbdImageName)
+			pvc2, pv2 = NewPVCAndPV(sc, userNamespace, "test-pvc-1558-2", "test-pv-1558-2", rbdImageName)
 			pvc2.Annotations = map[string]string{"fin.cybozu.io/restored-by": "aaaa"}
 			Expect(k8sClient.Create(ctx, pvc2)).Should(Succeed())
 			Expect(k8sClient.Create(ctx, pv2)).Should(Succeed())
 
 			By("creating FinBackup targeting the PVC1")
-			finbackup = CreateFinBackupStoredAndVerified(ctx, k8sClient, namespace, "test-fin-backup-1558", pvc1, 1, "test-node")
+			finbackup = CreateFinBackupStoredAndVerified(ctx, k8sClient, workNamespace, "test-fin-backup-1558", pvc1, 1, "test-node")
 
 			By("creating FinRestore targeting the FinBackup with conflicting PVC name")
-			finrestore = NewFinRestore(namespace, "test-restore-1558-1", finbackup.Name, pvc2.Name, pvc2.Namespace)
+			finrestore = NewFinRestore(workNamespace, "test-restore-1558-1", finbackup.Name, pvc2.Name, pvc2.Namespace)
 			Expect(k8sClient.Create(ctx, finrestore)).Should(Succeed())
 		})
 
@@ -425,15 +425,15 @@ var _ = Describe("FinRestore Controller Reconcile Test", Ordered, func() {
 
 		BeforeEach(func(ctx SpecContext) {
 			By("creating backup-target PVC and PV")
-			pvc, pv = NewPVCAndPV(sc, namespace, "test-pvc-1553", "test-pv-1553", rbdImageName)
+			pvc, pv = NewPVCAndPV(sc, userNamespace, "test-pvc-1553", "test-pv-1553", rbdImageName)
 			Expect(k8sClient.Create(ctx, pvc)).Should(Succeed())
 			Expect(k8sClient.Create(ctx, pv)).Should(Succeed())
 
 			By("creating FinBackup and making it StoredToNode")
-			finbackup = CreateFinBackupStoredAndVerified(ctx, k8sClient, namespace, "test-fin-backup-1553", pvc, 1, "test-node")
+			finbackup = CreateFinBackupStoredAndVerified(ctx, k8sClient, workNamespace, "test-fin-backup-1553", pvc, 1, "test-node")
 
 			By("creating FinRestore targeting the FinBackup")
-			finrestore = NewFinRestore(namespace, "test-restore-1553", finbackup.Name, "restore-pvc-1553", namespace)
+			finrestore = NewFinRestore(workNamespace, "test-restore-1553", finbackup.Name, "restore-pvc-1553", userNamespace)
 			Expect(k8sClient.Create(ctx, finrestore)).Should(Succeed())
 
 			By("running reconciliation once")
@@ -449,7 +449,7 @@ var _ = Describe("FinRestore Controller Reconcile Test", Ordered, func() {
 
 			By("making the restore job complete")
 			var restoreJob batchv1.Job
-			restoreJobKey := client.ObjectKey{Namespace: finrestore.Namespace, Name: restoreJobName(finrestore)}
+			restoreJobKey := client.ObjectKey{Namespace: cephNamespace, Name: restoreJobName(finrestore)}
 			Expect(k8sClient.Get(ctx, restoreJobKey, &restoreJob)).Should(Succeed())
 			makeJobSucceeded(&restoreJob)
 			Expect(k8sClient.Status().Update(ctx, &restoreJob)).ShouldNot(HaveOccurred())
@@ -466,13 +466,13 @@ var _ = Describe("FinRestore Controller Reconcile Test", Ordered, func() {
 			Expect(k8sClient.Delete(ctx, finbackup)).Should(Succeed())
 			DeletePVCAndPV(ctx, pvc.Namespace, pvc.Name)
 			DeletePVCAndPV(ctx, finrestore.Spec.PVCNamespace, finrestore.Spec.PVC)
-			DeletePVCAndPV(ctx, finrestore.Namespace, restoreJobPVCName(finrestore))
+			DeletePVCAndPV(ctx, cephNamespace, restoreJobPVCName(finrestore))
 		})
 
 		It("should not recreate the restore job and keep existing resources intact", func(ctx SpecContext) {
 			By("deleting the restore job to confirm that it will not be recreated by the reconciler")
 			var restoreJob batchv1.Job
-			restoreJobKey := client.ObjectKey{Namespace: finrestore.Namespace, Name: restoreJobName(finrestore)}
+			restoreJobKey := client.ObjectKey{Namespace: cephNamespace, Name: restoreJobName(finrestore)}
 			Expect(k8sClient.Get(ctx, restoreJobKey, &restoreJob)).Should(Succeed())
 			options := &client.DeleteOptions{PropagationPolicy: ptr.To(metav1.DeletePropagationBackground)}
 			Expect(k8sClient.Delete(ctx, &restoreJob, options)).Should(Succeed())
@@ -486,12 +486,12 @@ var _ = Describe("FinRestore Controller Reconcile Test", Ordered, func() {
 			Expect(k8sClient.Get(ctx, restorePVCKey, &restorePVC)).Should(Succeed())
 
 			By("verifying both restore job PVC and PV exist")
-			jobPVCKey := client.ObjectKey{Namespace: finrestore.Namespace, Name: restoreJobPVCName(finrestore)}
+			jobPVCKey := client.ObjectKey{Namespace: cephNamespace, Name: restoreJobPVCName(finrestore)}
 			Expect(k8sClient.Get(ctx, jobPVCKey, &restoreJobPVC)).Should(Succeed())
 			Expect(k8sClient.Get(ctx, client.ObjectKey{Name: restoreJobPVName(finrestore)}, &restoreJobPV)).Should(Succeed())
 
 			By("verifying that the restore job is not recreated")
-			ExpectNoJob(ctx, k8sClient, restoreJobName(finrestore), finrestore.Namespace)
+			ExpectNoJob(ctx, k8sClient, restoreJobName(finrestore), cephNamespace)
 		})
 	})
 
@@ -501,7 +501,7 @@ var _ = Describe("FinRestore Controller Reconcile Test", Ordered, func() {
 
 		BeforeEach(func(ctx SpecContext) {
 			By("creating a pair of PVC and PV for checksum verification cases")
-			pvc, pv = NewPVCAndPV(sc, namespace, utils.GetUniqueName("pvc-csum-"), utils.GetUniqueName("pv-csum-"), rbdImageName)
+			pvc, pv = NewPVCAndPV(sc, userNamespace, utils.GetUniqueName("pvc-csum-"), utils.GetUniqueName("pv-csum-"), rbdImageName)
 			Expect(k8sClient.Create(ctx, pvc)).Should(Succeed())
 			Expect(k8sClient.Create(ctx, pv)).Should(Succeed())
 		})
@@ -528,7 +528,7 @@ var _ = Describe("FinRestore Controller Reconcile Test", Ordered, func() {
 
 			// Arrange
 			By("creating FinBackup with ChecksumMismatched=True")
-			finbackup := CreateFinBackupStoredAndVerified(ctx, k8sClient, namespace, utils.GetUniqueName("test-fin-backup"), pvc, 1, utils.GetUniqueName("test-node"))
+			finbackup := CreateFinBackupStoredAndVerified(ctx, k8sClient, workNamespace, utils.GetUniqueName("test-fin-backup"), pvc, 1, utils.GetUniqueName("test-node"))
 			meta.SetStatusCondition(&finbackup.Status.Conditions, metav1.Condition{
 				Type:    finv1.BackupConditionChecksumMismatched,
 				Status:  metav1.ConditionTrue,
@@ -539,11 +539,11 @@ var _ = Describe("FinRestore Controller Reconcile Test", Ordered, func() {
 
 			By("creating FinRestore with allowChecksumMismatched=true")
 			finrestore := NewFinRestore(
-				namespace,
+				workNamespace,
 				utils.GetUniqueName("test-restore"),
 				finbackup.Name,
 				utils.GetUniqueName("restore-pvc"),
-				namespace,
+				userNamespace,
 			)
 			finrestore.Spec.AllowChecksumMismatched = true
 			Expect(k8sClient.Create(ctx, finrestore)).Should(Succeed())
@@ -577,7 +577,7 @@ var _ = Describe("FinRestore Controller Reconcile Test", Ordered, func() {
 
 			// Arrange
 			By("creating FinBackup with ChecksumMismatched=True")
-			finbackup := CreateFinBackupStoredAndVerified(ctx, k8sClient, namespace, utils.GetUniqueName("test-fin-backup"), pvc, 1, utils.GetUniqueName("test-node"))
+			finbackup := CreateFinBackupStoredAndVerified(ctx, k8sClient, workNamespace, utils.GetUniqueName("test-fin-backup"), pvc, 1, utils.GetUniqueName("test-node"))
 			meta.SetStatusCondition(&finbackup.Status.Conditions, metav1.Condition{
 				Type:    finv1.BackupConditionChecksumMismatched,
 				Status:  metav1.ConditionTrue,
@@ -588,11 +588,11 @@ var _ = Describe("FinRestore Controller Reconcile Test", Ordered, func() {
 
 			By("creating FinRestore with allowChecksumMismatched=false")
 			finrestore := NewFinRestore(
-				namespace,
+				workNamespace,
 				utils.GetUniqueName("test-restore"),
 				finbackup.Name,
 				utils.GetUniqueName("restore-pvc"),
-				namespace,
+				userNamespace,
 			)
 			finrestore.Spec.AllowChecksumMismatched = false
 			Expect(k8sClient.Create(ctx, finrestore)).Should(Succeed())
@@ -619,7 +619,7 @@ var _ = Describe("FinRestore Controller Reconcile Test", Ordered, func() {
 		BeforeEach(func(ctx SpecContext) {
 			By("creating PVC and PV")
 			var pv *corev1.PersistentVolume
-			pvc, pv = NewPVCAndPV(sc, namespace, utils.GetUniqueName("test-pvc"), utils.GetUniqueName("test-pv"), rbdImageName)
+			pvc, pv = NewPVCAndPV(sc, userNamespace, utils.GetUniqueName("test-pvc"), utils.GetUniqueName("test-pv"), rbdImageName)
 			Expect(k8sClient.Create(ctx, pvc)).Should(Succeed())
 			Expect(k8sClient.Create(ctx, pv)).Should(Succeed())
 		})
@@ -645,7 +645,7 @@ var _ = Describe("FinRestore Controller Reconcile Test", Ordered, func() {
 			// Arrange
 			By("creating unverified FinBackup targeting the PVC")
 			finbackup := CreateFinBackupStoredAndVerified(
-				ctx, k8sClient, namespace, utils.GetUniqueName("test-fin-backup"), pvc, 1, utils.GetUniqueName("test-node"))
+				ctx, k8sClient, workNamespace, utils.GetUniqueName("test-fin-backup"), pvc, 1, utils.GetUniqueName("test-node"))
 			finbackup.Status.Conditions = []metav1.Condition{}
 			meta.SetStatusCondition(&finbackup.Status.Conditions, metav1.Condition{
 				Type:   finv1.BackupConditionStoredToNode,
@@ -661,11 +661,11 @@ var _ = Describe("FinRestore Controller Reconcile Test", Ordered, func() {
 
 			By("creating FinRestore with allowUnverified false")
 			finrestore := NewFinRestore(
-				namespace,
+				workNamespace,
 				utils.GetUniqueName("test-restore"),
 				finbackup.Name,
 				utils.GetUniqueName("restore-pvc"),
-				otherNamespace.Name,
+				otherNamespace,
 			)
 			finrestore.Spec.AllowUnverified = false
 			Expect(k8sClient.Create(ctx, finrestore)).Should(Succeed())
@@ -704,7 +704,7 @@ var _ = Describe("FinRestore Controller Reconcile Test", Ordered, func() {
 			// Arrange
 			By("creating unverified FinBackup targeting the PVC")
 			finbackup := CreateFinBackupStoredAndVerified(
-				ctx, k8sClient, namespace, utils.GetUniqueName("test-fin-backup"), pvc, 1, utils.GetUniqueName("test-node"))
+				ctx, k8sClient, workNamespace, utils.GetUniqueName("test-fin-backup"), pvc, 1, utils.GetUniqueName("test-node"))
 			finbackup.Status.Conditions = []metav1.Condition{}
 			meta.SetStatusCondition(&finbackup.Status.Conditions, metav1.Condition{
 				Type:   finv1.BackupConditionStoredToNode,
@@ -715,11 +715,11 @@ var _ = Describe("FinRestore Controller Reconcile Test", Ordered, func() {
 
 			By("creating FinRestore with allowUnverified false")
 			finrestore := NewFinRestore(
-				namespace,
+				workNamespace,
 				utils.GetUniqueName("test-restore"),
 				finbackup.Name,
 				utils.GetUniqueName("restore-pvc"),
-				otherNamespace.Name,
+				otherNamespace,
 			)
 			finrestore.Spec.AllowUnverified = false
 			Expect(k8sClient.Create(ctx, finrestore)).Should(Succeed())
@@ -758,7 +758,7 @@ var _ = Describe("FinRestore Controller Reconcile Test", Ordered, func() {
 			// Arrange
 			By("creating unverified FinBackup targeting the PVC")
 			finbackup := NewFinBackup(
-				namespace,
+				workNamespace,
 				utils.GetUniqueName("test-fin-backup"),
 				pvc.Name,
 				pvc.Namespace,
@@ -784,11 +784,11 @@ var _ = Describe("FinRestore Controller Reconcile Test", Ordered, func() {
 
 			By("creating FinRestore with allowUnverified true")
 			finrestore := NewFinRestore(
-				namespace,
+				workNamespace,
 				utils.GetUniqueName("test-restore"),
 				finbackup.Name,
 				utils.GetUniqueName("restore-pvc"),
-				otherNamespace.Name,
+				otherNamespace,
 			)
 			finrestore.Spec.AllowUnverified = true
 			Expect(k8sClient.Create(ctx, finrestore)).Should(Succeed())
