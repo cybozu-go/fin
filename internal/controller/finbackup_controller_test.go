@@ -40,7 +40,7 @@ func makeJobFailWithExitCode(ctx SpecContext, jobName string, exitCode int32) {
 	Eventually(func(g Gomega, ctx SpecContext) {
 		var pod corev1.Pod
 		pod.SetName(fmt.Sprintf("%s-pod", jobName))
-		pod.SetNamespace(namespace)
+		pod.SetNamespace(cephNamespace)
 		_, err := ctrl.CreateOrUpdate(ctx, k8sClient, &pod, func() error {
 			pod.Labels = map[string]string{
 				"batch.kubernetes.io/job-name": jobName,
@@ -70,7 +70,7 @@ func makeJobFailWithExitCode(ctx SpecContext, jobName string, exitCode int32) {
 		err = k8sClient.Status().Update(ctx, &pod)
 		g.Expect(err).NotTo(HaveOccurred())
 
-		jobKey := types.NamespacedName{Name: jobName, Namespace: namespace}
+		jobKey := types.NamespacedName{Name: jobName, Namespace: cephNamespace}
 		var job batchv1.Job
 		g.Expect(k8sClient.Get(ctx, jobKey, &job)).To(Succeed())
 		job.Status.Conditions = []batchv1.JobCondition{
@@ -96,7 +96,7 @@ func makeJobFailWithExitCode(ctx SpecContext, jobName string, exitCode int32) {
 
 func createFinBackupWithSkipChecksumVerifyAnnotation(ctx context.Context, pvc *corev1.PersistentVolumeClaim) *finv1.FinBackup {
 	GinkgoHelper()
-	finbackup := NewFinBackup(namespace, utils.GetUniqueName("fb-full-"), pvc.Name, pvc.Namespace, "test-node")
+	finbackup := NewFinBackup(workNamespace, utils.GetUniqueName("fb-full-"), pvc.Name, pvc.Namespace, "test-node")
 	finbackup.SetAnnotations(map[string]string{
 		annotationSkipChecksumVerify: annotationValueTrue,
 	})
@@ -116,7 +116,7 @@ func expectEnableChecksumVerifyIsTrue(ctx SpecContext, jobName string) {
 
 func expectEnableChecksumVerifyEquals(ctx SpecContext, jobName, expected string) {
 	GinkgoHelper()
-	jobKey := client.ObjectKey{Namespace: namespace, Name: jobName}
+	jobKey := client.ObjectKey{Namespace: cephNamespace, Name: jobName}
 	Eventually(func(g Gomega, ctx SpecContext) {
 		var job batchv1.Job
 		g.Expect(k8sClient.Get(ctx, jobKey, &job)).To(Succeed())
@@ -134,7 +134,7 @@ func expectEnableChecksumVerifyEquals(ctx SpecContext, jobName, expected string)
 		g.Expect(envVar.ValueFrom.ConfigMapKeyRef.Key).To(Equal(EnvEnableChecksumVerify))
 
 		var cm corev1.ConfigMap
-		cmKey := client.ObjectKey{Namespace: namespace, Name: envVar.ValueFrom.ConfigMapKeyRef.Name}
+		cmKey := client.ObjectKey{Namespace: cephNamespace, Name: envVar.ValueFrom.ConfigMapKeyRef.Name}
 		g.Expect(k8sClient.Get(ctx, cmKey, &cm)).To(Succeed())
 		g.Expect(cm.Data).To(HaveKeyWithValue(EnvEnableChecksumVerify, expected))
 	}, "5s", "1s").WithContext(ctx).Should(Succeed())
@@ -142,7 +142,7 @@ func expectEnableChecksumVerifyEquals(ctx SpecContext, jobName, expected string)
 
 func expectChecksumChunkSizesInBackupJob(ctx SpecContext, jobName string) {
 	GinkgoHelper()
-	jobKey := client.ObjectKey{Namespace: namespace, Name: jobName}
+	jobKey := client.ObjectKey{Namespace: cephNamespace, Name: jobName}
 	Eventually(func(g Gomega, ctx SpecContext) {
 		var job batchv1.Job
 		g.Expect(k8sClient.Get(ctx, jobKey, &job)).To(Succeed())
@@ -164,9 +164,9 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 	var sc1 *storagev1.StorageClass
 	var stopFunc context.CancelFunc
 
-	BeforeAll(func() {
-		sc1 = NewRBDStorageClass("integration", namespace, rbdPoolName)
-		Expect(k8sClient.Create(context.TODO(), sc1)).Should(Succeed())
+	BeforeAll(func(ctx SpecContext) {
+		sc1 = NewRBDStorageClass("integration", cephNamespace, rbdPoolName)
+		Expect(k8sClient.Create(ctx, sc1)).Should(Succeed())
 
 		volumeInfo := &fake.VolumeInfo{
 			Namespace: utils.GetUniqueName("ns-"),
@@ -182,7 +182,7 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 		reconciler = &FinBackupReconciler{
 			Client:                  mgr.GetClient(),
 			Scheme:                  mgr.GetScheme(),
-			cephClusterNamespace:    namespace,
+			cephClusterNamespace:    cephNamespace,
 			podImage:                podImage,
 			maxPartSize:             &defaultMaxPartSize,
 			snapRepo:                rbdRepo,
@@ -194,11 +194,11 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 		err = reconciler.SetupWithManager(mgr)
 		Expect(err).ToNot(HaveOccurred())
 
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx2, cancel := context.WithCancel(context.Background())
 		stopFunc = cancel
 		go func() {
 			defer GinkgoRecover()
-			err := mgr.Start(ctx)
+			err := mgr.Start(ctx2)
 			Expect(err).ToNot(HaveOccurred(), "failed to run controller")
 		}()
 	})
@@ -230,18 +230,18 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 		var finbackup2 *finv1.FinBackup
 		BeforeEach(func(ctx SpecContext) {
 			By("creating a pair of PVC and PV")
-			pvc1, pv1 = NewPVCAndPV(sc1, namespace, "pvc-sample", "pv-sample", rbdImageName)
+			pvc1, pv1 = NewPVCAndPV(sc1, userNamespace, "pvc-sample", "pv-sample", rbdImageName)
 			Expect(k8sClient.Create(ctx, pvc1)).Should(Succeed())
 			Expect(k8sClient.Create(ctx, pv1)).Should(Succeed())
 
 			By("creating a full FinBackup")
-			finbackup1 = NewFinBackup(namespace, "fb1-sample", pvc1.Name, pvc1.Namespace, "test-node")
+			finbackup1 = NewFinBackup(workNamespace, "fb1-sample", pvc1.Name, pvc1.Namespace, "test-node")
 			Expect(k8sClient.Create(ctx, finbackup1)).Should(Succeed())
 			MakeFinBackupStoredToNode(ctx, finbackup1)
 			MakeFinBackupVerified(ctx, finbackup1)
 
 			By("creating a incremental FinBackup")
-			finbackup2 = NewFinBackup(namespace, "fb2-sample", pvc1.Name, pvc1.Namespace, "test-node")
+			finbackup2 = NewFinBackup(workNamespace, "fb2-sample", pvc1.Name, pvc1.Namespace, "test-node")
 			Expect(k8sClient.Create(ctx, finbackup2)).Should(Succeed())
 			MakeFinBackupStoredToNode(ctx, finbackup2)
 			MakeFinBackupVerified(ctx, finbackup2)
@@ -276,7 +276,7 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 			By("checking another FinBackup is not deleted")
 			Consistently(func(g Gomega) {
 				var fb finv1.FinBackup
-				err := k8sClient.Get(ctx, client.ObjectKey{Namespace: namespace, Name: finbackup2.Name}, &fb)
+				err := k8sClient.Get(ctx, client.ObjectKey{Namespace: workNamespace, Name: finbackup2.Name}, &fb)
 				g.Expect(err).ShouldNot(HaveOccurred())
 				g.Expect(fb.DeletionTimestamp).Should(BeNil())
 			}, "5s", "1s").Should(Succeed())
@@ -304,24 +304,24 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 		var finbackup2 *finv1.FinBackup
 		BeforeEach(func(ctx SpecContext) {
 			By("creating a pair of PVC and PV")
-			pvc1, pv1 = NewPVCAndPV(sc1, namespace, "pvc-1542", "pv-1542", rbdImageName)
+			pvc1, pv1 = NewPVCAndPV(sc1, userNamespace, "pvc-1542", "pv-1542", rbdImageName)
 			Expect(k8sClient.Create(ctx, pvc1)).Should(Succeed())
 			Expect(k8sClient.Create(ctx, pv1)).Should(Succeed())
 
 			By("creating a full FinBackup")
-			finbackup1 = NewFinBackup(namespace, "fb1-1542", pvc1.Name, pvc1.Namespace, "test-node")
+			finbackup1 = NewFinBackup(workNamespace, "fb1-1542", pvc1.Name, pvc1.Namespace, "test-node")
 			Expect(k8sClient.Create(ctx, finbackup1)).Should(Succeed())
 			MakeFinBackupStoredToNode(ctx, finbackup1)
 			MakeFinBackupVerified(ctx, finbackup1)
 
 			By("recreating the backup-target PVC")
 			DeletePVCAndPV(ctx, pvc1.Namespace, pvc1.Name)
-			pvc1, pv1 = NewPVCAndPV(sc1, namespace, pvc1.Name, pv1.Name, rbdImageName)
+			pvc1, pv1 = NewPVCAndPV(sc1, userNamespace, pvc1.Name, pv1.Name, rbdImageName)
 			Expect(k8sClient.Create(ctx, pvc1)).Should(Succeed())
 			Expect(k8sClient.Create(ctx, pv1)).Should(Succeed())
 
 			By("reconciling a new FinBackup")
-			finbackup2 = NewFinBackup(namespace, "fb2-1542", pvc1.Name, pvc1.Namespace, "test-node")
+			finbackup2 = NewFinBackup(workNamespace, "fb2-1542", pvc1.Name, pvc1.Namespace, "test-node")
 			Expect(k8sClient.Create(ctx, finbackup2)).Should(Succeed())
 		})
 		AfterEach(func(ctx SpecContext) {
@@ -362,18 +362,18 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 		var finbackup2 *finv1.FinBackup
 		BeforeEach(func(ctx SpecContext) {
 			By("creating a pair of PVC and PV")
-			pvc1, pv1 = NewPVCAndPV(sc1, namespace, "pvc-1621", "pv-1621", rbdImageName)
+			pvc1, pv1 = NewPVCAndPV(sc1, userNamespace, "pvc-1621", "pv-1621", rbdImageName)
 			Expect(k8sClient.Create(ctx, pvc1)).Should(Succeed())
 			Expect(k8sClient.Create(ctx, pv1)).Should(Succeed())
 
 			By("creating a full FinBackup")
-			finbackup1 = NewFinBackup(namespace, "fb1-1621", pvc1.Name, pvc1.Namespace, "test-node")
+			finbackup1 = NewFinBackup(workNamespace, "fb1-1621", pvc1.Name, pvc1.Namespace, "test-node")
 			Expect(k8sClient.Create(ctx, finbackup1)).Should(Succeed())
 			MakeFinBackupStoredToNode(ctx, finbackup1)
 			MakeFinBackupVerified(ctx, finbackup1)
 
 			By("creating an incremental FinBackup")
-			finbackup2 = NewFinBackup(namespace, "fb2-1621", pvc1.Name, pvc1.Namespace, "test-node")
+			finbackup2 = NewFinBackup(workNamespace, "fb2-1621", pvc1.Name, pvc1.Namespace, "test-node")
 			Expect(k8sClient.Create(ctx, finbackup2)).Should(Succeed())
 			MakeFinBackupStoredToNode(ctx, finbackup2)
 			MakeFinBackupVerified(ctx, finbackup2)
@@ -424,13 +424,13 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 
 		BeforeEach(func(ctx SpecContext) {
 			By("creating a pair of PVC and PV")
-			pvc, pv = NewPVCAndPV(sc1, namespace, "pvc-1505", "pv-1505", rbdImageName)
+			pvc, pv = NewPVCAndPV(sc1, userNamespace, "pvc-1505", "pv-1505", rbdImageName)
 			Expect(k8sClient.Create(ctx, pvc)).Should(Succeed())
 			Expect(k8sClient.Create(ctx, pv)).Should(Succeed())
 
 			By("creating two FinBackups and ordering them by SnapID")
-			fb1 := NewFinBackup(namespace, "fb1-1505", pvc.Name, pvc.Namespace, "test-node")
-			fb2 := NewFinBackup(namespace, "fb2-1505", pvc.Name, pvc.Namespace, "test-node")
+			fb1 := NewFinBackup(workNamespace, "fb1-1505", pvc.Name, pvc.Namespace, "test-node")
+			fb2 := NewFinBackup(workNamespace, "fb2-1505", pvc.Name, pvc.Namespace, "test-node")
 			smallestFB, largerFB = createTwoBackupsOrdered(ctx, k8sClient, fb1, fb2)
 		})
 
@@ -448,13 +448,13 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 			By("waiting for a backup job for the FinBackup with the smallest SnapID")
 			Eventually(func(g Gomega) {
 				var job batchv1.Job
-				key := client.ObjectKey{Namespace: namespace, Name: backupJobName(smallestFB)}
+				key := client.ObjectKey{Namespace: cephNamespace, Name: backupJobName(smallestFB)}
 				g.Expect(k8sClient.Get(ctx, key, &job)).To(Succeed())
 			}, "5s", "1s").Should(Succeed())
 
 			By("verifying no backup job exists for the FinBackup with the larger SnapID")
 			Consistently(func(g Gomega) {
-				ExpectNoJob(ctx, k8sClient, backupJobName(largerFB), namespace)
+				ExpectNoJob(ctx, k8sClient, backupJobName(largerFB), cephNamespace)
 			}, "5s", "1s").Should(Succeed())
 		})
 	})
@@ -479,19 +479,19 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 
 		BeforeEach(func(ctx SpecContext) {
 			By("creating a pair of PVC and PV")
-			pvc, pv = NewPVCAndPV(sc1, namespace, "pvc-1506", "pv-1506", rbdImageName)
+			pvc, pv = NewPVCAndPV(sc1, userNamespace, "pvc-1506", "pv-1506", rbdImageName)
 			Expect(k8sClient.Create(ctx, pvc)).Should(Succeed())
 			Expect(k8sClient.Create(ctx, pv)).Should(Succeed())
 
 			By("creating FinBackup as a full backup and waiting until it becomes StoredToNode")
-			finbackup = NewFinBackup(namespace, "fb1-1506", pvc.Name, pvc.Namespace, "test-node")
+			finbackup = NewFinBackup(workNamespace, "fb1-1506", pvc.Name, pvc.Namespace, "test-node")
 			Expect(k8sClient.Create(ctx, finbackup)).Should(Succeed())
 			MakeFinBackupStoredToNode(ctx, finbackup)
 			MakeFinBackupVerified(ctx, finbackup)
 
 			By("creating two FinBackups and ordering them by SnapID")
-			fb2 := NewFinBackup(namespace, "fb2-1506", pvc.Name, pvc.Namespace, "test-node")
-			fb3 := NewFinBackup(namespace, "fb3-1506", pvc.Name, pvc.Namespace, "test-node")
+			fb2 := NewFinBackup(workNamespace, "fb2-1506", pvc.Name, pvc.Namespace, "test-node")
+			fb3 := NewFinBackup(workNamespace, "fb3-1506", pvc.Name, pvc.Namespace, "test-node")
 			smallestFB, largerFB = createTwoBackupsOrdered(ctx, k8sClient, fb2, fb3)
 		})
 
@@ -509,13 +509,13 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 			By("waiting for a backup job for the FinBackup with the smallest SnapID")
 			Eventually(func(g Gomega) {
 				var job batchv1.Job
-				key := client.ObjectKey{Namespace: namespace, Name: backupJobName(smallestFB)}
+				key := client.ObjectKey{Namespace: cephNamespace, Name: backupJobName(smallestFB)}
 				g.Expect(k8sClient.Get(ctx, key, &job)).To(Succeed())
 			}, "5s", "1s").Should(Succeed())
 
 			By("verifying no backup job exists for the FinBackup with the larger SnapID")
 			Consistently(func(g Gomega) {
-				ExpectNoJob(ctx, k8sClient, backupJobName(largerFB), namespace)
+				ExpectNoJob(ctx, k8sClient, backupJobName(largerFB), cephNamespace)
 			}, "5s", "1s").Should(Succeed())
 		})
 	})
@@ -526,7 +526,7 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 		BeforeEach(func(ctx SpecContext) {
 			By("creating a pair of PVC and PV")
 			var pv *corev1.PersistentVolume
-			pvc, pv = NewPVCAndPV(sc1, namespace, "pvc-sample", "pv-sample", rbdImageName)
+			pvc, pv = NewPVCAndPV(sc1, userNamespace, "pvc-sample", "pv-sample", rbdImageName)
 			Expect(k8sClient.Create(ctx, pvc)).Should(Succeed())
 			Expect(k8sClient.Create(ctx, pv)).Should(Succeed())
 		})
@@ -560,7 +560,7 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 
 			// Arrange
 			By("creating a full FinBackup")
-			finbackup1 := NewFinBackup(namespace, "fb1-sample", pvc.Name, pvc.Namespace, "test-node")
+			finbackup1 := NewFinBackup(workNamespace, "fb1-sample", pvc.Name, pvc.Namespace, "test-node")
 			Expect(k8sClient.Create(ctx, finbackup1)).Should(Succeed())
 			MakeFinBackupStoredToNode(ctx, finbackup1)
 
@@ -579,13 +579,13 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 
 			// Act (2)
 			By("creating an incremental FinBackup")
-			finbackup2 := NewFinBackup(namespace, "fb2-sample", pvc.Name, pvc.Namespace, "test-node")
+			finbackup2 := NewFinBackup(workNamespace, "fb2-sample", pvc.Name, pvc.Namespace, "test-node")
 			Expect(k8sClient.Create(ctx, finbackup2)).Should(Succeed())
 
 			// Assert (2)
 			By("checking a new backup Job is not created")
 			Consistently(func(g Gomega) {
-				key := types.NamespacedName{Name: backupJobName(finbackup2), Namespace: namespace}
+				key := types.NamespacedName{Name: backupJobName(finbackup2), Namespace: cephNamespace}
 				var job batchv1.Job
 				err := k8sClient.Get(ctx, key, &job)
 				Expect(err).To(MatchError(k8serrors.IsNotFound, "should not find the Job"))
@@ -626,7 +626,7 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 
 			// Act (1)
 			By("creating a full FinBackup")
-			finbackup1 := NewFinBackup(namespace, "fb1-sample", pvc.Name, pvc.Namespace, "test-node")
+			finbackup1 := NewFinBackup(workNamespace, "fb1-sample", pvc.Name, pvc.Namespace, "test-node")
 			finbackup1.SetAnnotations(map[string]string{
 				AnnotationSkipVerify: "true", // Set skip-verify annotation to true
 			})
@@ -643,10 +643,10 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 			}, "5s", "1s").Should(Succeed())
 
 			By("checking the verification Job is not found")
-			ExpectNoJob(ctx, k8sClient, verificationJobName(finbackup1), namespace)
+			ExpectNoJob(ctx, k8sClient, verificationJobName(finbackup1), cephNamespace)
 
 			By("checking the cleanup Job is created")
-			cleanupJobKey := client.ObjectKey{Namespace: namespace, Name: cleanupJobName(finbackup1)}
+			cleanupJobKey := client.ObjectKey{Namespace: cephNamespace, Name: cleanupJobName(finbackup1)}
 			Eventually(func(g Gomega, ctx SpecContext) {
 				var job batchv1.Job
 				g.Expect(k8sClient.Get(ctx, cleanupJobKey, &job)).To(Succeed())
@@ -676,7 +676,7 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 			// Assert (2)
 			By("checking a verification Job is not created")
 			Consistently(func(g Gomega, ctx SpecContext) {
-				verifJobKey := client.ObjectKey{Namespace: namespace, Name: verificationJobName(finbackup1)}
+				verifJobKey := client.ObjectKey{Namespace: cephNamespace, Name: verificationJobName(finbackup1)}
 				var job batchv1.Job
 				err := k8sClient.Get(ctx, verifJobKey, &job)
 				g.Expect(err).To(MatchError(k8serrors.IsNotFound, "should not find the Job"))
@@ -687,7 +687,7 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 			WaitForFinBackupRemoved(ctx, finbackup1)
 
 			By("checking the cleanup Job is deleted")
-			ExpectNoJob(ctx, k8sClient, cleanupJobName(finbackup1), namespace)
+			ExpectNoJob(ctx, k8sClient, cleanupJobName(finbackup1), cephNamespace)
 		})
 
 		It("should not create verification Job before the FinBackup becomes StoredToNode", func(ctx SpecContext) {
@@ -705,12 +705,12 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 
 			// Act
 			By("creating a full FinBackup")
-			finbackup1 := NewFinBackup(namespace, "fb1-sample", pvc.Name, pvc.Namespace, "test-node")
+			finbackup1 := NewFinBackup(workNamespace, "fb1-sample", pvc.Name, pvc.Namespace, "test-node")
 			Expect(k8sClient.Create(ctx, finbackup1)).Should(Succeed())
 
 			// Assert
 			Consistently(func(g Gomega, ctx SpecContext) {
-				verifJobKey := client.ObjectKey{Namespace: namespace, Name: verificationJobName(finbackup1)}
+				verifJobKey := client.ObjectKey{Namespace: cephNamespace, Name: verificationJobName(finbackup1)}
 				var job batchv1.Job
 				err := k8sClient.Get(ctx, verifJobKey, &job)
 				g.Expect(err).To(MatchError(k8serrors.IsNotFound, "should not find the Job"))
@@ -737,12 +737,12 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 
 			// Arrange
 			By("creating a full FinBackup")
-			finbackup1 := NewFinBackup(namespace, "fb1-sample", pvc.Name, pvc.Namespace, "test-node")
+			finbackup1 := NewFinBackup(workNamespace, "fb1-sample", pvc.Name, pvc.Namespace, "test-node")
 			Expect(k8sClient.Create(ctx, finbackup1)).Should(Succeed())
 			MakeFinBackupStoredToNode(ctx, finbackup1)
 
 			By("waiting for the verification Job to be created")
-			verifJobKey := client.ObjectKey{Namespace: namespace, Name: verificationJobName(finbackup1)}
+			verifJobKey := client.ObjectKey{Namespace: cephNamespace, Name: verificationJobName(finbackup1)}
 			Eventually(func(g Gomega, ctx SpecContext) {
 				var job batchv1.Job
 				g.Expect(k8sClient.Get(ctx, verifJobKey, &job)).To(Succeed())
@@ -769,7 +769,7 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 
 		BeforeEach(func(ctx SpecContext) {
 			By("creating a pair of PVC and PV for checksum verification cases")
-			pvc, pv = NewPVCAndPV(sc1, namespace, utils.GetUniqueName("pvc-csum-"), utils.GetUniqueName("pv-csum-"), rbdImageName)
+			pvc, pv = NewPVCAndPV(sc1, userNamespace, utils.GetUniqueName("pvc-csum-"), utils.GetUniqueName("pv-csum-"), rbdImageName)
 			Expect(k8sClient.Create(ctx, pvc)).Should(Succeed())
 			Expect(k8sClient.Create(ctx, pv)).Should(Succeed())
 		})
@@ -858,7 +858,7 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 			Expect(k8sClient.Delete(ctx, finbackup1)).Should(Succeed())
 
 			By("waiting for the cleanup Job to be created")
-			cleanupJobKey := client.ObjectKey{Namespace: namespace, Name: cleanupJobName(finbackup1)}
+			cleanupJobKey := client.ObjectKey{Namespace: cephNamespace, Name: cleanupJobName(finbackup1)}
 			Eventually(func(g Gomega, ctx SpecContext) {
 				var job batchv1.Job
 				g.Expect(k8sClient.Get(ctx, cleanupJobKey, &job)).To(Succeed())
@@ -873,7 +873,7 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 			}, "5s", "1s").WithContext(ctx).Should(Succeed())
 
 			By("waiting for the deletion Job to be created")
-			delJobKey := client.ObjectKey{Namespace: namespace, Name: deletionJobName(finbackup1)}
+			delJobKey := client.ObjectKey{Namespace: cephNamespace, Name: deletionJobName(finbackup1)}
 			Eventually(func(g Gomega, ctx SpecContext) {
 				var job batchv1.Job
 				g.Expect(k8sClient.Get(ctx, delJobKey, &job)).To(Succeed())
@@ -900,7 +900,7 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 			//   - The backup Job has checksum chunk sizes set.
 
 			By("creating a full FinBackup without skip-checksum-verify annotation")
-			finbackup1 := NewFinBackup(namespace, utils.GetUniqueName("fb-full-"), pvc.Name, pvc.Namespace, "test-node")
+			finbackup1 := NewFinBackup(workNamespace, utils.GetUniqueName("fb-full-"), pvc.Name, pvc.Namespace, "test-node")
 			Expect(k8sClient.Create(ctx, finbackup1)).Should(Succeed())
 
 			// Act
@@ -933,12 +933,12 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 
 			// Arrange
 			By("creating a full FinBackup")
-			finbackup1 := NewFinBackup(namespace, utils.GetUniqueName("fb-full-"), pvc.Name, pvc.Namespace, "test-node")
+			finbackup1 := NewFinBackup(workNamespace, utils.GetUniqueName("fb-full-"), pvc.Name, pvc.Namespace, "test-node")
 			Expect(k8sClient.Create(ctx, finbackup1)).Should(Succeed())
 
 			// Act
 			By("waiting for the backup Job to be created")
-			backupJobKey := client.ObjectKey{Namespace: namespace, Name: backupJobName(finbackup1)}
+			backupJobKey := client.ObjectKey{Namespace: cephNamespace, Name: backupJobName(finbackup1)}
 			Eventually(func(g Gomega, ctx SpecContext) {
 				var job batchv1.Job
 				g.Expect(k8sClient.Get(ctx, backupJobKey, &job)).To(Succeed())
@@ -983,7 +983,7 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 
 			// Arrange
 			By("creating a full FinBackup")
-			finbackup1 := NewFinBackup(namespace, utils.GetUniqueName("fb-full-"), pvc.Name, pvc.Namespace, "test-node")
+			finbackup1 := NewFinBackup(workNamespace, utils.GetUniqueName("fb-full-"), pvc.Name, pvc.Namespace, "test-node")
 			Expect(k8sClient.Create(ctx, finbackup1)).Should(Succeed())
 			MakeFinBackupStoredToNode(ctx, finbackup1)
 
@@ -1030,7 +1030,7 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 
 			// Arrange
 			By("creating a full FinBackup")
-			finbackup1 := NewFinBackup(namespace, utils.GetUniqueName("fb-full-"), pvc.Name, pvc.Namespace, "test-node")
+			finbackup1 := NewFinBackup(workNamespace, utils.GetUniqueName("fb-full-"), pvc.Name, pvc.Namespace, "test-node")
 			Expect(k8sClient.Create(ctx, finbackup1)).Should(Succeed())
 			MakeFinBackupStoredToNode(ctx, finbackup1)
 			MakeFinBackupVerified(ctx, finbackup1)
@@ -1040,7 +1040,7 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 			Expect(k8sClient.Delete(ctx, finbackup1)).Should(Succeed())
 
 			By("waiting for the cleanup Job to be created")
-			cleanupJobKey := client.ObjectKey{Namespace: namespace, Name: cleanupJobName(finbackup1)}
+			cleanupJobKey := client.ObjectKey{Namespace: cephNamespace, Name: cleanupJobName(finbackup1)}
 			Eventually(func(g Gomega, ctx SpecContext) {
 				var job batchv1.Job
 				g.Expect(k8sClient.Get(ctx, cleanupJobKey, &job)).To(Succeed())
@@ -1055,7 +1055,7 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 			}, "5s", "1s").WithContext(ctx).Should(Succeed())
 
 			By("waiting for the deletion Job to be created")
-			delJobKey := client.ObjectKey{Namespace: namespace, Name: deletionJobName(finbackup1)}
+			delJobKey := client.ObjectKey{Namespace: cephNamespace, Name: deletionJobName(finbackup1)}
 			Eventually(func(g Gomega, ctx SpecContext) {
 				var job batchv1.Job
 				g.Expect(k8sClient.Get(ctx, delJobKey, &job)).To(Succeed())
@@ -1090,7 +1090,7 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 		BeforeEach(func(ctx SpecContext) {
 			By("creating a pair of PVC and PV")
 			var pv *corev1.PersistentVolume
-			pvc, pv = NewPVCAndPV(sc1, namespace, "pvc-sample", "pv-sample", rbdImageName)
+			pvc, pv = NewPVCAndPV(sc1, userNamespace, "pvc-sample", "pv-sample", rbdImageName)
 			Expect(k8sClient.Create(ctx, pvc)).Should(Succeed())
 			Expect(k8sClient.Create(ctx, pv)).Should(Succeed())
 		})
@@ -1101,13 +1101,13 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 		})
 
 		It("should set AutoDeleteCompleted condition even when there is no old FinBackup to delete", func(ctx SpecContext) {
-			finbackup1 := NewFinBackup(namespace, "fb1-sample", pvc.Name, pvc.Namespace, "test-node")
+			finbackup1 := NewFinBackup(workNamespace, "fb1-sample", pvc.Name, pvc.Namespace, "test-node")
 			Expect(k8sClient.Create(ctx, finbackup1)).Should(Succeed())
 			MakeFinBackupStoredToNode(ctx, finbackup1)
 
 			By("making the verification job succeed")
 			Eventually(func(g Gomega) {
-				jobKey := client.ObjectKey{Namespace: namespace, Name: verificationJobName(finbackup1)}
+				jobKey := client.ObjectKey{Namespace: cephNamespace, Name: verificationJobName(finbackup1)}
 				var job batchv1.Job
 				g.Expect(k8sClient.Get(ctx, jobKey, &job)).To(Succeed())
 				makeJobSucceeded(&job)
@@ -1132,7 +1132,7 @@ var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
 	var sc *storagev1.StorageClass
 
 	BeforeAll(func(ctx SpecContext) {
-		sc = NewRBDStorageClass("unit", namespace, rbdPoolName)
+		sc = NewRBDStorageClass("unit", cephNamespace, rbdPoolName)
 		Expect(k8sClient.Create(ctx, sc)).Should(Succeed())
 	})
 
@@ -1153,7 +1153,7 @@ var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
 		reconciler = &FinBackupReconciler{
 			Client:                  k8sClient,
 			Scheme:                  scheme.Scheme,
-			cephClusterNamespace:    namespace,
+			cephClusterNamespace:    cephNamespace,
 			podImage:                podImage,
 			maxPartSize:             &defaultMaxPartSize,
 			snapRepo:                rbdRepo,
@@ -1182,11 +1182,11 @@ var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
 		var finbackup *finv1.FinBackup
 
 		BeforeAll(func(ctx SpecContext) {
-			pvc, pv = NewPVCAndPV(sc, namespace, "test-pvc-labels", "test-pv-labels", rbdImageName)
+			pvc, pv = NewPVCAndPV(sc, userNamespace, "test-pvc-labels", "test-pv-labels", rbdImageName)
 			Expect(k8sClient.Create(ctx, pvc)).Should(Succeed())
 			Expect(k8sClient.Create(ctx, pv)).Should(Succeed())
 
-			finbackup = NewFinBackup(namespace, "test-full-backup-labels", pvc.Name, pvc.Namespace, "test-node")
+			finbackup = NewFinBackup(workNamespace, "test-full-backup-labels", pvc.Name, pvc.Namespace, "test-node")
 			Expect(k8sClient.Create(ctx, finbackup)).Should(Succeed())
 		})
 		AfterEach(func(ctx SpecContext) {
@@ -1228,16 +1228,16 @@ var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
 		var finbackup *finv1.FinBackup
 
 		BeforeEach(func(ctx SpecContext) {
-			otherStorageClass = NewRBDStorageClass("other", otherNamespace.Name, rbdPoolName)
+			otherStorageClass = NewRBDStorageClass("other", otherNamespace, rbdPoolName)
 			Expect(k8sClient.Create(ctx, otherStorageClass)).Should(Succeed())
 
 			By("creating PVC in the other storage class")
-			pvc2, pv2 = NewPVCAndPV(otherStorageClass, otherNamespace.Name, "test-pvc-2", "test-pv-2", rbdImageName)
+			pvc2, pv2 = NewPVCAndPV(otherStorageClass, otherNamespace, "test-pvc-2", "test-pv-2", rbdImageName)
 			Expect(k8sClient.Create(ctx, pvc2)).Should(Succeed())
 			Expect(k8sClient.Create(ctx, pv2)).Should(Succeed())
 
 			By("creating a FinBackup targeting a PVC in a different CephCluster")
-			finbackup = NewFinBackup(namespace, "test-fin-backup-1", pvc2.Name, pvc2.Namespace, "test-node")
+			finbackup = NewFinBackup(workNamespace, "test-fin-backup-1", pvc2.Name, pvc2.Namespace, "test-node")
 			Expect(k8sClient.Create(ctx, finbackup)).Should(Succeed())
 		})
 
@@ -1253,7 +1253,7 @@ var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
 			Expect(err).ShouldNot(HaveOccurred())
 
 			By("checking that no backup job is created")
-			ExpectNoJob(ctx, k8sClient, backupJobName(finbackup), finbackup.Namespace)
+			ExpectNoJob(ctx, k8sClient, backupJobName(finbackup), cephNamespace)
 		})
 	})
 
@@ -1295,7 +1295,7 @@ var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
 			Expect(k8sClient.Create(ctx, pv2)).Should(Succeed())
 
 			By("creating a FinBackup targeting the non-Ceph PVC")
-			finbackup = NewFinBackup(namespace, "test-fin-backup-1", pvc2.Name, pvc2.Namespace, "test-node")
+			finbackup = NewFinBackup(workNamespace, "test-fin-backup-1", pvc2.Name, pvc2.Namespace, "test-node")
 			Expect(k8sClient.Create(ctx, finbackup)).Should(Succeed())
 		})
 
@@ -1311,7 +1311,7 @@ var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
 			Expect(err).ShouldNot(HaveOccurred())
 
 			By("checking that no backup job is created")
-			ExpectNoJob(ctx, k8sClient, backupJobName(finbackup), finbackup.Namespace)
+			ExpectNoJob(ctx, k8sClient, backupJobName(finbackup), cephNamespace)
 		})
 	})
 
@@ -1335,12 +1335,12 @@ var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
 		var finbackup *finv1.FinBackup
 		BeforeAll(func(ctx SpecContext) {
 			By("creating a pair of PVC and PV")
-			pvc, pv = NewPVCAndPV(sc, namespace, "test-pvc-snapid", "test-pv-snapid", rbdImageName)
+			pvc, pv = NewPVCAndPV(sc, userNamespace, "test-pvc-snapid", "test-pv-snapid", rbdImageName)
 			Expect(k8sClient.Create(ctx, pvc)).Should(Succeed())
 			Expect(k8sClient.Create(ctx, pv)).Should(Succeed())
 
 			By("creating a FinBackup with a SnapID")
-			finbackup = NewFinBackup(namespace, "test-finbackup-snapid", pvc.Name, pvc.Namespace, "test-node")
+			finbackup = NewFinBackup(workNamespace, "test-finbackup-snapid", pvc.Name, pvc.Namespace, "test-node")
 			finbackup.Status.SnapID = ptr.To(1)
 			Expect(k8sClient.Create(ctx, finbackup)).Should(Succeed())
 		})
@@ -1354,7 +1354,7 @@ var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
 			Expect(err).ShouldNot(HaveOccurred())
 
 			By("checking that no backup job is created")
-			ExpectNoJob(ctx, k8sClient, backupJobName(finbackup), finbackup.Namespace)
+			ExpectNoJob(ctx, k8sClient, backupJobName(finbackup), cephNamespace)
 		})
 
 		// CSATEST-1626
@@ -1396,8 +1396,8 @@ var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
 				Expect(err).To(MatchError(k8serrors.IsNotFound, "should not find the FinBackup"))
 
 				By("checking that no cleanup or deletion jobs are created")
-				ExpectNoJob(ctx, k8sClient, cleanupJobName(finbackup), finbackup.Namespace)
-				ExpectNoJob(ctx, k8sClient, deletionJobName(finbackup), finbackup.Namespace)
+				ExpectNoJob(ctx, k8sClient, cleanupJobName(finbackup), cephNamespace)
+				ExpectNoJob(ctx, k8sClient, deletionJobName(finbackup), cephNamespace)
 			})
 		})
 	})
@@ -1425,7 +1425,7 @@ var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
 		var pv *corev1.PersistentVolume
 
 		BeforeAll(func(ctx SpecContext) {
-			pvc, pv = NewPVCAndPV(sc, namespace, "test-pvc-uid", "test-pv-uid", rbdImageName)
+			pvc, pv = NewPVCAndPV(sc, userNamespace, "test-pvc-uid", "test-pv-uid", rbdImageName)
 			Expect(k8sClient.Create(ctx, pvc)).Should(Succeed())
 			Expect(k8sClient.Create(ctx, pv)).Should(Succeed())
 
@@ -1439,7 +1439,7 @@ var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
 		When("The label in FinBackup differs the PVC UID", func() {
 			var finbackup *finv1.FinBackup
 			BeforeEach(func(ctx SpecContext) {
-				finbackup = NewFinBackup(namespace, "test-fin-backup-uid-1", pvc.Name, pvc.Namespace, "test-node")
+				finbackup = NewFinBackup(workNamespace, "test-fin-backup-uid-1", pvc.Name, pvc.Namespace, "test-node")
 				Expect(k8sClient.Create(ctx, finbackup)).Should(Succeed())
 				finbackup.Status.SnapID = ptr.To(1)
 				finbackup.Labels = map[string]string{labelBackupTargetPVCUID: "invalid-uid"}
@@ -1457,14 +1457,14 @@ var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
 				Expect(err).Should(MatchError(ContainSubstring("backup target PVC UID does not match (inLabel=")))
 
 				By("checking that no backup job is created")
-				ExpectNoJob(ctx, k8sClient, backupJobName(finbackup), finbackup.Namespace)
+				ExpectNoJob(ctx, k8sClient, backupJobName(finbackup), cephNamespace)
 			})
 		})
 
 		When("The UID in status.pvcManifest differs from the PVC UID", func() {
 			var finbackup *finv1.FinBackup
 			BeforeEach(func(ctx SpecContext) {
-				finbackup = NewFinBackup(namespace, "test-fin-backup-uid-2", pvc.Name, pvc.Namespace, "test-node")
+				finbackup = NewFinBackup(workNamespace, "test-fin-backup-uid-2", pvc.Name, pvc.Namespace, "test-node")
 				finbackup.Labels = map[string]string{labelBackupTargetPVCUID: string(pvc.GetUID())}
 				Expect(k8sClient.Create(ctx, finbackup)).Should(Succeed())
 				finbackup.Status.SnapID = ptr.To(1)
@@ -1484,7 +1484,7 @@ var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
 				Expect(err).Should(MatchError(ContainSubstring("backup target PVC UID does not match (inStatus=")))
 
 				By("checking that no backup job is created")
-				ExpectNoJob(ctx, k8sClient, backupJobName(finbackup), finbackup.Namespace)
+				ExpectNoJob(ctx, k8sClient, backupJobName(finbackup), cephNamespace)
 			})
 		})
 	})
@@ -1503,7 +1503,7 @@ var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
 			labels map[string]string,
 			snapID int,
 		) *finv1.FinBackup {
-			fb := NewFinBackup(namespace, name, pvc.Name, pvc.Namespace, node)
+			fb := NewFinBackup(workNamespace, name, pvc.Name, pvc.Namespace, node)
 			fb.Labels = labels
 			Expect(k8sClient.Create(ctx, fb)).Should(Succeed())
 			fb.Status.SnapID = ptr.To(snapID)
@@ -1512,13 +1512,13 @@ var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
 		}
 
 		BeforeEach(func(ctx SpecContext) {
-			pvc, pv = NewPVCAndPV(sc, namespace, "test-pvc-cleanup", "test-pv-cleanup", imgName)
+			pvc, pv = NewPVCAndPV(sc, userNamespace, "test-pvc-cleanup", "test-pv-cleanup", imgName)
 			Expect(k8sClient.Create(ctx, pvc)).Should(Succeed())
 			Expect(k8sClient.Create(ctx, pv)).Should(Succeed())
 
 			labels = map[string]string{labelBackupTargetPVCUID: string(pvc.GetUID())}
 
-			oldFinBackup = NewFinBackup(namespace, "old-finbackup", pvc.Name, pvc.Namespace, "test-node")
+			oldFinBackup = NewFinBackup(workNamespace, "old-finbackup", pvc.Name, pvc.Namespace, "test-node")
 			oldFinBackup.Labels = labels
 			Expect(k8sClient.Create(ctx, oldFinBackup)).Should(Succeed())
 			oldFinBackup.Status.SnapID = ptr.To(1)
@@ -1685,7 +1685,7 @@ var _ = Describe("FinBackup Controller Unit Tests", Ordered, func() {
 			reconciler = &FinBackupReconciler{
 				Client:                  mgr.GetClient(),
 				Scheme:                  mgr.GetScheme(),
-				cephClusterNamespace:    namespace,
+				cephClusterNamespace:    cephNamespace,
 				podImage:                podImage,
 				maxPartSize:             &defaultMaxPartSize,
 				snapRepo:                rbdRepo,
@@ -1740,7 +1740,7 @@ var _ = Describe("FinBackup Controller Unit Tests", Ordered, func() {
 			reconciler = &FinBackupReconciler{
 				Client:                  mgr.GetClient(),
 				Scheme:                  mgr.GetScheme(),
-				cephClusterNamespace:    namespace,
+				cephClusterNamespace:    cephNamespace,
 				podImage:                podImage,
 				maxPartSize:             &defaultMaxPartSize,
 				snapRepo:                rbdRepo,
