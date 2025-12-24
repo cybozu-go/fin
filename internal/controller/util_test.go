@@ -214,12 +214,14 @@ func ExpectNoJob(ctx context.Context, k8sClient client.Client, jobName, namespac
 	Expect(k8serrors.IsNotFound(err)).Should(BeTrue())
 }
 
-func NewRBDStorageClass(prefix, cephClusterNamespace, poolName string) *storagev1.StorageClass {
+func NewRBDStorageClass(prefix, clusterID, poolName string) *storagev1.StorageClass {
 	return &storagev1.StorageClass{
-		ObjectMeta:  metav1.ObjectMeta{Name: fmt.Sprintf("%s-%s", prefix, cephClusterNamespace)},
-		Provisioner: fmt.Sprintf("%s.rbd.csi.ceph.com", cephClusterNamespace),
+		ObjectMeta: metav1.ObjectMeta{
+			Name: fmt.Sprintf("%s-%s", prefix, clusterID),
+		},
+		Provisioner: fmt.Sprintf("%s.rbd.csi.ceph.com", clusterID),
 		Parameters: map[string]string{
-			"clusterID": cephClusterNamespace,
+			"clusterID": clusterID,
 			"pool":      poolName,
 		},
 	}
