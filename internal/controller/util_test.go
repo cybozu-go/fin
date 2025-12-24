@@ -83,9 +83,11 @@ func NewPVCAndPV(
 					Driver:       sc.Provisioner,
 					VolumeHandle: imageName,
 					VolumeAttributes: map[string]string{
-						"clusterID": sc.Parameters["clusterID"],
-						"pool":      sc.Parameters["pool"],
-						"imageName": imageName,
+						"clusterID":     sc.Parameters["clusterID"],
+						"imageFeatures": sc.Parameters["imageFeatures"],
+						"imageFormat":   sc.Parameters["imageFormat"],
+						"imageName":     imageName,
+						"pool":          sc.Parameters["pool"],
 					},
 				},
 			},
@@ -221,8 +223,10 @@ func NewRBDStorageClass(prefix, clusterID, poolName string) *storagev1.StorageCl
 		},
 		Provisioner: fmt.Sprintf("%s.rbd.csi.ceph.com", clusterID),
 		Parameters: map[string]string{
-			"clusterID": clusterID,
-			"pool":      poolName,
+			"clusterID":     clusterID,
+			"imageFeatures": "layering",
+			"imageFormat":   "2",
+			"pool":          poolName,
 		},
 	}
 }
