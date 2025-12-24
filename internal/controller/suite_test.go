@@ -10,6 +10,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	corev1 "k8s.io/api/core/v1"
+	storagev1 "k8s.io/api/storage/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
@@ -28,6 +29,9 @@ import (
 var cfg *rest.Config
 var k8sClient client.Client
 var testEnv *envtest.Environment
+
+var normalSC *storagev1.StorageClass
+var otherSC *storagev1.StorageClass
 
 func TestControllers(t *testing.T) {
 	RegisterFailHandler(Fail)
@@ -67,6 +71,7 @@ var _ = BeforeSuite(func(ctx SpecContext) {
 	Expect(err).NotTo(HaveOccurred())
 	Expect(k8sClient).NotTo(BeNil())
 
+	// Create namespaces.
 	for _, ns := range []string{
 		cephNamespace,
 		workNamespace,
@@ -81,6 +86,12 @@ var _ = BeforeSuite(func(ctx SpecContext) {
 			},
 		)).Should(Succeed())
 	}
+
+	// Create StorageClass.
+	normalSC = NewRBDStorageClass("normal", cephClusterID, rbdPoolName)
+	Expect(k8sClient.Create(ctx, normalSC)).Should(Succeed())
+	otherSC = NewRBDStorageClass("other", "other-ceph", rbdPoolName)
+	Expect(k8sClient.Create(ctx, otherSC)).Should(Succeed())
 })
 
 var _ = AfterSuite(func() {

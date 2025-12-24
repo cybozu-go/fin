@@ -216,12 +216,12 @@ func (r *FinRestoreReconciler) reconcileCreateOrUpdate(
 		return ctrl.Result{}, err
 	}
 
-	if err := r.createOrUpdateRestoreJobPV(ctx, restore, &restorePV); err != nil {
+	if err := r.createRestoreJobPVIfNotExists(ctx, restore, &restorePV); err != nil {
 		logger.Error(err, "failed to create restore job PV")
 		return ctrl.Result{}, err
 	}
 
-	if err := r.createOrUpdateRestoreJobPVC(ctx, restore, &restorePVC); err != nil {
+	if err := r.createRestoreJobPVCIfNotExists(ctx, restore, &restorePVC); err != nil {
 		logger.Error(err, "failed to create restore job PVC")
 		return ctrl.Result{}, err
 	}
@@ -464,93 +464,96 @@ func (r *FinRestoreReconciler) createOrUpdateRestorePVC(
 	return err
 }
 
-func (r *FinRestoreReconciler) createOrUpdateRestoreJobPV(
+// createRestoreJobPVIfNotExists creates static PV for restore job if not exists.
+// Returns an error if creation fails or nil if the PV already exists.
+func (r *FinRestoreReconciler) createRestoreJobPVIfNotExists(
 	ctx context.Context,
 	restore *finv1.FinRestore,
 	restorePV *corev1.PersistentVolume,
 ) error {
-	var pv corev1.PersistentVolume
-	pv.SetName(restoreJobPVName(restore))
-	_, err := ctrl.CreateOrUpdate(ctx, r.Client, &pv, func() error {
-		labels := pv.GetLabels()
-		if labels == nil {
-			labels = map[string]string{}
-		}
-		labels["app.kubernetes.io/name"] = labelAppNameValue
-		labels["app.kubernetes.io/component"] = labelComponentRestoreJob
-		pv.SetLabels(labels)
+	newPV := &corev1.PersistentVolume{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: restoreJobPVName(restore),
+			Labels: map[string]string{
+				"app.kubernetes.io/name":      labelAppNameValue,
+				"app.kubernetes.io/component": labelComponentRestoreJob,
+			},
+		},
+		Spec: corev1.PersistentVolumeSpec{
+			AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
+			Capacity:    restorePV.Spec.Capacity,
+			// Set ClaimRef to bind only to the specific PVC.
+			ClaimRef: &corev1.ObjectReference{
+				Namespace: r.cephClusterNamespace,
+				Name:      restoreJobPVCName(restore),
+			},
+			PersistentVolumeReclaimPolicy: corev1.PersistentVolumeReclaimRetain,
+			// No StorageClass to indicate static provisioning.
+			StorageClassName: "",
+			VolumeMode:       ptr.To(corev1.PersistentVolumeBlock),
+			PersistentVolumeSource: corev1.PersistentVolumeSource{
+				CSI: &corev1.CSIPersistentVolumeSource{
+					ControllerExpandSecretRef: restorePV.Spec.CSI.ControllerExpandSecretRef,
+					Driver:                    restorePV.Spec.CSI.Driver,
+					NodeStageSecretRef:        restorePV.Spec.CSI.NodeStageSecretRef,
+					VolumeAttributes: map[string]string{
+						"clusterID":     restorePV.Spec.CSI.VolumeAttributes["clusterID"],
+						"imageFeatures": restorePV.Spec.CSI.VolumeAttributes["imageFeatures"],
+						"imageFormat":   restorePV.Spec.CSI.VolumeAttributes["imageFormat"],
+						"pool":          restorePV.Spec.CSI.VolumeAttributes["pool"],
+						"staticVolume":  "true",
+					},
+					VolumeHandle: restorePV.Spec.CSI.VolumeAttributes["imageName"],
+				},
+			},
+		},
+	}
 
-		// Up to this point, we modify the mutable fields. From here on, we
-		// modify the immutable fields, which cannot be changed after creation.
-		if !pv.CreationTimestamp.IsZero() {
+	if err := r.Create(ctx, newPV); err != nil {
+		// Ignore AlreadyExists error
+		if k8serrors.IsAlreadyExists(err) {
 			return nil
 		}
-
-		pv.Spec.AccessModes = []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce}
-		pv.Spec.Capacity = restorePV.Spec.Capacity
-		pv.Spec.PersistentVolumeReclaimPolicy = corev1.PersistentVolumeReclaimRetain
-		pv.Spec.StorageClassName = ""
-
-		volumeMode := corev1.PersistentVolumeBlock
-		pv.Spec.VolumeMode = &volumeMode
-
-		if pv.Spec.CSI == nil {
-			pv.Spec.CSI = &corev1.CSIPersistentVolumeSource{}
-		}
-		pv.Spec.CSI.Driver = restorePV.Spec.CSI.Driver
-		pv.Spec.CSI.ControllerExpandSecretRef = restorePV.Spec.CSI.ControllerExpandSecretRef
-		pv.Spec.CSI.NodeStageSecretRef = restorePV.Spec.CSI.NodeStageSecretRef
-		pv.Spec.CSI.VolumeHandle = restorePV.Spec.CSI.VolumeAttributes["imageName"]
-
-		if pv.Spec.CSI.VolumeAttributes == nil {
-			pv.Spec.CSI.VolumeAttributes = map[string]string{}
-		}
-		pv.Spec.CSI.VolumeAttributes["clusterID"] = restorePV.Spec.CSI.VolumeAttributes["clusterID"]
-		pv.Spec.CSI.VolumeAttributes["imageFeatures"] = restorePV.Spec.CSI.VolumeAttributes["imageFeatures"]
-		pv.Spec.CSI.VolumeAttributes["imageFormat"] = restorePV.Spec.CSI.VolumeAttributes["imageFormat"]
-		pv.Spec.CSI.VolumeAttributes["pool"] = restorePV.Spec.CSI.VolumeAttributes["pool"]
-		pv.Spec.CSI.VolumeAttributes["staticVolume"] = "true"
-
-		return nil
-	})
-	return err
+		return fmt.Errorf("failed to create PV %s: %w", restoreJobPVName(restore), err)
+	}
+	return nil
 }
 
-func (r *FinRestoreReconciler) createOrUpdateRestoreJobPVC(
+// createRestoreJobPVCIfNotExists creates static PVC for restore job if not exists.
+// Returns an error if creation fails or nil if the PVC already exists.
+func (r *FinRestoreReconciler) createRestoreJobPVCIfNotExists(
 	ctx context.Context,
 	restore *finv1.FinRestore,
 	restorePVC *corev1.PersistentVolumeClaim,
 ) error {
-	var pvc corev1.PersistentVolumeClaim
-	pvc.SetName(restoreJobPVCName(restore))
-	pvc.SetNamespace(r.cephClusterNamespace)
-	_, err := ctrl.CreateOrUpdate(ctx, r.Client, &pvc, func() error {
-		labels := pvc.GetLabels()
-		if labels == nil {
-			labels = map[string]string{}
-		}
-		labels["app.kubernetes.io/name"] = labelAppNameValue
-		labels["app.kubernetes.io/component"] = labelComponentRestoreJob
-		pvc.SetLabels(labels)
+	newPVC := &corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: r.cephClusterNamespace,
+			Name:      restoreJobPVCName(restore),
+			Labels: map[string]string{
+				"app.kubernetes.io/name":      labelAppNameValue,
+				"app.kubernetes.io/component": labelComponentRestoreJob,
+			},
+		},
+		Spec: corev1.PersistentVolumeClaimSpec{
+			AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
+			Resources:   restorePVC.Spec.Resources,
+			// No StorageClass to indicate static provisioning.
+			// and ensure this PVC statically binds to the specific PV.
+			StorageClassName: ptr.To(""),
+			VolumeName:       restoreJobPVName(restore),
+			VolumeMode:       ptr.To(corev1.PersistentVolumeBlock),
+		},
+	}
 
-		// Up to this point, we modify the mutable fields. From here on, we
-		// modify the immutable fields, which cannot be changed after creation.
-		if !pvc.CreationTimestamp.IsZero() {
+	if err := r.Create(ctx, newPVC); err != nil {
+		// Ignore AlreadyExists error
+		if k8serrors.IsAlreadyExists(err) {
 			return nil
 		}
-
-		storageClassName := ""
-		pvc.Spec.StorageClassName = &storageClassName
-		pvc.Spec.AccessModes = []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce}
-		pvc.Spec.Resources = restorePVC.Spec.Resources
-		pvc.Spec.VolumeName = restoreJobPVName(restore)
-
-		volumeMode := corev1.PersistentVolumeBlock
-		pvc.Spec.VolumeMode = &volumeMode
-
-		return nil
-	})
-	return err
+		return fmt.Errorf("failed to create PVC %s: %w", restoreJobPVCName(restore), err)
+	}
+	return nil
 }
 
 func (r *FinRestoreReconciler) reconcileDelete(ctx context.Context, restore *finv1.FinRestore) (ctrl.Result, error) {

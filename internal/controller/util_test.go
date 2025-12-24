@@ -83,9 +83,11 @@ func NewPVCAndPV(
 					Driver:       sc.Provisioner,
 					VolumeHandle: imageName,
 					VolumeAttributes: map[string]string{
-						"clusterID": sc.Parameters["clusterID"],
-						"pool":      sc.Parameters["pool"],
-						"imageName": imageName,
+						"clusterID":     sc.Parameters["clusterID"],
+						"imageFeatures": sc.Parameters["imageFeatures"],
+						"imageFormat":   sc.Parameters["imageFormat"],
+						"imageName":     imageName,
+						"pool":          sc.Parameters["pool"],
 					},
 				},
 			},
@@ -214,13 +216,17 @@ func ExpectNoJob(ctx context.Context, k8sClient client.Client, jobName, namespac
 	Expect(k8serrors.IsNotFound(err)).Should(BeTrue())
 }
 
-func NewRBDStorageClass(prefix, cephClusterNamespace, poolName string) *storagev1.StorageClass {
+func NewRBDStorageClass(prefix, clusterID, poolName string) *storagev1.StorageClass {
 	return &storagev1.StorageClass{
-		ObjectMeta:  metav1.ObjectMeta{Name: fmt.Sprintf("%s-%s", prefix, cephClusterNamespace)},
-		Provisioner: fmt.Sprintf("%s.rbd.csi.ceph.com", cephClusterNamespace),
+		ObjectMeta: metav1.ObjectMeta{
+			Name: fmt.Sprintf("%s-%s", prefix, clusterID),
+		},
+		Provisioner: fmt.Sprintf("%s.rbd.csi.ceph.com", clusterID),
 		Parameters: map[string]string{
-			"clusterID": cephClusterNamespace,
-			"pool":      poolName,
+			"clusterID":     clusterID,
+			"imageFeatures": "layering",
+			"imageFormat":   "2",
+			"pool":          poolName,
 		},
 	}
 }

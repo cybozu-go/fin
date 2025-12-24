@@ -161,13 +161,9 @@ func expectChecksumChunkSizesInBackupJob(ctx SpecContext, jobName string) {
 var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 	var reconciler *FinBackupReconciler
 	var rbdRepo *fake.RBDRepository2
-	var sc1 *storagev1.StorageClass
 	var stopFunc context.CancelFunc
 
 	BeforeAll(func(ctx SpecContext) {
-		sc1 = NewRBDStorageClass("integration", cephNamespace, rbdPoolName)
-		Expect(k8sClient.Create(ctx, sc1)).Should(Succeed())
-
 		volumeInfo := &fake.VolumeInfo{
 			Namespace: utils.GetUniqueName("ns-"),
 			PVCName:   utils.GetUniqueName("pvc-"),
@@ -205,7 +201,6 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 
 	AfterAll(func() {
 		stopFunc()
-		Expect(k8sClient.Delete(context.Background(), sc1)).Should(Succeed())
 	})
 
 	// This is the first example test.
@@ -230,7 +225,7 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 		var finbackup2 *finv1.FinBackup
 		BeforeEach(func(ctx SpecContext) {
 			By("creating a pair of PVC and PV")
-			pvc1, pv1 = NewPVCAndPV(sc1, userNamespace, "pvc-sample", "pv-sample", rbdImageName)
+			pvc1, pv1 = NewPVCAndPV(normalSC, userNamespace, "pvc-sample", "pv-sample", rbdImageName)
 			Expect(k8sClient.Create(ctx, pvc1)).Should(Succeed())
 			Expect(k8sClient.Create(ctx, pv1)).Should(Succeed())
 
@@ -304,7 +299,7 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 		var finbackup2 *finv1.FinBackup
 		BeforeEach(func(ctx SpecContext) {
 			By("creating a pair of PVC and PV")
-			pvc1, pv1 = NewPVCAndPV(sc1, userNamespace, "pvc-1542", "pv-1542", rbdImageName)
+			pvc1, pv1 = NewPVCAndPV(normalSC, userNamespace, "pvc-1542", "pv-1542", rbdImageName)
 			Expect(k8sClient.Create(ctx, pvc1)).Should(Succeed())
 			Expect(k8sClient.Create(ctx, pv1)).Should(Succeed())
 
@@ -316,7 +311,7 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 
 			By("recreating the backup-target PVC")
 			DeletePVCAndPV(ctx, pvc1.Namespace, pvc1.Name)
-			pvc1, pv1 = NewPVCAndPV(sc1, userNamespace, pvc1.Name, pv1.Name, rbdImageName)
+			pvc1, pv1 = NewPVCAndPV(normalSC, userNamespace, pvc1.Name, pv1.Name, rbdImageName)
 			Expect(k8sClient.Create(ctx, pvc1)).Should(Succeed())
 			Expect(k8sClient.Create(ctx, pv1)).Should(Succeed())
 
@@ -362,7 +357,7 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 		var finbackup2 *finv1.FinBackup
 		BeforeEach(func(ctx SpecContext) {
 			By("creating a pair of PVC and PV")
-			pvc1, pv1 = NewPVCAndPV(sc1, userNamespace, "pvc-1621", "pv-1621", rbdImageName)
+			pvc1, pv1 = NewPVCAndPV(normalSC, userNamespace, "pvc-1621", "pv-1621", rbdImageName)
 			Expect(k8sClient.Create(ctx, pvc1)).Should(Succeed())
 			Expect(k8sClient.Create(ctx, pv1)).Should(Succeed())
 
@@ -424,7 +419,7 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 
 		BeforeEach(func(ctx SpecContext) {
 			By("creating a pair of PVC and PV")
-			pvc, pv = NewPVCAndPV(sc1, userNamespace, "pvc-1505", "pv-1505", rbdImageName)
+			pvc, pv = NewPVCAndPV(normalSC, userNamespace, "pvc-1505", "pv-1505", rbdImageName)
 			Expect(k8sClient.Create(ctx, pvc)).Should(Succeed())
 			Expect(k8sClient.Create(ctx, pv)).Should(Succeed())
 
@@ -479,7 +474,7 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 
 		BeforeEach(func(ctx SpecContext) {
 			By("creating a pair of PVC and PV")
-			pvc, pv = NewPVCAndPV(sc1, userNamespace, "pvc-1506", "pv-1506", rbdImageName)
+			pvc, pv = NewPVCAndPV(normalSC, userNamespace, "pvc-1506", "pv-1506", rbdImageName)
 			Expect(k8sClient.Create(ctx, pvc)).Should(Succeed())
 			Expect(k8sClient.Create(ctx, pv)).Should(Succeed())
 
@@ -526,7 +521,7 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 		BeforeEach(func(ctx SpecContext) {
 			By("creating a pair of PVC and PV")
 			var pv *corev1.PersistentVolume
-			pvc, pv = NewPVCAndPV(sc1, userNamespace, "pvc-sample", "pv-sample", rbdImageName)
+			pvc, pv = NewPVCAndPV(normalSC, userNamespace, "pvc-sample", "pv-sample", rbdImageName)
 			Expect(k8sClient.Create(ctx, pvc)).Should(Succeed())
 			Expect(k8sClient.Create(ctx, pv)).Should(Succeed())
 		})
@@ -769,7 +764,7 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 
 		BeforeEach(func(ctx SpecContext) {
 			By("creating a pair of PVC and PV for checksum verification cases")
-			pvc, pv = NewPVCAndPV(sc1, userNamespace, utils.GetUniqueName("pvc-csum-"), utils.GetUniqueName("pv-csum-"), rbdImageName)
+			pvc, pv = NewPVCAndPV(normalSC, userNamespace, utils.GetUniqueName("pvc-csum-"), utils.GetUniqueName("pv-csum-"), rbdImageName)
 			Expect(k8sClient.Create(ctx, pvc)).Should(Succeed())
 			Expect(k8sClient.Create(ctx, pv)).Should(Succeed())
 		})
@@ -1090,7 +1085,7 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 		BeforeEach(func(ctx SpecContext) {
 			By("creating a pair of PVC and PV")
 			var pv *corev1.PersistentVolume
-			pvc, pv = NewPVCAndPV(sc1, userNamespace, "pvc-sample", "pv-sample", rbdImageName)
+			pvc, pv = NewPVCAndPV(normalSC, userNamespace, "pvc-sample", "pv-sample", rbdImageName)
 			Expect(k8sClient.Create(ctx, pvc)).Should(Succeed())
 			Expect(k8sClient.Create(ctx, pv)).Should(Succeed())
 		})
@@ -1129,16 +1124,6 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
 	var reconciler *FinBackupReconciler
 	var rbdRepo *fake.RBDRepository2
-	var sc *storagev1.StorageClass
-
-	BeforeAll(func(ctx SpecContext) {
-		sc = NewRBDStorageClass("unit", cephNamespace, rbdPoolName)
-		Expect(k8sClient.Create(ctx, sc)).Should(Succeed())
-	})
-
-	AfterAll(func(ctx SpecContext) {
-		Expect(k8sClient.Delete(ctx, sc)).Should(Succeed())
-	})
 
 	BeforeEach(func(ctx SpecContext) {
 		volumeInfo := &fake.VolumeInfo{
@@ -1182,7 +1167,7 @@ var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
 		var finbackup *finv1.FinBackup
 
 		BeforeAll(func(ctx SpecContext) {
-			pvc, pv = NewPVCAndPV(sc, userNamespace, "test-pvc-labels", "test-pv-labels", rbdImageName)
+			pvc, pv = NewPVCAndPV(normalSC, userNamespace, "test-pvc-labels", "test-pv-labels", rbdImageName)
 			Expect(k8sClient.Create(ctx, pvc)).Should(Succeed())
 			Expect(k8sClient.Create(ctx, pv)).Should(Succeed())
 
@@ -1222,17 +1207,13 @@ var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
 	//   - The reconciler does not return any errors.
 	//   - The reconciler does not create a backup job.
 	Context("Prevent backups from being created for PVCs by wrong Fin instances", func() {
-		var otherStorageClass *storagev1.StorageClass
 		var pvc2 *corev1.PersistentVolumeClaim
 		var pv2 *corev1.PersistentVolume
 		var finbackup *finv1.FinBackup
 
 		BeforeEach(func(ctx SpecContext) {
-			otherStorageClass = NewRBDStorageClass("other", otherNamespace, rbdPoolName)
-			Expect(k8sClient.Create(ctx, otherStorageClass)).Should(Succeed())
-
 			By("creating PVC in the other storage class")
-			pvc2, pv2 = NewPVCAndPV(otherStorageClass, otherNamespace, "test-pvc-2", "test-pv-2", rbdImageName)
+			pvc2, pv2 = NewPVCAndPV(otherSC, otherNamespace, "test-pvc-2", "test-pv-2", rbdImageName)
 			Expect(k8sClient.Create(ctx, pvc2)).Should(Succeed())
 			Expect(k8sClient.Create(ctx, pv2)).Should(Succeed())
 
@@ -1244,7 +1225,6 @@ var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
 		AfterEach(func(ctx SpecContext) {
 			Expect(k8sClient.Delete(ctx, finbackup)).Should(Succeed())
 			DeletePVCAndPV(ctx, pvc2.Namespace, pvc2.Name)
-			Expect(k8sClient.Delete(ctx, otherStorageClass)).Should(Succeed())
 		})
 
 		It("should neither return an error nor create a backup job during reconciliation", func(ctx SpecContext) {
@@ -1335,7 +1315,7 @@ var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
 		var finbackup *finv1.FinBackup
 		BeforeAll(func(ctx SpecContext) {
 			By("creating a pair of PVC and PV")
-			pvc, pv = NewPVCAndPV(sc, userNamespace, "test-pvc-snapid", "test-pv-snapid", rbdImageName)
+			pvc, pv = NewPVCAndPV(normalSC, userNamespace, "test-pvc-snapid", "test-pv-snapid", rbdImageName)
 			Expect(k8sClient.Create(ctx, pvc)).Should(Succeed())
 			Expect(k8sClient.Create(ctx, pv)).Should(Succeed())
 
@@ -1425,7 +1405,7 @@ var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
 		var pv *corev1.PersistentVolume
 
 		BeforeAll(func(ctx SpecContext) {
-			pvc, pv = NewPVCAndPV(sc, userNamespace, "test-pvc-uid", "test-pv-uid", rbdImageName)
+			pvc, pv = NewPVCAndPV(normalSC, userNamespace, "test-pvc-uid", "test-pv-uid", rbdImageName)
 			Expect(k8sClient.Create(ctx, pvc)).Should(Succeed())
 			Expect(k8sClient.Create(ctx, pv)).Should(Succeed())
 
@@ -1512,7 +1492,7 @@ var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
 		}
 
 		BeforeEach(func(ctx SpecContext) {
-			pvc, pv = NewPVCAndPV(sc, userNamespace, "test-pvc-cleanup", "test-pv-cleanup", imgName)
+			pvc, pv = NewPVCAndPV(normalSC, userNamespace, "test-pvc-cleanup", "test-pv-cleanup", imgName)
 			Expect(k8sClient.Create(ctx, pvc)).Should(Succeed())
 			Expect(k8sClient.Create(ctx, pv)).Should(Succeed())
 

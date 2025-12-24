@@ -10,11 +10,11 @@ import (
 	. "github.com/onsi/gomega"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
-	storagev1 "k8s.io/api/storage/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -63,21 +63,123 @@ func createAndBindRestorePV(ctx context.Context, finrestore *finv1.FinRestore) {
 }
 
 var _ = Describe("FinRestore Controller", func() {
-	// TODO(user): Add unit tests of controller's reconciliation logic.
+	var reconciler *FinRestoreReconciler
+
+	BeforeEach(func(ctx SpecContext) {
+		reconciler = NewFinRestoreReconciler(
+			k8sClient,
+			scheme.Scheme,
+			cephNamespace,
+			podImage,
+			ptr.To(resource.MustParse("4096")),
+		)
+	})
+
+	It("checks createRestoreJobPVIfNotExists", func(ctx SpecContext) {
+		var restore *finv1.FinRestore
+		var pv *corev1.PersistentVolume
+
+		By("creating dummy FinRestore and PV", func() {
+			restore = &finv1.FinRestore{
+				ObjectMeta: metav1.ObjectMeta{
+					UID: types.UID(utils.GetUniqueName("uid-")),
+				},
+			}
+			_, pv = NewPVCAndPV(normalSC, userNamespace, utils.GetUniqueName("pvc-"), utils.GetUniqueName("pv-"), rbdImageName)
+		})
+
+		By("checking result", func() {
+			err := reconciler.createRestoreJobPVIfNotExists(ctx, restore, pv)
+			Expect(err).ShouldNot(HaveOccurred())
+			var jobPV corev1.PersistentVolume
+			Expect(k8sClient.Get(ctx, client.ObjectKey{
+				Name: restoreJobPVName(restore),
+			}, &jobPV)).Should(Succeed())
+
+			Expect(jobPV.UID).NotTo(BeEmpty())
+			Expect(jobPV.Annotations).To(BeEmpty())
+			Expect(jobPV.Labels).To(Equal(map[string]string{
+				"app.kubernetes.io/name":      labelAppNameValue,
+				"app.kubernetes.io/component": labelComponentRestoreJob,
+			}))
+			Expect(jobPV.Spec).To(Equal(corev1.PersistentVolumeSpec{
+				AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
+				Capacity:    pv.Spec.Capacity,
+				ClaimRef: &corev1.ObjectReference{
+					Namespace: cephNamespace,
+					Name:      restoreJobPVCName(restore),
+				},
+				PersistentVolumeSource: corev1.PersistentVolumeSource{
+					CSI: &corev1.CSIPersistentVolumeSource{
+						Driver: pv.Spec.CSI.Driver,
+						VolumeAttributes: map[string]string{
+							"clusterID":     pv.Spec.CSI.VolumeAttributes["clusterID"],
+							"imageFeatures": pv.Spec.CSI.VolumeAttributes["imageFeatures"],
+							"imageFormat":   pv.Spec.CSI.VolumeAttributes["imageFormat"],
+							"pool":          pv.Spec.CSI.VolumeAttributes["pool"],
+							"staticVolume":  "true",
+						},
+						VolumeHandle: pv.Spec.CSI.VolumeAttributes["imageName"],
+					},
+				},
+				PersistentVolumeReclaimPolicy: corev1.PersistentVolumeReclaimRetain,
+				StorageClassName:              "",
+				VolumeMode:                    ptr.To(corev1.PersistentVolumeBlock),
+			}))
+		})
+
+		By("recreate PV should be no-op", func() {
+			err := reconciler.createRestoreJobPVIfNotExists(ctx, restore, pv)
+			Expect(err).ShouldNot(HaveOccurred())
+		})
+	})
+
+	It("checks createRestoreJobPVCIfNotExists", func(ctx SpecContext) {
+		var restore *finv1.FinRestore
+		var pvc *corev1.PersistentVolumeClaim
+
+		By("creating dummy FinRestore and PVC", func() {
+			restore = &finv1.FinRestore{
+				ObjectMeta: metav1.ObjectMeta{
+					UID: types.UID(utils.GetUniqueName("uid-")),
+				},
+			}
+			pvc, _ = NewPVCAndPV(normalSC, userNamespace, utils.GetUniqueName("pvc-"), utils.GetUniqueName("pv-"), rbdImageName)
+		})
+
+		By("checking result", func() {
+			err := reconciler.createRestoreJobPVCIfNotExists(ctx, restore, pvc)
+			Expect(err).ShouldNot(HaveOccurred())
+			var jobPVC corev1.PersistentVolumeClaim
+			Expect(k8sClient.Get(ctx, client.ObjectKey{
+				Namespace: cephNamespace,
+				Name:      restoreJobPVCName(restore),
+			}, &jobPVC)).Should(Succeed())
+
+			Expect(jobPVC.UID).NotTo(BeEmpty())
+			Expect(jobPVC.Annotations).To(BeEmpty())
+			Expect(jobPVC.Labels).To(Equal(map[string]string{
+				"app.kubernetes.io/name":      labelAppNameValue,
+				"app.kubernetes.io/component": labelComponentRestoreJob,
+			}))
+			Expect(jobPVC.Spec).To(Equal(corev1.PersistentVolumeClaimSpec{
+				AccessModes:      []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
+				Resources:        pvc.Spec.Resources,
+				StorageClassName: ptr.To(""),
+				VolumeName:       restoreJobPVName(restore),
+				VolumeMode:       ptr.To(corev1.PersistentVolumeBlock),
+			}))
+		})
+
+		By("recreate PVC should be no-op", func() {
+			err := reconciler.createRestoreJobPVCIfNotExists(ctx, restore, pvc)
+			Expect(err).ShouldNot(HaveOccurred())
+		})
+	})
 })
 
 var _ = Describe("FinRestore Controller Reconcile Test", Ordered, func() {
 	var reconciler *FinRestoreReconciler
-	var sc *storagev1.StorageClass
-
-	BeforeAll(func(ctx SpecContext) {
-		sc = NewRBDStorageClass("unit", cephNamespace, rbdPoolName)
-		Expect(k8sClient.Create(ctx, sc)).Should(Succeed())
-	})
-
-	AfterAll(func(ctx SpecContext) {
-		Expect(k8sClient.Delete(ctx, sc)).Should(Succeed())
-	})
 
 	BeforeEach(func(ctx SpecContext) {
 		reconciler = NewFinRestoreReconciler(
@@ -105,19 +207,14 @@ var _ = Describe("FinRestore Controller Reconcile Test", Ordered, func() {
 	//   - The reconciler does not return any errors.
 	//   - The reconciler does not create a restore job.
 	Context("Prevent restoring from FinBackup is not managed by the Fin instances", func() {
-		var otherStorageClass *storagev1.StorageClass
 		var pvc2 *corev1.PersistentVolumeClaim
 		var pv2 *corev1.PersistentVolume
 		var finbackup *finv1.FinBackup
 		var finrestore *finv1.FinRestore
 
 		BeforeEach(func(ctx SpecContext) {
-			By("creating another storage class for another ceph cluster")
-			otherStorageClass = NewRBDStorageClass("other", otherNamespace, rbdPoolName)
-			Expect(k8sClient.Create(ctx, otherStorageClass)).Should(Succeed())
-
 			By("creating PVC with the storage class")
-			pvc2, pv2 = NewPVCAndPV(otherStorageClass, otherNamespace, "test-pvc-2", "test-pv-2", rbdImageName)
+			pvc2, pv2 = NewPVCAndPV(otherSC, otherNamespace, "test-pvc-2", "test-pv-2", rbdImageName)
 			Expect(k8sClient.Create(ctx, pvc2)).Should(Succeed())
 			Expect(k8sClient.Create(ctx, pv2)).Should(Succeed())
 
@@ -134,7 +231,6 @@ var _ = Describe("FinRestore Controller Reconcile Test", Ordered, func() {
 			Expect(k8sClient.Delete(ctx, finrestore)).Should(Succeed())
 			Expect(k8sClient.Delete(ctx, finbackup)).Should(Succeed())
 			DeletePVCAndPV(ctx, pvc2.Namespace, pvc2.Name)
-			Expect(k8sClient.Delete(ctx, otherStorageClass)).Should(Succeed())
 		})
 
 		It("should neither return an error nor create a finrestore job during reconciliation", func(ctx SpecContext) {
@@ -170,7 +266,7 @@ var _ = Describe("FinRestore Controller Reconcile Test", Ordered, func() {
 
 		BeforeEach(func(ctx SpecContext) {
 			By("creating PVC and PV")
-			pvc, pv = NewPVCAndPV(sc, userNamespace, "test-pvc-1560", "test-pv-1560", rbdImageName)
+			pvc, pv = NewPVCAndPV(normalSC, userNamespace, "test-pvc-1560", "test-pv-1560", rbdImageName)
 			Expect(k8sClient.Create(ctx, pvc)).Should(Succeed())
 			Expect(k8sClient.Create(ctx, pv)).Should(Succeed())
 
@@ -224,7 +320,7 @@ var _ = Describe("FinRestore Controller Reconcile Test", Ordered, func() {
 
 		BeforeEach(func(ctx SpecContext) {
 			By("creating PVC and PV")
-			pvc, pv = NewPVCAndPV(sc, userNamespace, "test-pvc-1623", "test-pv-1623", rbdImageName)
+			pvc, pv = NewPVCAndPV(normalSC, userNamespace, "test-pvc-1623", "test-pv-1623", rbdImageName)
 			Expect(k8sClient.Create(ctx, pvc)).Should(Succeed())
 			Expect(k8sClient.Create(ctx, pv)).Should(Succeed())
 
@@ -309,7 +405,7 @@ var _ = Describe("FinRestore Controller Reconcile Test", Ordered, func() {
 
 		BeforeEach(func(ctx SpecContext) {
 			By("creating PVC and PV")
-			pvc, pv = NewPVCAndPV(sc, userNamespace, "test-pvc-1557", "test-pv-1557", rbdImageName)
+			pvc, pv = NewPVCAndPV(normalSC, userNamespace, "test-pvc-1557", "test-pv-1557", rbdImageName)
 			Expect(k8sClient.Create(ctx, pvc)).Should(Succeed())
 			Expect(k8sClient.Create(ctx, pv)).Should(Succeed())
 
@@ -362,12 +458,12 @@ var _ = Describe("FinRestore Controller Reconcile Test", Ordered, func() {
 
 		BeforeEach(func(ctx SpecContext) {
 			By("creating PVC1 and PV1")
-			pvc1, pv1 = NewPVCAndPV(sc, userNamespace, "test-pvc-1558-1", "test-pv-1558-1", rbdImageName)
+			pvc1, pv1 = NewPVCAndPV(normalSC, userNamespace, "test-pvc-1558-1", "test-pv-1558-1", rbdImageName)
 			Expect(k8sClient.Create(ctx, pvc1)).Should(Succeed())
 			Expect(k8sClient.Create(ctx, pv1)).Should(Succeed())
 
 			By("creating PVC2 and PV2 with restored_by annotation")
-			pvc2, pv2 = NewPVCAndPV(sc, userNamespace, "test-pvc-1558-2", "test-pv-1558-2", rbdImageName)
+			pvc2, pv2 = NewPVCAndPV(normalSC, userNamespace, "test-pvc-1558-2", "test-pv-1558-2", rbdImageName)
 			pvc2.Annotations = map[string]string{"fin.cybozu.io/restored-by": "aaaa"}
 			Expect(k8sClient.Create(ctx, pvc2)).Should(Succeed())
 			Expect(k8sClient.Create(ctx, pv2)).Should(Succeed())
@@ -425,7 +521,7 @@ var _ = Describe("FinRestore Controller Reconcile Test", Ordered, func() {
 
 		BeforeEach(func(ctx SpecContext) {
 			By("creating backup-target PVC and PV")
-			pvc, pv = NewPVCAndPV(sc, userNamespace, "test-pvc-1553", "test-pv-1553", rbdImageName)
+			pvc, pv = NewPVCAndPV(normalSC, userNamespace, "test-pvc-1553", "test-pv-1553", rbdImageName)
 			Expect(k8sClient.Create(ctx, pvc)).Should(Succeed())
 			Expect(k8sClient.Create(ctx, pv)).Should(Succeed())
 
@@ -501,7 +597,7 @@ var _ = Describe("FinRestore Controller Reconcile Test", Ordered, func() {
 
 		BeforeEach(func(ctx SpecContext) {
 			By("creating a pair of PVC and PV for checksum verification cases")
-			pvc, pv = NewPVCAndPV(sc, userNamespace, utils.GetUniqueName("pvc-csum-"), utils.GetUniqueName("pv-csum-"), rbdImageName)
+			pvc, pv = NewPVCAndPV(normalSC, userNamespace, utils.GetUniqueName("pvc-csum-"), utils.GetUniqueName("pv-csum-"), rbdImageName)
 			Expect(k8sClient.Create(ctx, pvc)).Should(Succeed())
 			Expect(k8sClient.Create(ctx, pv)).Should(Succeed())
 		})
@@ -619,7 +715,7 @@ var _ = Describe("FinRestore Controller Reconcile Test", Ordered, func() {
 		BeforeEach(func(ctx SpecContext) {
 			By("creating PVC and PV")
 			var pv *corev1.PersistentVolume
-			pvc, pv = NewPVCAndPV(sc, userNamespace, utils.GetUniqueName("test-pvc"), utils.GetUniqueName("test-pv"), rbdImageName)
+			pvc, pv = NewPVCAndPV(normalSC, userNamespace, utils.GetUniqueName("test-pvc"), utils.GetUniqueName("test-pv"), rbdImageName)
 			Expect(k8sClient.Create(ctx, pvc)).Should(Succeed())
 			Expect(k8sClient.Create(ctx, pv)).Should(Succeed())
 		})
