@@ -1,9 +1,8 @@
 package controller
 
 import (
-	"fmt"
+	"os"
 	"path/filepath"
-	"runtime"
 	"testing"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -47,13 +46,14 @@ var _ = BeforeSuite(func(ctx SpecContext) {
 		CRDDirectoryPaths:     []string{filepath.Join("..", "..", "config", "crd", "bases")},
 		ErrorIfCRDPathMissing: true,
 
-		// The BinaryAssetsDirectory is only required if you want to run the tests directly
-		// without call the makefile target test. If not informed it will look for the
-		// default path defined in controller-runtime which is /usr/local/kubebuilder/.
-		// Note that you must have the required binaries setup under the bin directory to perform
-		// the tests directly. When we run make test it will be setup and used automatically.
-		BinaryAssetsDirectory: filepath.Join("..", "..", "bin", "k8s",
-			fmt.Sprintf("1.32.0-%s-%s", runtime.GOOS, runtime.GOARCH)),
+		DownloadBinaryAssets:  true,
+		BinaryAssetsDirectory: os.Getenv("ENVTEST_BIN_DIR"),
+	}
+
+	// If the environment variable is not set, the field is left empty,
+	// which causes envtest to use the default version.
+	if os.Getenv("ENVTEST_KUBERNETES_VERSION") != "" {
+		testEnv.DownloadBinaryAssetsVersion = "v" + os.Getenv("ENVTEST_KUBERNETES_VERSION")
 	}
 
 	var err error
