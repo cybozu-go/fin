@@ -276,9 +276,11 @@ func DeleteNamespace(ctx context.Context, client kubernetes.Interface, namespace
 	})
 }
 
-func WaitForPodReady(ctx context.Context, client kubernetes.Interface, pod *corev1.Pod, timeout time.Duration) error {
-	return wait.PollUntilContextTimeout(ctx, time.Second, timeout, true, func(ctx context.Context) (bool, error) {
-		p, err := client.CoreV1().Pods(pod.Namespace).Get(ctx, pod.Name, metav1.GetOptions{})
+func WaitForPodReady(ctx context.Context, client kubernetes.Interface, pod *corev1.Pod, timeout time.Duration) (*corev1.Pod, error) {
+	var p *corev1.Pod
+	return p, wait.PollUntilContextTimeout(ctx, time.Second, timeout, true, func(ctx context.Context) (bool, error) {
+		var err error
+		p, err = client.CoreV1().Pods(pod.Namespace).Get(ctx, pod.Name, metav1.GetOptions{})
 		if err != nil {
 			return false, err
 		}
@@ -583,7 +585,7 @@ func VerifyDataInRestorePVC(
 	Expect(err).NotTo(HaveOccurred())
 	err = CreatePod(ctx, k8sClient, pod)
 	Expect(err).NotTo(HaveOccurred())
-	err = WaitForPodReady(ctx, k8sClient, pod, defaultPodReadyTimeout)
+	_, err = WaitForPodReady(ctx, k8sClient, pod, defaultPodReadyTimeout)
 	Expect(err).NotTo(HaveOccurred())
 
 	By("verifying the data in the restore PVC")
@@ -631,7 +633,8 @@ func CreatePodForBlockPVC(
 	)
 	Expect(err).NotTo(HaveOccurred())
 	Expect(CreatePod(ctx, k8sClient, pod)).NotTo(HaveOccurred())
-	Expect(WaitForPodReady(ctx, k8sClient, pod, defaultPodReadyTimeout)).NotTo(HaveOccurred())
+	pod, err = WaitForPodReady(ctx, k8sClient, pod, defaultPodReadyTimeout)
+	Expect(err).NotTo(HaveOccurred())
 	return pod
 }
 
@@ -647,7 +650,7 @@ func CreatePodForFilesystemPVC(
 		pvc.Name, "ghcr.io/cybozu/ubuntu:24.04", "/data")
 	err := CreatePod(ctx, k8sClient, pod)
 	Expect(err).NotTo(HaveOccurred())
-	err = WaitForPodReady(ctx, k8sClient, pod, defaultPodReadyTimeout)
+	pod, err = WaitForPodReady(ctx, k8sClient, pod, defaultPodReadyTimeout)
 	Expect(err).NotTo(HaveOccurred())
 	return pod
 }
