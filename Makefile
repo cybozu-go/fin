@@ -72,8 +72,10 @@ prepare-test:
 		sudo losetup -f $(TEST_RAW_IMG) && \
 		sudo chmod 666 $$(losetup -j $(TEST_RAW_IMG) | cut -d: -f1); \
 	fi
+
+    ## xfsprogs-5.19+: no XFS filesystem smaller than 300MB.
 	if [ ! -f "$(TEST_XFS_IMG)" ]; then \
-		fallocate -l 100M $(TEST_XFS_IMG) && \
+		fallocate -l 300M $(TEST_XFS_IMG) && \
 		mkfs.xfs $(TEST_XFS_IMG) && \
 		mkdir -p $(TEST_XFS_MOUNT) && \
 		sudo mount $(TEST_XFS_IMG) $(TEST_XFS_MOUNT) && \
