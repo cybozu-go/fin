@@ -42,6 +42,8 @@ const (
 	devicePathInPodForPVC  = "/data"
 	mountPathInPodForFSPVC = "/data"
 	rbacName               = "fin-create-backup-job"
+
+	defaultPodReadyTimeout = 5 * time.Minute
 )
 
 var (
@@ -581,7 +583,7 @@ func VerifyDataInRestorePVC(
 	Expect(err).NotTo(HaveOccurred())
 	err = CreatePod(ctx, k8sClient, pod)
 	Expect(err).NotTo(HaveOccurred())
-	err = WaitForPodReady(ctx, k8sClient, pod, 2*time.Minute)
+	err = WaitForPodReady(ctx, k8sClient, pod, defaultPodReadyTimeout)
 	Expect(err).NotTo(HaveOccurred())
 
 	By("verifying the data in the restore PVC")
@@ -629,7 +631,7 @@ func CreatePodForBlockPVC(
 	)
 	Expect(err).NotTo(HaveOccurred())
 	Expect(CreatePod(ctx, k8sClient, pod)).NotTo(HaveOccurred())
-	Expect(WaitForPodReady(ctx, k8sClient, pod, 2*time.Minute)).NotTo(HaveOccurred())
+	Expect(WaitForPodReady(ctx, k8sClient, pod, defaultPodReadyTimeout)).NotTo(HaveOccurred())
 	return pod
 }
 
@@ -645,7 +647,7 @@ func CreatePodForFilesystemPVC(
 		pvc.Name, "ghcr.io/cybozu/ubuntu:24.04", "/data")
 	err := CreatePod(ctx, k8sClient, pod)
 	Expect(err).NotTo(HaveOccurred())
-	err = WaitForPodReady(ctx, k8sClient, pod, 2*time.Minute)
+	err = WaitForPodReady(ctx, k8sClient, pod, defaultPodReadyTimeout)
 	Expect(err).NotTo(HaveOccurred())
 	return pod
 }

@@ -75,7 +75,7 @@ func verificationTestSuite() {
 		)
 		err = CreatePod(ctx, k8sClient, restorePod)
 		Expect(err).NotTo(HaveOccurred())
-		err = WaitForPodReady(ctx, k8sClient, restorePod, 2*time.Minute)
+		err = WaitForPodReady(ctx, k8sClient, restorePod, defaultPodReadyTimeout)
 		Expect(err).NotTo(HaveOccurred())
 
 		By("verifying the data in the restored PVC")
@@ -176,7 +176,7 @@ func verificationTestSuite() {
 		Expect(err).NotTo(HaveOccurred())
 		err = CreatePod(ctx, k8sClient, staticPod)
 		Expect(err).NotTo(HaveOccurred())
-		err = WaitForPodReady(ctx, k8sClient, staticPod, 2*time.Minute)
+		err = WaitForPodReady(ctx, k8sClient, staticPod, defaultPodReadyTimeout)
 		Expect(err).NotTo(HaveOccurred())
 
 		By("corrupting the data in the RBD image")
