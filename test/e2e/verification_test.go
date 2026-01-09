@@ -16,6 +16,7 @@ import (
 
 func verificationTestSuite() {
 	var ns *corev1.Namespace
+	var pod *corev1.Pod
 	var pvc *corev1.PersistentVolumeClaim
 	var writtenData []byte
 	var dataSize int64 = 4 * 1024
@@ -28,7 +29,7 @@ func verificationTestSuite() {
 		Expect(err).NotTo(HaveOccurred())
 
 		pvc = CreateBackupTargetPVC(ctx, k8sClient, ns, "Filesystem", rookStorageClass, "ReadWriteOnce", "100Mi")
-		pod := CreatePodForFilesystemPVC(ctx, k8sClient, pvc)
+		pod = CreatePodForFilesystemPVC(ctx, k8sClient, pvc)
 		writtenData = WriteRandomDataToPVC(ctx, pod, path.Join(mountPathInPodForFSPVC, "test"), dataSize)
 	})
 
@@ -75,7 +76,7 @@ func verificationTestSuite() {
 		)
 		err = CreatePod(ctx, k8sClient, restorePod)
 		Expect(err).NotTo(HaveOccurred())
-		err = WaitForPodReady(ctx, k8sClient, restorePod, 2*time.Minute)
+		_, err = WaitForPodReady(ctx, k8sClient, restorePod, defaultPodReadyTimeout)
 		Expect(err).NotTo(HaveOccurred())
 
 		By("verifying the data in the restored PVC")
@@ -174,9 +175,14 @@ func verificationTestSuite() {
 		By("creating a pod to access the static PVC")
 		staticPod, err := NewPod(rookNamespace, staticPodName, staticPVCName, "ghcr.io/cybozu/ubuntu:24.04", "/data")
 		Expect(err).NotTo(HaveOccurred())
+		// ceph-csi node plugin checks if the number of watchers is one.
+		// Since watchers are created per node, if the pod using the static PVC is scheduled to a different node from
+		// the node where the pod using the original PVC exists, two watchers will be created, it causes failing the check.
+		// To prevent this situation, we schedule the pod to the same node as the pod using the original PVC.
+		staticPod.Spec.NodeName = pod.Spec.NodeName
 		err = CreatePod(ctx, k8sClient, staticPod)
 		Expect(err).NotTo(HaveOccurred())
-		err = WaitForPodReady(ctx, k8sClient, staticPod, 2*time.Minute)
+		_, err = WaitForPodReady(ctx, k8sClient, staticPod, defaultPodReadyTimeout)
 		Expect(err).NotTo(HaveOccurred())
 
 		By("corrupting the data in the RBD image")

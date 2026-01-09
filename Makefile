@@ -99,9 +99,9 @@ mock: mockgen
 	$(MOCKGEN) -source=internal/infrastructure/ceph/command.go -destination=internal/infrastructure/ceph/command_mock.go -package=ceph
 
 .PHONY: test
-test: manifests generate fmt vet envtest mock ## Run tests.
+test: manifests generate fmt vet mock ## Run tests.
 	$(MAKE) prepare-test
-	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" \
+	ENVTEST_KUBERNETES_VERSION=$(ENVTEST_KUBERNETES_VERSION) ENVTEST_BIN_DIR=$(LOCALBIN) \
 	 	TEST_BLOCK_DEV=$(TEST_BLOCK_DEV) \
 		FIN_RAW_IMG_EXPANSION_UNIT_SIZE=4096 \
 		go test $$(go list ./... | grep -v /e2e) -coverprofile cover.out
@@ -202,7 +202,6 @@ $(LOCALBIN):
 KUBECTL ?= kubectl
 KUSTOMIZE ?= $(LOCALBIN)/kustomize-$(KUSTOMIZE_VERSION)
 CONTROLLER_GEN ?= $(LOCALBIN)/controller-gen-$(CONTROLLER_TOOLS_VERSION)
-ENVTEST ?= $(LOCALBIN)/setup-envtest-$(ENVTEST_VERSION)
 GOLANGCI_LINT ?= $(LOCALBIN)/golangci-lint-$(GOLANGCI_LINT_VERSION)
 MOCKGEN ?= $(LOCALBIN)/mockgen-$(MOCKGEN_VERSION)
 
@@ -215,11 +214,6 @@ $(KUSTOMIZE): $(LOCALBIN)
 controller-gen: $(CONTROLLER_GEN) ## Download controller-gen locally if necessary.
 $(CONTROLLER_GEN): $(LOCALBIN)
 	$(call go-install-tool,$(CONTROLLER_GEN),sigs.k8s.io/controller-tools/cmd/controller-gen,$(CONTROLLER_TOOLS_VERSION))
-
-.PHONY: envtest
-envtest: $(ENVTEST) ## Download setup-envtest locally if necessary.
-$(ENVTEST): $(LOCALBIN)
-	$(call go-install-tool,$(ENVTEST),sigs.k8s.io/controller-runtime/tools/setup-envtest,$(ENVTEST_VERSION))
 
 .PHONY: golangci-lint
 golangci-lint: $(GOLANGCI_LINT) ## Download golangci-lint locally if necessary.
