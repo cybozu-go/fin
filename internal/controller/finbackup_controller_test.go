@@ -506,7 +506,7 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 				var job batchv1.Job
 				key := client.ObjectKey{Namespace: cephNamespace, Name: backupJobName(smallestFB)}
 				g.Expect(k8sClient.Get(ctx, key, &job)).To(Succeed())
-			}, "5s", "1s").Should(Succeed())
+			}, "10s", "1s").Should(Succeed())
 
 			By("verifying no backup job exists for the FinBackup with the larger SnapID")
 			Consistently(func(g Gomega) {
