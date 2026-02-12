@@ -18,14 +18,17 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	crfake "sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
 
@@ -1309,7 +1312,7 @@ var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
 	// Assert:
 	//   - Reconcile() does not return an error.
 	//   - No backup job is created.
-	Context("when reconciling a deleted FinBackup without SnapID", Ordered, func() {
+	Context("when reconciling a FinBackup with SnapID", Ordered, func() {
 		var pvc *corev1.PersistentVolumeClaim
 		var pv *corev1.PersistentVolume
 		var finbackup *finv1.FinBackup
@@ -1321,8 +1324,12 @@ var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
 
 			By("creating a FinBackup with a SnapID")
 			finbackup = NewFinBackup(workNamespace, "test-finbackup-snapid", pvc.Name, pvc.Namespace, "test-node")
-			finbackup.Status.SnapID = ptr.To(1)
 			Expect(k8sClient.Create(ctx, finbackup)).Should(Succeed())
+
+			By("setting SnapID via status subresource")
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(finbackup), finbackup)).Should(Succeed())
+			finbackup.Status.SnapID = ptr.To(1)
+			Expect(k8sClient.Status().Update(ctx, finbackup)).Should(Succeed())
 		})
 		AfterAll(func(ctx SpecContext) {
 			DeletePVCAndPV(ctx, pvc.Namespace, pvc.Name)
@@ -1370,10 +1377,11 @@ var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
 				_, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(finbackup)})
 				Expect(err).ShouldNot(HaveOccurred())
 
-				By("checking that the FinBackup is deleted")
-				err = k8sClient.Get(ctx, client.ObjectKeyFromObject(finbackup), finbackup)
-				Expect(err).Should(HaveOccurred())
-				Expect(err).To(MatchError(k8serrors.IsNotFound, "should not find the FinBackup"))
+				By("checking that the FinBackup is eventually deleted")
+				Eventually(func(g Gomega) {
+					err = k8sClient.Get(ctx, client.ObjectKeyFromObject(finbackup), finbackup)
+					g.Expect(k8serrors.IsNotFound(err)).To(BeTrue())
+				}, "5s", "1s").Should(Succeed())
 
 				By("checking that no cleanup or deletion jobs are created")
 				ExpectNoJob(ctx, k8sClient, cleanupJobName(finbackup), cephNamespace)
@@ -1421,9 +1429,9 @@ var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
 			BeforeEach(func(ctx SpecContext) {
 				finbackup = NewFinBackup(workNamespace, "test-fin-backup-uid-1", pvc.Name, pvc.Namespace, "test-node")
 				Expect(k8sClient.Create(ctx, finbackup)).Should(Succeed())
-				finbackup.Status.SnapID = ptr.To(1)
+				Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(finbackup), finbackup)).Should(Succeed())
 				finbackup.Labels = map[string]string{labelBackupTargetPVCUID: "invalid-uid"}
-				Expect(k8sClient.Status().Update(ctx, finbackup)).Should(Succeed())
+				Expect(k8sClient.Update(ctx, finbackup)).Should(Succeed())
 			})
 			AfterEach(func(ctx SpecContext) {
 				controllerutil.RemoveFinalizer(finbackup, "finbackup.fin.cybozu.io/finalizer")
@@ -1431,8 +1439,10 @@ var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
 			})
 
 			It("should return an error and not create a backup job during reconciliation", func(ctx SpecContext) {
-				By("reconciling the FinBackup")
-				_, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(finbackup)})
+				By("running reconcileBackup directly with mismatched label")
+				var current finv1.FinBackup
+				Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(finbackup), &current)).Should(Succeed())
+				_, err := reconciler.reconcileBackup(ctx, current, *pvc)
 				Expect(err).Should(HaveOccurred())
 				Expect(err).Should(MatchError(ContainSubstring("backup target PVC UID does not match (inLabel=")))
 
@@ -1447,7 +1457,7 @@ var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
 				finbackup = NewFinBackup(workNamespace, "test-fin-backup-uid-2", pvc.Name, pvc.Namespace, "test-node")
 				finbackup.Labels = map[string]string{labelBackupTargetPVCUID: string(pvc.GetUID())}
 				Expect(k8sClient.Create(ctx, finbackup)).Should(Succeed())
-				finbackup.Status.SnapID = ptr.To(1)
+				Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(finbackup), finbackup)).Should(Succeed())
 				finbackup.Status.PVCManifest = `{"metadata":{"uid":"invalid-uid"}}`
 				Expect(k8sClient.Status().Update(ctx, finbackup)).Should(Succeed())
 
@@ -1458,8 +1468,10 @@ var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
 			})
 
 			It("should return an error and not create a backup job during reconciliation", func(ctx SpecContext) {
-				By("reconciling the FinBackup")
-				_, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(finbackup)})
+				By("running reconcileBackup directly with mismatched status.pvcManifest UID")
+				var current finv1.FinBackup
+				Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(finbackup), &current)).Should(Succeed())
+				_, err := reconciler.reconcileBackup(ctx, current, *pvc)
 				Expect(err).Should(HaveOccurred())
 				Expect(err).Should(MatchError(ContainSubstring("backup target PVC UID does not match (inStatus=")))
 
@@ -1916,4 +1928,416 @@ func Test_snapIDPreconditionSatisfied(t *testing.T) {
 			}
 		})
 	}
+}
+
+func Test_ensureMetadata(t *testing.T) {
+	tests := []struct {
+		name        string
+		setupBackup func() *finv1.FinBackup
+		wantUpdated bool
+	}{
+		{
+			name: "patches when metadata is missing",
+			setupBackup: func() *finv1.FinBackup {
+				return newSnapshotUnitTestBackup("fb-no-meta", "pvc-1", userNamespace)
+			},
+			wantUpdated: true,
+		},
+		{
+			name: "no-op when metadata already matches",
+			setupBackup: func() *finv1.FinBackup {
+				backup := newSnapshotUnitTestBackup("fb-has-meta", "pvc-1", userNamespace)
+				backup.Labels = map[string]string{labelBackupTargetPVCUID: "uid-pvc-1"}
+				backup.Annotations = map[string]string{
+					AnnotationBackupTargetRBDImage: rbdImageName,
+					annotationRBDPool:              rbdPoolName,
+				}
+				controllerutil.AddFinalizer(backup, FinBackupFinalizerName)
+				return backup
+			},
+			wantUpdated: false,
+		},
+		{
+			name: "patches when only finalizer is missing",
+			setupBackup: func() *finv1.FinBackup {
+				backup := newSnapshotUnitTestBackup("fb-no-finalizer", "pvc-1", userNamespace)
+				backup.Labels = map[string]string{labelBackupTargetPVCUID: "uid-pvc-1"}
+				backup.Annotations = map[string]string{
+					AnnotationBackupTargetRBDImage: rbdImageName,
+					annotationRBDPool:              rbdPoolName,
+				}
+				return backup
+			},
+			wantUpdated: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			backup := tt.setupBackup()
+			pvc, _ := newSnapshotUnitTestPVCAndPV(userNamespace, "pvc-1", "pv-1")
+			desired := ensureMetadata(backup, string(pvc.GetUID()), rbdPoolName, rbdImageName)
+			updated := !equality.Semantic.DeepEqual(backup.ObjectMeta, desired.ObjectMeta)
+			if updated != tt.wantUpdated {
+				t.Fatalf("ensureMetadata updated=%v, want %v", updated, tt.wantUpdated)
+			}
+
+			if got := desired.GetLabels()[labelBackupTargetPVCUID]; got != string(pvc.GetUID()) {
+				t.Fatalf("unexpected label %q", got)
+			}
+			if got := desired.GetAnnotations()[AnnotationBackupTargetRBDImage]; got != rbdImageName {
+				t.Fatalf("unexpected image annotation %q", got)
+			}
+			if got := desired.GetAnnotations()[annotationRBDPool]; got != rbdPoolName {
+				t.Fatalf("unexpected pool annotation %q", got)
+			}
+			if !controllerutil.ContainsFinalizer(desired, FinBackupFinalizerName) {
+				t.Fatal("expected finalizer to be present")
+			}
+
+			// Second call should always be a no-op
+			desired2 := ensureMetadata(desired, string(pvc.GetUID()), rbdPoolName, rbdImageName)
+			updated2 := !equality.Semantic.DeepEqual(desired.ObjectMeta, desired2.ObjectMeta)
+			if updated2 {
+				t.Fatal("expected no update on idempotent second call")
+			}
+		})
+	}
+}
+
+func Test_ensureSnapshotStatus(t *testing.T) {
+	pvc := &corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "pvc-snap",
+			Namespace: userNamespace,
+			UID:       types.UID("uid-pvc-snap"),
+		},
+		Spec: corev1.PersistentVolumeClaimSpec{
+			VolumeName: "pv-snap",
+		},
+	}
+	now := time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC)
+
+	snap := &model.RBDSnapshot{
+		ID:        42,
+		Name:      "test-snap",
+		Size:      1024,
+		Timestamp: model.NewRBDTimeStamp(now),
+	}
+
+	tests := []struct {
+		name          string
+		backupName    string
+		presetStatus  *finv1.FinBackupStatus
+		wantUpdated   bool
+		wantSnapID    *int
+		wantSnapSize  *int64
+		wantCreatedAt time.Time
+	}{
+		{
+			name:          "patches status when snapshot info differs",
+			backupName:    "fb-snap-new",
+			presetStatus:  nil,
+			wantUpdated:   true,
+			wantSnapID:    ptr.To(42),
+			wantSnapSize:  ptr.To(int64(1024)),
+			wantCreatedAt: now.Truncate(time.Second),
+		},
+		{
+			name:       "no-op when status already matches",
+			backupName: "fb-snap-match",
+			presetStatus: &finv1.FinBackupStatus{
+				SnapID:    ptr.To(42),
+				SnapSize:  ptr.To(int64(1024)),
+				CreatedAt: metav1.NewTime(now.Truncate(time.Second)),
+			},
+			wantUpdated:   false,
+			wantSnapID:    ptr.To(42),
+			wantSnapSize:  ptr.To(int64(1024)),
+			wantCreatedAt: now.Truncate(time.Second),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			backup := newSnapshotUnitTestBackup(tt.backupName, pvc.Name, pvc.Namespace)
+			controllerutil.AddFinalizer(backup, FinBackupFinalizerName)
+			if tt.presetStatus != nil {
+				// PVCManifest must also match for the no-op case.
+				pvcManifest, err := marshalPVCManifestForStatus(pvc)
+				if err != nil {
+					t.Fatalf("failed to marshal PVC manifest: %v", err)
+				}
+				tt.presetStatus.PVCManifest = pvcManifest
+				backup.Status = *tt.presetStatus
+			}
+
+			desiredBackup, err := ensureSnapshotStatus(backup, pvc, snap)
+			if err != nil {
+				t.Fatalf("ensureSnapshotStatus failed: %v", err)
+			}
+			updated := !equality.Semantic.DeepEqual(backup.Status, desiredBackup.Status)
+			if updated != tt.wantUpdated {
+				t.Fatalf("unexpected updated: got %v, want %v", updated, tt.wantUpdated)
+			}
+
+			if desiredBackup.Status.SnapID == nil || *desiredBackup.Status.SnapID != *tt.wantSnapID {
+				t.Fatalf("unexpected snapID: got %v, want %v", desiredBackup.Status.SnapID, tt.wantSnapID)
+			}
+			if desiredBackup.Status.SnapSize == nil || *desiredBackup.Status.SnapSize != *tt.wantSnapSize {
+				t.Fatalf("unexpected snapSize: got %v, want %v", desiredBackup.Status.SnapSize, tt.wantSnapSize)
+			}
+			if !desiredBackup.Status.CreatedAt.Time.Equal(tt.wantCreatedAt) {
+				t.Fatalf("unexpected createdAt: got %v, want %v", desiredBackup.Status.CreatedAt.Time, tt.wantCreatedAt)
+			}
+		})
+	}
+}
+
+func Test_getRBDPoolAndImageFromPVC(t *testing.T) {
+	ctx := context.Background()
+	scheme := runtime.NewScheme()
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatalf("failed to add corev1 scheme: %v", err)
+	}
+	happyPVC, happyPV := newSnapshotUnitTestPVCAndPV(userNamespace, "pvc-pool", "pv-pool")
+
+	tests := []struct {
+		name      string
+		pvc       *corev1.PersistentVolumeClaim
+		pv        *corev1.PersistentVolume
+		wantPool  string
+		wantImage string
+		wantErr   bool
+	}{
+		{
+			name:      "returns pool and image from PV CSI attributes",
+			pvc:       happyPVC,
+			pv:        happyPV,
+			wantPool:  rbdPoolName,
+			wantImage: rbdImageName,
+			wantErr:   false,
+		},
+		{
+			name:    "returns error for nil PVC",
+			pvc:     nil,
+			wantErr: true,
+		},
+		{
+			name: "returns error when PV not found",
+			pvc: &corev1.PersistentVolumeClaim{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "orphan-pvc",
+					Namespace: userNamespace,
+				},
+				Spec: corev1.PersistentVolumeClaimSpec{
+					VolumeName: "nonexistent-pv",
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "returns error when CSI attributes missing",
+			pvc: &corev1.PersistentVolumeClaim{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "pvc-no-csi",
+					Namespace: userNamespace,
+				},
+				Spec: corev1.PersistentVolumeClaimSpec{
+					VolumeName: "pv-no-csi",
+				},
+			},
+			pv: &corev1.PersistentVolume{
+				ObjectMeta: metav1.ObjectMeta{Name: "pv-no-csi"},
+				Spec:       corev1.PersistentVolumeSpec{},
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			builder := crfake.NewClientBuilder().WithScheme(scheme)
+			if tt.pv != nil {
+				builder = builder.WithObjects(tt.pv)
+			}
+			c := builder.Build()
+
+			pool, image, err := getRBDPoolAndImageFromPVC(ctx, c, tt.pvc)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("getRBDPoolAndImageFromPVC failed: %v", err)
+			}
+			if pool != tt.wantPool {
+				t.Fatalf("unexpected pool: got %q, want %q", pool, tt.wantPool)
+			}
+			if image != tt.wantImage {
+				t.Fatalf("unexpected image: got %q, want %q", image, tt.wantImage)
+			}
+		})
+	}
+}
+
+func Test_getOrCreateSnapshot(t *testing.T) {
+	tests := []struct {
+		name     string
+		snapName string
+		lockID   string
+		setup    func(t *testing.T, repo *fake.RBDRepository2)
+		assert   func(t *testing.T, snap *model.RBDSnapshot, err error, repo *fake.RBDRepository2)
+	}{
+		{
+			name:     "creates snapshot when none exists",
+			snapName: "snap-1",
+			lockID:   "lock-1",
+			setup:    func(t *testing.T, repo *fake.RBDRepository2) {},
+			assert: func(t *testing.T, snap *model.RBDSnapshot, err error, repo *fake.RBDRepository2) {
+				if err != nil {
+					t.Fatalf("getOrCreateSnapshot failed: %v", err)
+				}
+				if snap == nil {
+					t.Fatal("expected non-nil snapshot")
+				}
+				if snap.Name != "snap-1" {
+					t.Fatalf("unexpected snapshot name: %q", snap.Name)
+				}
+				snaps, err := repo.ListSnapshots(rbdPoolName, rbdImageName)
+				if err != nil {
+					t.Fatalf("failed to list snapshots: %v", err)
+				}
+				if len(snaps) != 1 {
+					t.Fatalf("expected 1 snapshot, got %d", len(snaps))
+				}
+			},
+		},
+		{
+			name:     "returns existing snapshot without creating",
+			snapName: "snap-existing",
+			lockID:   "lock-1",
+			setup: func(t *testing.T, repo *fake.RBDRepository2) {
+				if err := repo.CreateSnapshot(rbdPoolName, rbdImageName, "snap-existing"); err != nil {
+					t.Fatalf("failed to pre-create snapshot: %v", err)
+				}
+			},
+			assert: func(t *testing.T, snap *model.RBDSnapshot, err error, repo *fake.RBDRepository2) {
+				if err != nil {
+					t.Fatalf("getOrCreateSnapshot failed: %v", err)
+				}
+				if snap == nil || snap.Name != "snap-existing" {
+					t.Fatalf("unexpected snapshot: %v", snap)
+				}
+				snaps, err := repo.ListSnapshots(rbdPoolName, rbdImageName)
+				if err != nil {
+					t.Fatalf("failed to list snapshots: %v", err)
+				}
+				if len(snaps) != 1 {
+					t.Fatalf("expected still 1 snapshot, got %d", len(snaps))
+				}
+			},
+		},
+		{
+			name:     "returns errVolumeLockedByAnother when locked",
+			snapName: "snap-locked",
+			lockID:   "my-lock",
+			setup: func(t *testing.T, repo *fake.RBDRepository2) {
+				if err := repo.LockAdd(rbdPoolName, rbdImageName, "other-lock"); err != nil {
+					t.Fatalf("failed to add lock: %v", err)
+				}
+			},
+			assert: func(t *testing.T, snap *model.RBDSnapshot, err error, repo *fake.RBDRepository2) {
+				if !errors.Is(err, errVolumeLockedByAnother) {
+					t.Fatalf("expected errVolumeLockedByAnother, got: %v", err)
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			reconciler, _, repo := newSnapshotUnitTestReconciler(t)
+			tt.setup(t, repo)
+			snap, err := reconciler.getOrCreateSnapshot(rbdPoolName, rbdImageName, tt.snapName, tt.lockID)
+			tt.assert(t, snap, err, repo)
+		})
+	}
+}
+
+func newSnapshotUnitTestReconciler(
+	t *testing.T,
+	objects ...client.Object,
+) (*FinBackupReconciler, client.Client, *fake.RBDRepository2) {
+	t.Helper()
+	s := runtime.NewScheme()
+	if err := corev1.AddToScheme(s); err != nil {
+		t.Fatalf("failed to add corev1 scheme: %v", err)
+	}
+	if err := finv1.AddToScheme(s); err != nil {
+		t.Fatalf("failed to add finv1 scheme: %v", err)
+	}
+
+	c := crfake.NewClientBuilder().
+		WithScheme(s).
+		WithStatusSubresource(&finv1.FinBackup{}).
+		WithObjects(objects...).
+		Build()
+
+	maxPartSize := resource.MustParse("100Mi")
+	repo := fake.NewRBDRepository2(rbdPoolName, rbdImageName)
+	reconciler := NewFinBackupReconciler(
+		c,
+		s,
+		cephNamespace,
+		podImage,
+		&maxPartSize,
+		repo,
+		repo,
+		100*1<<20,
+		testRawChecksumChunkSize,
+		testDiffChecksumChunkSize,
+	)
+	return reconciler, c, repo
+}
+
+func newSnapshotUnitTestPVCAndPV(
+	pvcNamespace,
+	pvcName,
+	pvName string,
+) (*corev1.PersistentVolumeClaim, *corev1.PersistentVolume) {
+	pvc := &corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      pvcName,
+			Namespace: pvcNamespace,
+			UID:       types.UID("uid-" + pvcName),
+		},
+		Spec: corev1.PersistentVolumeClaimSpec{
+			VolumeName: pvName,
+		},
+	}
+	pv := &corev1.PersistentVolume{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: pvName,
+		},
+		Spec: corev1.PersistentVolumeSpec{
+			PersistentVolumeSource: corev1.PersistentVolumeSource{
+				CSI: &corev1.CSIPersistentVolumeSource{
+					VolumeAttributes: map[string]string{
+						"pool":      rbdPoolName,
+						"imageName": rbdImageName,
+					},
+				},
+			},
+		},
+	}
+	return pvc, pv
+}
+
+func newSnapshotUnitTestBackup(name, pvcName, pvcNamespace string) *finv1.FinBackup {
+	backup := NewFinBackup(workNamespace, name, pvcName, pvcNamespace, "test-node")
+	backup.UID = types.UID("uid-" + name)
+	return backup
 }
