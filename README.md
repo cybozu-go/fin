@@ -12,7 +12,7 @@ TBD
 
 ### Conformed environments
 
-- Kubernetes cluster: v1.33.7+
+- Kubernetes cluster: v1.34.4+
 - Rook: v1.18.6+
 
 ## Contributing
