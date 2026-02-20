@@ -15,6 +15,7 @@ import (
 	"github.com/cybozu-go/fin/internal/pkg/metrics"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -24,6 +25,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/utils/ptr"
+	"sigs.k8s.io/cluster-api/util/annotations"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -124,8 +126,8 @@ func NewFinBackupReconciler(
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.17.3/pkg/reconcile
 func (r *FinBackupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
-	var backup finv1.FinBackup
-	err := r.Get(ctx, req.NamespacedName, &backup)
+	backup := &finv1.FinBackup{}
+	err := r.Get(ctx, req.NamespacedName, backup)
 	if err != nil {
 		if k8serrors.IsNotFound(err) {
 			return ctrl.Result{}, nil
@@ -134,7 +136,7 @@ func (r *FinBackupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, err
 	}
 
-	pvc, gotFromStatus, err := getBackupTargetPVCFromSpecOrStatus(ctx, r.Client, &backup)
+	pvc, gotFromStatus, err := getBackupTargetPVCFromSpecOrStatus(ctx, r.Client, backup)
 	if err != nil {
 		logger.Error(err, "failed to get backup target PVC")
 		return ctrl.Result{}, err
@@ -151,6 +153,10 @@ func (r *FinBackupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, nil
 	}
 
+	if !backup.DeletionTimestamp.IsZero() {
+		return r.reconcileDelete(ctx, backup, gotFromStatus)
+	}
+
 	if backup.IsChecksumMismatched() {
 		annotations := backup.GetAnnotations()
 		if annotations != nil && annotations[annotationSkipChecksumVerify] != annotationValueTrue {
@@ -159,36 +165,63 @@ func (r *FinBackupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		}
 	}
 
-	if !backup.DeletionTimestamp.IsZero() {
-		return r.reconcileDelete(ctx, &backup, gotFromStatus)
-	}
-
 	if gotFromStatus {
 		logger.Info("backup target PVC has already been deleted; skip reconciling")
 		return ctrl.Result{}, nil
 	}
 
-	if !backup.IsStoredToNode() {
-		result, err := r.reconcileBackup(ctx, backup, *pvc)
-		if errors.Is(err, errNonRetryableReconcile) {
-			return ctrl.Result{}, nil
+	rbdPool, rbdImage, err := r.getRBDPoolAndImageFromPVC(ctx, pvc)
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf("failed to get pool/image from PVC: %w", err)
+	}
+
+	orig := backup.DeepCopy()
+
+	if applyBackupMetadata(backup, string(pvc.GetUID()), rbdPool, rbdImage) {
+		if err := r.Patch(ctx, backup, client.MergeFrom(orig)); err != nil {
+			return ctrl.Result{}, fmt.Errorf("failed to patch FinBackup with backup metadata: %w", err)
 		}
-		if err != nil || !result.IsZero() {
-			return result, err
+		return ctrl.Result{}, nil
+	}
+
+	snap, err := r.getOrCreateSnapshot(rbdPool, rbdImage, snapshotName(backup), lockID(backup))
+	if err != nil {
+		if errors.Is(err, errVolumeLockedByAnother) {
+			log.FromContext(ctx).Info("the volume is locked by another process", "uid", string(backup.GetUID()))
+			return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 		}
+		return ctrl.Result{}, fmt.Errorf("failed to create or get snapshot: %w", err)
+	}
+
+	if err := r.reconcileSnapshot(backup, pvc, snap); err != nil {
+		return ctrl.Result{}, fmt.Errorf("failed to reconcile snapshot: %w", err)
+	}
+	if !equality.Semantic.DeepEqual(orig.Status, backup.Status) {
+		if err := r.Status().Patch(ctx, backup, client.MergeFrom(orig)); err != nil {
+			return ctrl.Result{}, fmt.Errorf("failed to patch FinBackup with snapshot status: %w", err)
+		}
+		return ctrl.Result{}, nil
+	}
+
+	backupResult, err := r.reconcileBackup(ctx, *backup, *pvc)
+	if errors.Is(err, errNonRetryableReconcile) {
+		return ctrl.Result{}, nil
+	}
+	if err != nil || !backupResult.IsZero() {
+		return backupResult, err
 	}
 
 	if backup.IsVerifiedFalse() {
 		return ctrl.Result{}, nil
 	}
 	if !backup.DoesVerifiedExist() {
-		return r.reconcileVerification(ctx, &backup, *pvc)
+		return r.reconcileVerification(ctx, backup, *pvc)
 	}
 
 	if backup.IsAutoDeleteCompleted() {
 		return ctrl.Result{}, nil
 	}
-	if err := r.deleteOldFinBackup(ctx, &backup, pvc); err != nil {
+	if err := r.deleteOldFinBackup(ctx, backup, pvc); err != nil {
 		logger.Error(err, "failed to perform automatic deletion of FinBackup")
 		return ctrl.Result{}, err
 	}
@@ -259,25 +292,7 @@ func (r *FinBackupReconciler) reconcileBackup(
 ) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
-	finalizersUpdated := controllerutil.AddFinalizer(&backup, FinBackupFinalizerName)
-	if finalizersUpdated {
-		err := r.Update(ctx, &backup)
-		if err != nil {
-			logger.Error(err, "failed to add finalizer")
-			return ctrl.Result{}, err
-		}
-	}
-
-	ret, err := r.createSnapshot(ctx, &backup)
-	if err != nil {
-		logger.Error(err, "failed to create snapshot")
-		return ctrl.Result{}, err
-	}
-	if !ret.IsZero() {
-		return ret, nil
-	}
-
-	err = checkPVCUIDConsistency(&backup, &pvc)
+	err := checkPVCUIDConsistency(&backup, &pvc)
 	if err != nil {
 		logger.Error(err, "backup target PVC UID is inconsistent")
 		return ctrl.Result{}, err
@@ -373,75 +388,58 @@ func (r *FinBackupReconciler) reconcileBackup(
 	return ctrl.Result{}, nil
 }
 
-func (r *FinBackupReconciler) createSnapshot(ctx context.Context, backup *finv1.FinBackup) (ctrl.Result, error) {
-	logger := log.FromContext(ctx)
-
-	if backup.Status.SnapID != nil {
-		return ctrl.Result{}, nil
-	}
-
-	var pvc corev1.PersistentVolumeClaim
-	err := r.Get(ctx, client.ObjectKey{Namespace: backup.Spec.PVCNamespace, Name: backup.Spec.PVC}, &pvc)
+func (r *FinBackupReconciler) reconcileSnapshot(
+	backup *finv1.FinBackup,
+	pvc *corev1.PersistentVolumeClaim,
+	snap *model.RBDSnapshot,
+) error {
+	pvcManifest, err := marshalPVCManifestForStatus(pvc)
 	if err != nil {
-		logger.Error(err, "failed to get backup target PVC")
-		return ctrl.Result{}, err
+		return fmt.Errorf("failed to marshal normalized PVC manifest: %w", err)
 	}
 
+	backup.Status.CreatedAt = metav1.NewTime(snap.Timestamp.Time)
+	backup.Status.SnapID = ptr.To(snap.ID)
+	backup.Status.SnapSize = ptr.To(int64(snap.Size))
+	backup.Status.PVCManifest = pvcManifest
+	return nil
+}
+
+func applyBackupMetadata(backup *finv1.FinBackup, pvcUID, rbdPool, rbdImage string) (changed bool) {
 	labels := backup.GetLabels()
 	if labels == nil {
 		labels = map[string]string{}
 	}
-	labels[labelBackupTargetPVCUID] = string(pvc.GetUID())
+	if labels[labelBackupTargetPVCUID] != pvcUID {
+		labels[labelBackupTargetPVCUID] = pvcUID
+		changed = true
+	}
 	backup.SetLabels(labels)
 
-	rbdPool, rbdImage, err := r.getRBDPoolAndImageFromPVC(ctx, &pvc)
-	if err != nil {
-		logger.Error(err, "failed to get pool/image from PVC")
-		return ctrl.Result{}, err
+	annot := map[string]string{
+		AnnotationBackupTargetRBDImage: rbdImage,
+		annotationRBDPool:              rbdPool,
+	}
+	if annotations.AddAnnotations(backup, annot) {
+		changed = true
 	}
 
-	annotations := backup.GetAnnotations()
-	if annotations == nil {
-		annotations = map[string]string{}
+	if controllerutil.AddFinalizer(backup, FinBackupFinalizerName) {
+		changed = true
 	}
-	annotations[AnnotationBackupTargetRBDImage] = rbdImage
-	annotations[annotationRBDPool] = rbdPool
-	backup.SetAnnotations(annotations)
+	return changed
+}
 
-	err = r.Update(ctx, backup)
-	if err != nil {
-		logger.Error(err, "failed to add labels and annotations")
-		return ctrl.Result{}, err
-	}
+func marshalPVCManifestForStatus(pvc *corev1.PersistentVolumeClaim) (string, error) {
+	normalized := pvc.DeepCopy()
+	normalized.ObjectMeta.ResourceVersion = ""
+	normalized.ObjectMeta.ManagedFields = nil
 
-	snap, err := r.createSnapshotIfNeeded(rbdPool, rbdImage, snapshotName(backup), lockID(backup))
+	data, err := json.Marshal(normalized)
 	if err != nil {
-		if errors.Is(err, errVolumeLockedByAnother) {
-			logger.Info("the volume is locked by another process", "uid", string(backup.GetUID()))
-			// FIXME: The following "requeue after" is temporary code.
-			return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
-		}
-		logger.Error(err, "failed to create or get snapshot")
-		return ctrl.Result{}, err
+		return "", err
 	}
-
-	pvcManifest, err := json.Marshal(pvc)
-	if err != nil {
-		logger.Error(err, "failed to marshal PVC manifest")
-		return ctrl.Result{}, err
-	}
-	updatedBackup := backup.DeepCopy()
-	updatedBackup.Status.CreatedAt = metav1.NewTime(snap.Timestamp.Time)
-	updatedBackup.Status.SnapID = &snap.ID
-	updatedBackup.Status.SnapSize = ptr.To(int64(snap.Size))
-	updatedBackup.Status.PVCManifest = string(pvcManifest)
-	err = r.Status().Patch(ctx, updatedBackup, client.MergeFrom(backup))
-	if err != nil {
-		logger.Error(err, "failed to update FinBackup status")
-		return ctrl.Result{}, err
-	}
-	// FIXME: The following "requeue after" is temporary code.
-	return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+	return string(data), nil
 }
 
 func (r *FinBackupReconciler) reconcileDelete(
@@ -614,7 +612,7 @@ func (r *FinBackupReconciler) reconcileDelete(
 	return ctrl.Result{}, nil
 }
 
-func (r *FinBackupReconciler) createSnapshotIfNeeded(rbdPool, rbdImage, snapName, lockID string) (*model.RBDSnapshot, error) {
+func (r *FinBackupReconciler) getOrCreateSnapshot(rbdPool, rbdImage, snapName, lockID string) (*model.RBDSnapshot, error) {
 	snap, err := findSnapshot(r.snapRepo, rbdPool, rbdImage, snapName)
 	if err != nil {
 		if !errors.Is(err, model.ErrNotFound) {

@@ -2,10 +2,12 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -21,11 +23,13 @@ import (
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	crfake "sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
 
@@ -1297,19 +1301,20 @@ var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
 
 	// CSATEST-1628
 	// Description:
-	//  Do not create backup job when a FinBackup with a SnapID is created.
+	//  Ignore pre-populated status.SnapID and continue snapshot/backup reconciliation.
 	//
 	// Arrange:
 	//   - Create a pair of PVC and PV
-	//   - Create a FinBackup with a SnapID.
+	//   - Create a FinBackup and then set a pre-populated SnapID in status.
 	//
 	// Act:
 	//   - Run FinBackup Controller's Reconcile().
 	//
 	// Assert:
 	//   - Reconcile() does not return an error.
-	//   - No backup job is created.
-	Context("when reconciling a deleted FinBackup without SnapID", Ordered, func() {
+	//   - A backup job is created.
+	//   - status.SnapID is reconstructed from the actual snapshot.
+	Context("when reconciling a FinBackup with pre-populated SnapID", Ordered, func() {
 		var pvc *corev1.PersistentVolumeClaim
 		var pv *corev1.PersistentVolume
 		var finbackup *finv1.FinBackup
@@ -1319,22 +1324,35 @@ var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
 			Expect(k8sClient.Create(ctx, pvc)).Should(Succeed())
 			Expect(k8sClient.Create(ctx, pv)).Should(Succeed())
 
-			By("creating a FinBackup with a SnapID")
+			By("creating a FinBackup")
 			finbackup = NewFinBackup(workNamespace, "test-finbackup-snapid", pvc.Name, pvc.Namespace, "test-node")
-			finbackup.Status.SnapID = ptr.To(1)
 			Expect(k8sClient.Create(ctx, finbackup)).Should(Succeed())
+
+			By("pre-populating status.SnapID")
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(finbackup), finbackup)).Should(Succeed())
+			finbackup.Status.SnapID = ptr.To(999)
+			Expect(k8sClient.Status().Update(ctx, finbackup)).Should(Succeed())
 		})
 		AfterAll(func(ctx SpecContext) {
 			DeletePVCAndPV(ctx, pvc.Namespace, pvc.Name)
 		})
 
-		It("should neither return an error nor create a backup job during reconciliation", func(ctx SpecContext) {
-			By("reconciling the FinBackup")
-			_, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(finbackup)})
-			Expect(err).ShouldNot(HaveOccurred())
+		It("should continue reconciliation and overwrite pre-populated status.SnapID", func(ctx SpecContext) {
+			By("reconciling repeatedly until snapshot phase updates are applied and backup job is created")
+			Eventually(func(g Gomega, ctx SpecContext) {
+				_, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(finbackup)})
+				g.Expect(err).ShouldNot(HaveOccurred())
 
-			By("checking that no backup job is created")
-			ExpectNoJob(ctx, k8sClient, backupJobName(finbackup), cephNamespace)
+				var job batchv1.Job
+				g.Expect(k8sClient.Get(ctx, client.ObjectKey{
+					Namespace: cephNamespace,
+					Name:      backupJobName(finbackup),
+				}, &job)).Should(Succeed())
+
+				g.Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(finbackup), finbackup)).Should(Succeed())
+				g.Expect(finbackup.Status.SnapID).ShouldNot(BeNil())
+				g.Expect(*finbackup.Status.SnapID).ShouldNot(Equal(999))
+			}, "10s", "1s").WithContext(ctx).Should(Succeed())
 		})
 
 		// CSATEST-1626
@@ -1351,7 +1369,6 @@ var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
 		//
 		// Assert:
 		//   - Reconcile() does not return an error.
-		//   - No cleanup or deletion jobs are created.
 		When("the FinBackup is deleted without SnapID", func() {
 			BeforeAll(func(ctx SpecContext) {
 				// This FinBackup has a SnapID in the BeforeAll of the parent Context.
@@ -1365,42 +1382,46 @@ var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
 				Expect(k8sClient.Delete(ctx, finbackup)).Should(Succeed())
 			})
 
-			It("should not create any cleanup or deletion jobs", func(ctx SpecContext) {
+			It("should reconcile without error", func(ctx SpecContext) {
 				By("reconciling the FinBackup after removing SnapID and adding the deletion timestamp")
 				_, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(finbackup)})
 				Expect(err).ShouldNot(HaveOccurred())
 
-				By("checking that the FinBackup is deleted")
-				err = k8sClient.Get(ctx, client.ObjectKeyFromObject(finbackup), finbackup)
-				Expect(err).Should(HaveOccurred())
-				Expect(err).To(MatchError(k8serrors.IsNotFound, "should not find the FinBackup"))
+				By("waiting for backup job to be deleted")
+				Eventually(func(g Gomega, ctx SpecContext) {
+					var backupJob batchv1.Job
+					err = k8sClient.Get(ctx, client.ObjectKey{
+						Namespace: cephNamespace,
+						Name:      backupJobName(finbackup),
+					}, &backupJob)
+					g.Expect(k8serrors.IsNotFound(err)).Should(BeTrue())
+				}, "5s", "1s").WithContext(ctx).Should(Succeed())
 
-				By("checking that no cleanup or deletion jobs are created")
-				ExpectNoJob(ctx, k8sClient, cleanupJobName(finbackup), cephNamespace)
-				ExpectNoJob(ctx, k8sClient, deletionJobName(finbackup), cephNamespace)
+				By("reconciling again to proceed after backup job deletion")
+				_, err = reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(finbackup)})
+				Expect(err).ShouldNot(HaveOccurred())
 			})
 		})
 	})
 
 	// CSATEST-1612
 	// Description:
-	//   Do not create a backup when the PVC UID recorded by FinBackup differs
-	//   from the UID of the actual backup-target PVC.
+	//   Rebuild metadata/status from cluster state when FinBackup has inconsistent values.
 	//
 	// Arrange:
 	//   - A backup-target PVC.
 	//   - A FinBackup corresponding to the backup-target PVC.
 	//
 	// Act:
-	//   1. Change the FinBackup label "fin.cybozu.io/backup-target-pvc-uid"
-	//      to a different UID and run Reconcile().
-	//   2. Change the PVC UID embedded in FinBackup.status.pvcManifest
-	//      and run Reconcile().
+	//   1. Set FinBackup label "fin.cybozu.io/backup-target-pvc-uid" to a different UID.
+	//   2. Set FinBackup.status.pvcManifest UID to a different value.
+	//   - Run Reconcile().
 	//
 	// Assert:
-	//   - Reconcile() returns an error.
-	//   - No backup job is created.
-	Context("Prevent backup when PVC UID differs", func() {
+	//   - Reconcile() updates metadata from the actual PVC and creates a backup job
+	//     when label/annotation values are inconsistent.
+	//   - Reconcile() ignores invalid status.pvcManifest and continues from spec/PVC.
+	Context("Rebuild backup metadata when PVC-derived values are inconsistent", func() {
 		var pvc *corev1.PersistentVolumeClaim
 		var pv *corev1.PersistentVolume
 
@@ -1420,28 +1441,40 @@ var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
 			var finbackup *finv1.FinBackup
 			BeforeEach(func(ctx SpecContext) {
 				finbackup = NewFinBackup(workNamespace, "test-fin-backup-uid-1", pvc.Name, pvc.Namespace, "test-node")
-				Expect(k8sClient.Create(ctx, finbackup)).Should(Succeed())
-				finbackup.Status.SnapID = ptr.To(1)
 				finbackup.Labels = map[string]string{labelBackupTargetPVCUID: "invalid-uid"}
-				Expect(k8sClient.Status().Update(ctx, finbackup)).Should(Succeed())
+				Expect(k8sClient.Create(ctx, finbackup)).Should(Succeed())
 			})
 			AfterEach(func(ctx SpecContext) {
 				controllerutil.RemoveFinalizer(finbackup, "finbackup.fin.cybozu.io/finalizer")
 				Expect(k8sClient.Delete(ctx, finbackup)).Should(Succeed())
 			})
 
-			It("should return an error and not create a backup job during reconciliation", func(ctx SpecContext) {
+			It("should overwrite the label and continue reconciliation", func(ctx SpecContext) {
 				By("reconciling the FinBackup")
 				_, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(finbackup)})
-				Expect(err).Should(HaveOccurred())
-				Expect(err).Should(MatchError(ContainSubstring("backup target PVC UID does not match (inLabel=")))
+				Expect(err).ShouldNot(HaveOccurred())
 
-				By("checking that no backup job is created")
-				ExpectNoJob(ctx, k8sClient, backupJobName(finbackup), cephNamespace)
+				By("reconciling repeatedly until backup job is created")
+				Eventually(func(g Gomega, ctx SpecContext) {
+					_, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(finbackup)})
+					g.Expect(err).ShouldNot(HaveOccurred())
+
+					var job batchv1.Job
+					g.Expect(k8sClient.Get(ctx, client.ObjectKey{
+						Namespace: cephNamespace,
+						Name:      backupJobName(finbackup),
+					}, &job)).Should(Succeed())
+				}, "10s", "1s").WithContext(ctx).Should(Succeed())
+
+				By("checking that the label is corrected to the actual PVC UID")
+				Eventually(func(g Gomega, ctx SpecContext) {
+					g.Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(finbackup), finbackup)).Should(Succeed())
+					g.Expect(finbackup.Labels).Should(HaveKeyWithValue(labelBackupTargetPVCUID, string(pvc.GetUID())))
+				}, "5s", "1s").WithContext(ctx).Should(Succeed())
 			})
 		})
 
-		When("The UID in status.pvcManifest differs from the PVC UID", func() {
+		When("status.pvcManifest is invalid", func() {
 			var finbackup *finv1.FinBackup
 			BeforeEach(func(ctx SpecContext) {
 				finbackup = NewFinBackup(workNamespace, "test-fin-backup-uid-2", pvc.Name, pvc.Namespace, "test-node")
@@ -1457,14 +1490,29 @@ var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
 				Expect(k8sClient.Delete(ctx, finbackup)).Should(Succeed())
 			})
 
-			It("should return an error and not create a backup job during reconciliation", func(ctx SpecContext) {
+			It("should ignore status.pvcManifest and continue reconciliation", func(ctx SpecContext) {
 				By("reconciling the FinBackup")
 				_, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(finbackup)})
-				Expect(err).Should(HaveOccurred())
-				Expect(err).Should(MatchError(ContainSubstring("backup target PVC UID does not match (inStatus=")))
+				Expect(err).ShouldNot(HaveOccurred())
 
-				By("checking that no backup job is created")
-				ExpectNoJob(ctx, k8sClient, backupJobName(finbackup), cephNamespace)
+				By("reconciling repeatedly until backup job is created")
+				Eventually(func(g Gomega, ctx SpecContext) {
+					_, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(finbackup)})
+					g.Expect(err).ShouldNot(HaveOccurred())
+
+					var job batchv1.Job
+					g.Expect(k8sClient.Get(ctx, client.ObjectKey{
+						Namespace: cephNamespace,
+						Name:      backupJobName(finbackup),
+					}, &job)).Should(Succeed())
+				}, "10s", "1s").WithContext(ctx).Should(Succeed())
+
+				By("checking that status.pvcManifest is reconstructed from actual PVC")
+				Eventually(func(g Gomega, ctx SpecContext) {
+					g.Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(finbackup), finbackup)).Should(Succeed())
+					g.Expect(finbackup.Status.PVCManifest).Should(ContainSubstring(string(pvc.GetUID())))
+					g.Expect(finbackup.Status.PVCManifest).ShouldNot(ContainSubstring("invalid-uid"))
+				}, "5s", "1s").WithContext(ctx).Should(Succeed())
 			})
 		})
 	})
@@ -1916,4 +1964,300 @@ func Test_snapIDPreconditionSatisfied(t *testing.T) {
 			}
 		})
 	}
+}
+
+func Test_reconcileSnapshot_stopsAfterMetadataPatch(t *testing.T) {
+	ctx := context.Background()
+	pvc, pv := newSnapshotUnitTestPVCAndPV(userNamespace, "pvc-metadata", "pv-metadata")
+	backup := newSnapshotUnitTestBackup("fb-metadata", pvc.Name, pvc.Namespace)
+
+	reconciler, c, repo := newSnapshotUnitTestReconciler(t, backup, pvc, pv)
+
+	var current finv1.FinBackup
+	if err := c.Get(ctx, client.ObjectKeyFromObject(backup), &current); err != nil {
+		t.Fatalf("failed to get FinBackup: %v", err)
+	}
+	result, updatedPrimary, err := reconciler.reconcileSnapshot(ctx, &current)
+	if err != nil {
+		t.Fatalf("reconcileSnapshot failed: %v", err)
+	}
+	if !result.IsZero() {
+		t.Fatalf("expected zero result, got %+v", result)
+	}
+	if !updatedPrimary {
+		t.Fatal("expected updatedPrimary=true on metadata patch")
+	}
+
+	snaps, err := repo.ListSnapshots(rbdPoolName, rbdImageName)
+	if err != nil {
+		t.Fatalf("failed to list snapshots: %v", err)
+	}
+	if len(snaps) != 0 {
+		t.Fatalf("expected no snapshot in first pass, got %d", len(snaps))
+	}
+
+	if err := c.Get(ctx, client.ObjectKeyFromObject(backup), &current); err != nil {
+		t.Fatalf("failed to get FinBackup after metadata patch: %v", err)
+	}
+	if got := current.GetLabels()[labelBackupTargetPVCUID]; got != string(pvc.GetUID()) {
+		t.Fatalf("unexpected label %q", got)
+	}
+	if got := current.GetAnnotations()[AnnotationBackupTargetRBDImage]; got != rbdImageName {
+		t.Fatalf("unexpected image annotation %q", got)
+	}
+	if got := current.GetAnnotations()[annotationRBDPool]; got != rbdPoolName {
+		t.Fatalf("unexpected pool annotation %q", got)
+	}
+
+	result, updatedPrimary, err = reconciler.reconcileSnapshot(ctx, &current)
+	if err != nil {
+		t.Fatalf("reconcileSnapshot second pass failed: %v", err)
+	}
+	if !result.IsZero() {
+		t.Fatalf("expected zero result in second pass, got %+v", result)
+	}
+	if !updatedPrimary {
+		t.Fatal("expected updatedPrimary=true on status update")
+	}
+
+	snaps, err = repo.ListSnapshots(rbdPoolName, rbdImageName)
+	if err != nil {
+		t.Fatalf("failed to list snapshots after second pass: %v", err)
+	}
+	if len(snaps) != 1 {
+		t.Fatalf("expected one snapshot in second pass, got %d", len(snaps))
+	}
+}
+
+func Test_reconcileSnapshot_updatesStaleStatusThenNoops(t *testing.T) {
+	ctx := context.Background()
+	pvc, pv := newSnapshotUnitTestPVCAndPV(userNamespace, "pvc-stale", "pv-stale")
+	backup := newSnapshotUnitTestBackup("fb-stale", pvc.Name, pvc.Namespace)
+	applyBackupMetadata(backup, string(pvc.GetUID()), rbdPoolName, rbdImageName)
+	backup.Status.SnapID = ptr.To(999)
+	backup.Status.SnapSize = ptr.To(int64(0))
+
+	reconciler, c, repo := newSnapshotUnitTestReconciler(t, backup, pvc, pv)
+
+	if err := repo.CreateSnapshot(rbdPoolName, rbdImageName, snapshotName(backup)); err != nil {
+		t.Fatalf("failed to create snapshot in fake repo: %v", err)
+	}
+	snaps, err := repo.ListSnapshots(rbdPoolName, rbdImageName)
+	if err != nil {
+		t.Fatalf("failed to list snapshots: %v", err)
+	}
+	if len(snaps) != 1 {
+		t.Fatalf("expected one snapshot, got %d", len(snaps))
+	}
+	expectedSnap := snaps[0]
+
+	var current finv1.FinBackup
+	if err := c.Get(ctx, client.ObjectKeyFromObject(backup), &current); err != nil {
+		t.Fatalf("failed to get FinBackup: %v", err)
+	}
+	result, updatedPrimary, err := reconciler.reconcileSnapshot(ctx, &current)
+	if err != nil {
+		t.Fatalf("reconcileSnapshot failed: %v", err)
+	}
+	if !result.IsZero() {
+		t.Fatalf("expected zero result, got %+v", result)
+	}
+	if !updatedPrimary {
+		t.Fatal("expected updatedPrimary=true when status is stale")
+	}
+
+	if err := c.Get(ctx, client.ObjectKeyFromObject(backup), &current); err != nil {
+		t.Fatalf("failed to get updated FinBackup: %v", err)
+	}
+	if current.Status.SnapID == nil || *current.Status.SnapID != expectedSnap.ID {
+		t.Fatalf("unexpected status.snapID: %#v", current.Status.SnapID)
+	}
+	if current.Status.SnapSize == nil || *current.Status.SnapSize != int64(expectedSnap.Size) {
+		t.Fatalf("unexpected status.snapSize: %#v", current.Status.SnapSize)
+	}
+	pvcManifest, err := marshalPVCManifestForStatus(pvc)
+	if err != nil {
+		t.Fatalf("failed to marshal PVC manifest: %v", err)
+	}
+	if !snapshotStatusMatches(&current.Status, expectedSnap, pvcManifest) {
+		t.Fatalf(
+			"status should match before second pass: snapID=%v snapSize=%v createdAt=%v expectedCreatedAt=%v createdAtEqual=%t manifestEqual=%t",
+			current.Status.SnapID,
+			current.Status.SnapSize,
+			current.Status.CreatedAt.Time,
+			expectedSnap.Timestamp.Time,
+			current.Status.CreatedAt.Time.Equal(expectedSnap.Timestamp.Time),
+			current.Status.PVCManifest == pvcManifest,
+		)
+	}
+
+	result, updatedPrimary, err = reconciler.reconcileSnapshot(ctx, &current)
+	if err != nil {
+		t.Fatalf("reconcileSnapshot second pass failed: %v", err)
+	}
+	if !result.IsZero() {
+		t.Fatalf("expected zero result in second pass, got %+v", result)
+	}
+	if updatedPrimary {
+		t.Fatal("expected updatedPrimary=false when status already matches snapshot")
+	}
+}
+
+func Test_reconcileSnapshot_usesPVCManifestFallback(t *testing.T) {
+	ctx := context.Background()
+	pvc, pv := newSnapshotUnitTestPVCAndPV(userNamespace, "pvc-fallback", "pv-fallback")
+	backup := newSnapshotUnitTestBackup("fb-fallback", pvc.Name, pvc.Namespace)
+	applyBackupMetadata(backup, string(pvc.GetUID()), rbdPoolName, rbdImageName)
+
+	pvcManifest, err := json.Marshal(pvc)
+	if err != nil {
+		t.Fatalf("failed to marshal PVC: %v", err)
+	}
+	backup.Status.PVCManifest = string(pvcManifest)
+
+	reconciler, c, repo := newSnapshotUnitTestReconciler(t, backup, pv)
+
+	var current finv1.FinBackup
+	if err := c.Get(ctx, client.ObjectKeyFromObject(backup), &current); err != nil {
+		t.Fatalf("failed to get FinBackup: %v", err)
+	}
+	result, updatedPrimary, err := reconciler.reconcileSnapshot(ctx, &current)
+	if err != nil {
+		t.Fatalf("reconcileSnapshot with PVC manifest fallback failed: %v", err)
+	}
+	if !result.IsZero() {
+		t.Fatalf("expected zero result, got %+v", result)
+	}
+	if !updatedPrimary {
+		t.Fatal("expected updatedPrimary=true when status is updated")
+	}
+
+	snaps, err := repo.ListSnapshots(rbdPoolName, rbdImageName)
+	if err != nil {
+		t.Fatalf("failed to list snapshots: %v", err)
+	}
+	if len(snaps) != 1 {
+		t.Fatalf("expected one snapshot created via status fallback, got %d", len(snaps))
+	}
+	pvcManifestStr, err := marshalPVCManifestForStatus(pvc)
+	if err != nil {
+		t.Fatalf("failed to marshal PVC manifest: %v", err)
+	}
+	if !snapshotStatusMatches(&current.Status, snaps[0], pvcManifestStr) {
+		t.Fatalf(
+			"status should match before second pass: snapID=%v snapSize=%v createdAt=%v expectedCreatedAt=%v createdAtEqual=%t manifestEqual=%t",
+			current.Status.SnapID,
+			current.Status.SnapSize,
+			current.Status.CreatedAt.Time,
+			snaps[0].Timestamp.Time,
+			current.Status.CreatedAt.Time.Equal(snaps[0].Timestamp.Time),
+			current.Status.PVCManifest == pvcManifestStr,
+		)
+	}
+
+	result, updatedPrimary, err = reconciler.reconcileSnapshot(ctx, &current)
+	if err != nil {
+		t.Fatalf("reconcileSnapshot second pass with fallback failed: %v", err)
+	}
+	if !result.IsZero() {
+		t.Fatalf("expected zero result in second pass, got %+v", result)
+	}
+	if updatedPrimary {
+		t.Fatal("expected updatedPrimary=false when status already matches snapshot")
+	}
+}
+
+func Test_reconcileSnapshot_errorsWhenPVCManifestVolumeNameMissing(t *testing.T) {
+	ctx := context.Background()
+	backup := newSnapshotUnitTestBackup("fb-invalid-manifest", "pvc-invalid", userNamespace)
+	backup.Status.PVCManifest = `{"metadata":{"name":"pvc-invalid","namespace":"user"}}`
+
+	reconciler, c, _ := newSnapshotUnitTestReconciler(t, backup)
+
+	var current finv1.FinBackup
+	if err := c.Get(ctx, client.ObjectKeyFromObject(backup), &current); err != nil {
+		t.Fatalf("failed to get FinBackup: %v", err)
+	}
+	_, _, err := reconciler.reconcileSnapshot(ctx, &current)
+	if err == nil {
+		t.Fatal("expected error for missing volumeName in status.pvcManifest")
+	}
+	if !strings.Contains(err.Error(), "backup target PVC spec.volumeName is empty") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func newSnapshotUnitTestReconciler(
+	t *testing.T,
+	objects ...client.Object,
+) (*FinBackupReconciler, client.Client, *fake.RBDRepository2) {
+	t.Helper()
+	s := runtime.NewScheme()
+	if err := corev1.AddToScheme(s); err != nil {
+		t.Fatalf("failed to add corev1 scheme: %v", err)
+	}
+	if err := finv1.AddToScheme(s); err != nil {
+		t.Fatalf("failed to add finv1 scheme: %v", err)
+	}
+
+	c := crfake.NewClientBuilder().
+		WithScheme(s).
+		WithStatusSubresource(&finv1.FinBackup{}).
+		WithObjects(objects...).
+		Build()
+
+	maxPartSize := resource.MustParse("100Mi")
+	repo := fake.NewRBDRepository2(rbdPoolName, rbdImageName)
+	reconciler := NewFinBackupReconciler(
+		c,
+		s,
+		cephNamespace,
+		podImage,
+		&maxPartSize,
+		repo,
+		repo,
+		100*1<<20,
+		testRawChecksumChunkSize,
+		testDiffChecksumChunkSize,
+	)
+	return reconciler, c, repo
+}
+
+func newSnapshotUnitTestPVCAndPV(
+	pvcNamespace,
+	pvcName,
+	pvName string,
+) (*corev1.PersistentVolumeClaim, *corev1.PersistentVolume) {
+	pvc := &corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      pvcName,
+			Namespace: pvcNamespace,
+			UID:       types.UID("uid-" + pvcName),
+		},
+		Spec: corev1.PersistentVolumeClaimSpec{
+			VolumeName: pvName,
+		},
+	}
+	pv := &corev1.PersistentVolume{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: pvName,
+		},
+		Spec: corev1.PersistentVolumeSpec{
+			PersistentVolumeSource: corev1.PersistentVolumeSource{
+				CSI: &corev1.CSIPersistentVolumeSource{
+					VolumeAttributes: map[string]string{
+						"pool":      rbdPoolName,
+						"imageName": rbdImageName,
+					},
+				},
+			},
+		},
+	}
+	return pvc, pv
+}
+
+func newSnapshotUnitTestBackup(name, pvcName, pvcNamespace string) *finv1.FinBackup {
+	backup := NewFinBackup(workNamespace, name, pvcName, pvcNamespace, "test-node")
+	backup.UID = types.UID("uid-" + name)
+	return backup
 }
