@@ -101,6 +101,11 @@ mock: mockgen
 .PHONY: test
 test: manifests generate fmt vet mock ## Run tests.
 	$(MAKE) prepare-test
+
+# Avoid 'go: no such tool "covdata"' error on CI.
+# cf. https://github.com/golang/go/issues/75031#issuecomment-3195256688
+	go env -w GOTOOLCHAIN=go1.25.0+auto
+
 	ENVTEST_KUBERNETES_VERSION=$(ENVTEST_KUBERNETES_VERSION) ENVTEST_BIN_DIR=$(LOCALBIN) \
 	 	TEST_BLOCK_DEV=$(TEST_BLOCK_DEV) \
 		FIN_RAW_IMG_EXPANSION_UNIT_SIZE=4096 \
