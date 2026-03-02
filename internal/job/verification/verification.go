@@ -267,13 +267,25 @@ func (v *Verification) loopApplyDiff(
 }
 
 func runFsck(imagePath string) error {
-	output, err := exec.Command("e2fsck", "-fn", imagePath).CombinedOutput()
+	// Run e2fsck -y -E journal_only {imagePath}
+	// This command may return a non-zero exit code when it finds and fixes
+	// errors, so let's ignore the exit code.
+	output, err := exec.Command("e2fsck", "-y", "-E", "journal_only", imagePath).CombinedOutput()
+	if err != nil {
+		var exitError *exec.ExitError
+		if !errors.As(err, &exitError) {
+			return fmt.Errorf("failed to run 'e2fsck -y -E journal_only': %w: %s", err, output)
+		}
+	}
+
+	// Run e2fsck -fnv {imagePath}
+	output, err = exec.Command("e2fsck", "-fnv", imagePath).CombinedOutput()
 	if err != nil {
 		var exitError *exec.ExitError
 		if errors.As(err, &exitError) {
-			return fmt.Errorf("%w: e2fsck failed: %s: %s", ErrFsckFailed, exitError.String(), output)
+			return fmt.Errorf("%w: 'e2fsck -fnv' failed: %s: %s", ErrFsckFailed, exitError.String(), output)
 		}
-		return fmt.Errorf("failed to run e2fsck: %w: %s", err, output)
+		return fmt.Errorf("failed to run 'e2fsck -fnv': %w: %s", err, output)
 	}
 	return nil
 }
