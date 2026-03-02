@@ -153,11 +153,22 @@ func createFakeE2fsck(t *testing.T, expectedVolumeData []byte) {
 	err = e2fsck.Chmod(0755)
 	require.NoError(t, err)
 	_, err = fmt.Fprintf(e2fsck, `#!/bin/sh
-if [ "$1" != "-fn" ]; then
-  echo "Invalid argument: $1" >&2
-  exit 1
-fi
-shift
+case "$1" in
+  "-fnv" )
+    shift
+    ;;
+  "-y" )
+    if [ "$2" != "-E" ] || [ "$3" != "journal_only" ]; then
+      echo "Invalid argument: $1" >&2
+      exit 1
+    fi
+    shift 3
+    ;;
+  * )
+    echo "Invalid argument: $1" >&2
+    exit 1
+	;;
+esac
 
 expected=/tmp/fin-fake-e2fsck-expected
 echo -n "%x" | xxd -r -p > ${expected}
