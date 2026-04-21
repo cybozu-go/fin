@@ -333,11 +333,16 @@ func (r *FinBackupReconciler) reconcileBackup(
 		logger.Error(err, "failed to create or update backup job")
 		return ctrl.Result{}, err
 	}
+	logger.Info("[timing] backup job created/updated",
+		"sinceCreation", time.Since(backup.CreationTimestamp.Time).Round(time.Millisecond))
 
 	jobStatus, err := CheckJobStatus(ctx, r.Client, backupJobName(&backup), r.cephClusterNamespace)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to check backup job status: %w", err)
 	}
+	logger.Info("[timing] backup job status",
+		"status", jobStatus.Status,
+		"sinceCreation", time.Since(backup.CreationTimestamp.Time).Round(time.Millisecond))
 	switch jobStatus.Status {
 	case JobStatusComplete:
 		// do nothing
@@ -369,6 +374,8 @@ func (r *FinBackupReconciler) reconcileBackup(
 		logger.Error(err, "failed to update FinBackup status")
 		return ctrl.Result{}, err
 	}
+	logger.Info("[timing] StoredToNode condition set",
+		"sinceCreation", time.Since(backup.CreationTimestamp.Time).Round(time.Millisecond))
 
 	return ctrl.Result{}, nil
 }
@@ -417,13 +424,18 @@ func (r *FinBackupReconciler) createSnapshot(ctx context.Context, backup *finv1.
 	snap, err := r.createSnapshotIfNeeded(rbdPool, rbdImage, snapshotName(backup), lockID(backup))
 	if err != nil {
 		if errors.Is(err, errVolumeLockedByAnother) {
-			logger.Info("the volume is locked by another process", "uid", string(backup.GetUID()))
+			logger.Info("the volume is locked by another process",
+				"uid", string(backup.GetUID()),
+				"sinceCreation", time.Since(backup.CreationTimestamp.Time).Round(time.Millisecond))
 			// FIXME: The following "requeue after" is temporary code.
 			return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 		}
 		logger.Error(err, "failed to create or get snapshot")
 		return ctrl.Result{}, err
 	}
+	logger.Info("[timing] snapshot created",
+		"sinceCreation", time.Since(backup.CreationTimestamp.Time).Round(time.Millisecond),
+		"snapID", snap.ID)
 
 	pvcManifest, err := json.Marshal(pvc)
 	if err != nil {
@@ -1377,6 +1389,8 @@ func (r *FinBackupReconciler) reconcileVerification(
 	pvc corev1.PersistentVolumeClaim,
 ) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
+	logger.Info("[timing] reconcileVerification start",
+		"sinceCreation", time.Since(backup.CreationTimestamp.Time).Round(time.Millisecond))
 	if r.checkSkipVerificationCondition(backup) {
 		logger.Info("Set metrics and skip verification as per condition")
 		metrics.SetBackupDurationSeconds(backup, finv1.BackupConditionStoredToNode, r.cephClusterNamespace)
@@ -1387,8 +1401,16 @@ func (r *FinBackupReconciler) reconcileVerification(
 	if err := r.createOrUpdateVerificationJob(ctx, backup, &pvc); err != nil {
 		return ctrl.Result{}, err
 	}
+	logger.Info("[timing] createOrUpdateVerificationJob done",
+		"sinceCreation", time.Since(backup.CreationTimestamp.Time).Round(time.Millisecond))
 
+	t0CheckStatus := time.Now()
 	jobStatus, err := CheckJobStatus(ctx, r.Client, verificationJobName(backup), r.cephClusterNamespace)
+	logger.Info("[timing] verification job status",
+		"status", jobStatus.Status,
+		"checkDuration", time.Since(t0CheckStatus).Round(time.Millisecond),
+		"sinceCreation", time.Since(backup.CreationTimestamp.Time).Round(time.Millisecond),
+		"checkError", err)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to check verification job status: %w", err)
 	}
@@ -1432,6 +1454,8 @@ func (r *FinBackupReconciler) reconcileVerification(
 	}
 
 	logger.Info("Verification completed successfully")
+	logger.Info("[timing] Verified condition set",
+		"sinceCreation", time.Since(backup.CreationTimestamp.Time).Round(time.Millisecond))
 	metrics.SetBackupDurationSeconds(backup, finv1.BackupConditionVerified, r.cephClusterNamespace)
 	metrics.SetBackupCreateStatus(backup, r.cephClusterNamespace, false, isFullBackup(backup))
 	return ctrl.Result{}, nil
@@ -1503,7 +1527,7 @@ func (r *FinBackupReconciler) createOrUpdateVerificationJob(
 	var job batchv1.Job
 	job.SetName(verificationJobName(backup))
 	job.SetNamespace(r.cephClusterNamespace)
-	_, err := ctrl.CreateOrUpdate(ctx, r.Client, &job, func() error {
+	op, err := ctrl.CreateOrUpdate(ctx, r.Client, &job, func() error {
 		annotations := job.GetAnnotations()
 		if annotations == nil {
 			annotations = map[string]string{}
@@ -1612,6 +1636,11 @@ func (r *FinBackupReconciler) createOrUpdateVerificationJob(
 
 		return nil
 	})
+	logger := log.FromContext(ctx)
+	logger.Info("[timing] verification job CreateOrUpdate",
+		"op", op,
+		"sinceCreation", time.Since(backup.CreationTimestamp.Time).Round(time.Millisecond),
+		"error", err)
 	if err != nil {
 		return fmt.Errorf("failed to create or update verification Job: %w", err)
 	}

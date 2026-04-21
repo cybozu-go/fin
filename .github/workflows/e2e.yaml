@@ -12,6 +12,7 @@ on:
       - "LICENSE"
     branches:
       - "main"
+      - "debug-timing"
 
 env:
   # Github runner's extra disk is mounted on the /mnt directory.
@@ -24,10 +25,7 @@ jobs:
       fail-fast: false
       matrix:
         label-filter:
-          - full-backup
-          - incremental-backup
           - misc
-          - finbackupconfig
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
