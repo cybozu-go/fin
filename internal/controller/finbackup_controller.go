@@ -151,6 +151,13 @@ func (r *FinBackupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, nil
 	}
 
+	// export fin_backup_create_status metric according to the FinBackup status
+	if !backup.DeletionTimestamp.IsZero() || (backup.IsStoredToNode() && r.checkSkipVerificationCondition(&backup)) || backup.IsVerifiedTrue() {
+		metrics.SetBackupCreateStatus(&backup, r.cephClusterNamespace, false, isFullBackup(&backup))
+	} else if !backup.Status.BackupStartTime.IsZero() {
+		metrics.SetBackupCreateStatus(&backup, r.cephClusterNamespace, true, isFullBackup(&backup))
+	}
+
 	if backup.IsChecksumMismatched() {
 		annotations := backup.GetAnnotations()
 		if annotations != nil && annotations[annotationSkipChecksumVerify] != annotationValueTrue {
@@ -326,7 +333,6 @@ func (r *FinBackupReconciler) reconcileBackup(
 			return ctrl.Result{}, err
 		}
 	}
-	metrics.SetBackupCreateStatus(&backup, r.cephClusterNamespace, true, isFullBackup(&backup))
 
 	err = r.createOrUpdateBackupJob(ctx, &backup, diffFromStr, string(pvc.GetUID()), r.maxPartSize)
 	if err != nil {
@@ -449,7 +455,6 @@ func (r *FinBackupReconciler) reconcileDelete(
 	backup *finv1.FinBackup,
 	pvcDeleted bool,
 ) (ctrl.Result, error) {
-	metrics.SetBackupCreateStatus(backup, r.cephClusterNamespace, false, isFullBackup(backup))
 	if !controllerutil.ContainsFinalizer(backup, FinBackupFinalizerName) {
 		return ctrl.Result{}, nil
 	}
@@ -1380,7 +1385,6 @@ func (r *FinBackupReconciler) reconcileVerification(
 	if r.checkSkipVerificationCondition(backup) {
 		logger.Info("Set metrics and skip verification as per condition")
 		metrics.SetBackupDurationSeconds(backup, finv1.BackupConditionStoredToNode, r.cephClusterNamespace)
-		metrics.SetBackupCreateStatus(backup, r.cephClusterNamespace, false, isFullBackup(backup))
 		return r.skipVerification(ctx, backup)
 	}
 
@@ -1433,7 +1437,6 @@ func (r *FinBackupReconciler) reconcileVerification(
 
 	logger.Info("Verification completed successfully")
 	metrics.SetBackupDurationSeconds(backup, finv1.BackupConditionVerified, r.cephClusterNamespace)
-	metrics.SetBackupCreateStatus(backup, r.cephClusterNamespace, false, isFullBackup(backup))
 	return ctrl.Result{}, nil
 }
 

@@ -181,6 +181,10 @@ func DeleteRestoreMetrics(fr *finv1.FinRestore, cephNamespace, pvcNamespace, pvc
 	restoreCreationTimeStamp.DeleteLabelValues(fr.Namespace, fr.Name)
 }
 
+func BackupCreateStatusMetricForTest() *prometheus.GaugeVec {
+	return backupCreateStatus
+}
+
 func Register() {
 	registerOnce.Do(func() {
 		metrics.Registry.MustRegister(
