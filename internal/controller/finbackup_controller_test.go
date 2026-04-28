@@ -12,6 +12,7 @@ import (
 	finv1 "github.com/cybozu-go/fin/api/v1"
 	"github.com/cybozu-go/fin/internal/infrastructure/fake"
 	"github.com/cybozu-go/fin/internal/model"
+	finmetrics "github.com/cybozu-go/fin/internal/pkg/metrics"
 	"github.com/cybozu-go/fin/test/utils"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -26,7 +27,10 @@ import (
 	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	configv1 "sigs.k8s.io/controller-runtime/pkg/config"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	crtlmetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
+	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 )
 
 var (
@@ -1917,3 +1921,185 @@ func Test_snapIDPreconditionSatisfied(t *testing.T) {
 		})
 	}
 }
+
+func gatherBackupCreateStatus(pvcNamespace, pvcName, kind string) (float64, error) {
+	families, err := crtlmetrics.Registry.Gather()
+	if err != nil {
+		return 0, err
+	}
+	for _, mf := range families {
+		if mf.GetName() != "fin_backup_create_status" {
+			continue
+		}
+		for _, m := range mf.GetMetric() {
+			labels := make(map[string]string)
+			for _, lp := range m.GetLabel() {
+				labels[lp.GetName()] = lp.GetValue()
+			}
+			if labels["pvc_namespace"] == pvcNamespace && labels["pvc"] == pvcName && labels["backup_create_kind"] == kind {
+				return *m.Gauge.Value, nil
+			}
+		}
+	}
+	return 0, errors.New("metric not found")
+}
+
+//nolint:unparam // kind parameter will be used not only for "full" but also "incremental" in the future.
+func waitFinBackupCreateStatus(pvcNamespace, pvcName, kind string, expected float64) {
+	GinkgoHelper()
+	Eventually(func(g Gomega) {
+		value, err := gatherBackupCreateStatus(pvcNamespace, pvcName, kind)
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(value).To(Equal(expected))
+	}, "1s", "0.1s").Should(Succeed())
+}
+
+var _ = Describe("fin_backup_create_status metric", Ordered, func() {
+	var rbdRepo *fake.RBDRepository2
+	var stopFunc context.CancelFunc
+
+	startController := func() context.CancelFunc {
+		mgr, err := ctrl.NewManager(cfg, ctrl.Options{
+			Scheme: scheme.Scheme,
+			Metrics: metricsserver.Options{
+				BindAddress: "0",
+			},
+			Controller: configv1.Controller{
+				SkipNameValidation: ptr.To(true),
+			},
+		})
+		Expect(err).ToNot(HaveOccurred())
+		reconciler := &FinBackupReconciler{
+			Client:                  mgr.GetClient(),
+			Scheme:                  mgr.GetScheme(),
+			cephClusterNamespace:    cephNamespace,
+			podImage:                podImage,
+			maxPartSize:             &defaultMaxPartSize,
+			snapRepo:                rbdRepo,
+			imageLocker:             rbdRepo,
+			rawImgExpansionUnitSize: 100 * 1 << 20,
+			rawChecksumChunkSize:    testRawChecksumChunkSize,
+			diffChecksumChunkSize:   testDiffChecksumChunkSize,
+		}
+		err = reconciler.SetupWithManager(mgr)
+		Expect(err).ToNot(HaveOccurred())
+
+		ctx, cancel := context.WithCancel(context.Background())
+		go func() {
+			defer GinkgoRecover()
+			err := mgr.Start(ctx)
+			Expect(err).ToNot(HaveOccurred(), "failed to run controller")
+		}()
+		return cancel
+	}
+
+	BeforeAll(func(ctx SpecContext) {
+		finmetrics.Register()
+		rbdRepo = fake.NewRBDRepository2(rbdPoolName, rbdImageName)
+		stopFunc = startController()
+	})
+
+	AfterAll(func() {
+		stopFunc()
+	})
+
+	var pvc *corev1.PersistentVolumeClaim
+	var pv *corev1.PersistentVolume
+	var fb *finv1.FinBackup
+
+	BeforeEach(func(ctx SpecContext) {
+		By("creating a PVC and PV")
+		pvc, pv = NewPVCAndPV(normalSC, userNamespace, utils.GetUniqueName("pvc-"), utils.GetUniqueName("pv-"), rbdImageName)
+		Expect(k8sClient.Create(ctx, pvc)).Should(Succeed())
+		Expect(k8sClient.Create(ctx, pv)).Should(Succeed())
+
+		By("creating a FinBackup")
+		fb = NewFinBackup(workNamespace, utils.GetUniqueName("fb-"), pvc.Name, pvc.Namespace, "test-node")
+		Expect(k8sClient.Create(ctx, fb)).Should(Succeed())
+
+		By("waiting for the fin_backup_create_status metric to be set 1")
+		waitFinBackupCreateStatus(pvc.Namespace, pvc.Name, "full", 1.0)
+	})
+
+	It("should set fin_backup_create_status during backup", func(ctx SpecContext) {
+		By("making the FinBackup stored to node")
+		MakeFinBackupStoredToNode(ctx, fb)
+
+		By("checking the fin_backup_create_status metric remains 1")
+		Consistently(func(g Gomega) {
+			value, err := gatherBackupCreateStatus(pvc.Namespace, pvc.Name, "full")
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(value).To(Equal(1.0))
+		}, "1s", "0.1s").Should(Succeed())
+
+		By("making the FinBackup verified")
+		MakeFinBackupVerified(ctx, fb)
+
+		By("waiting for the fin_backup_create_status metric to be set 0")
+		waitFinBackupCreateStatus(pvc.Namespace, pvc.Name, "full", 0.0)
+	})
+
+	It("should set fin_backup_create_status to 0 when backup deleted", func(ctx SpecContext) {
+		By("deleting the FinBackup")
+		Expect(k8sClient.Delete(ctx, fb)).Should(Succeed())
+
+		By("waiting for the fin_backup_create_status metric to be set 0")
+		waitFinBackupCreateStatus(pvc.Namespace, pvc.Name, "full", 0.0)
+	})
+
+	It("should set fin_backup_create_status to 0 when verification skipped", func(ctx SpecContext) {
+		By("annotate the FinBackup to skip verification")
+		Eventually(func(g Gomega) {
+			g.Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(fb), fb)).Should(Succeed())
+			fb.SetAnnotations(map[string]string{
+				AnnotationSkipVerify: "true",
+			})
+			g.Expect(k8sClient.Update(ctx, fb)).Should(Succeed())
+		}, "1s", "0.1s").Should(Succeed())
+
+		By("checking the fin_backup_create_status metric remains 1")
+		Consistently(func(g Gomega) {
+			value, err := gatherBackupCreateStatus(pvc.Namespace, pvc.Name, "full")
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(value).To(Equal(1.0))
+		}, "1s", "0.1s").Should(Succeed())
+
+		By("making the FinBackup stored to node")
+		MakeFinBackupStoredToNode(ctx, fb)
+
+		By("waiting for the fin_backup_create_status metric to be set 0")
+		waitFinBackupCreateStatus(pvc.Namespace, pvc.Name, "full", 0.0)
+	})
+
+	It("should restore fin_backup_create_status after controller restart", func(ctx SpecContext) {
+		By("completing the FinBackup")
+		MakeFinBackupStoredToNode(ctx, fb)
+		MakeFinBackupVerified(ctx, fb)
+
+		By("waiting for the fin_backup_create_status metric to be updated")
+		Eventually(func(g Gomega) {
+			value, err := gatherBackupCreateStatus(pvc.Namespace, pvc.Name, "full")
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(value).To(Equal(0.0))
+		}, "1s", "0.1s").Should(Succeed())
+
+		By("stopping the controller")
+		stopFunc()
+
+		By("setting a sentinel value to simulate stale metrics after process restart")
+		gaugeVec := finmetrics.BackupCreateStatusMetricForTest()
+		gaugeVec.Reset()
+		_, err := gatherBackupCreateStatus(pvc.Namespace, pvc.Name, "full")
+		Expect(err).To(HaveOccurred())
+
+		By("starting a new controller")
+		stopFunc = startController()
+
+		By("verifying the controller recomputes the metric from object state")
+		Eventually(func(g Gomega) {
+			value, err := gatherBackupCreateStatus(pvc.Namespace, pvc.Name, "full")
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(value).To(Equal(0.0))
+		}, "1s", "0.1s").Should(Succeed())
+	})
+})
