@@ -4,11 +4,25 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"io"
+	"os"
 	"time"
 
+	"github.com/cybozu-go/fin/internal/cksumvfs"
 	"github.com/cybozu-go/fin/internal/model"
 	sqlite3 "github.com/mattn/go-sqlite3"
 )
+
+const cksumDriverName = "sqlite3-cksumvfs"
+
+func init() {
+	cksumvfs.Register()
+	sql.Register(cksumDriverName, &sqlite3.SQLiteDriver{
+		ConnectHook: func(conn *sqlite3.SQLiteConn) error {
+			return conn.SetFileControlInt("", sqlite3.SQLITE_FCNTL_RESERVE_BYTES, 8)
+		},
+	})
+}
 
 // FinRepository implements model.FinRepository interface.
 type FinRepository struct {
@@ -27,12 +41,31 @@ func isSQLiteBusy(err error) bool {
 	return false
 }
 
+func needsCksumVacuum(filename string) bool {
+	f, err := os.Open(filename)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+
+	var header [21]byte
+	if _, err := io.ReadFull(f, header[:]); err != nil {
+		return false
+	}
+	// Byte 20 of the SQLite header is "reserved space at the end of each page".
+	// cksumvfs requires exactly 8. If it's less, VACUUM is needed to rewrite
+	// all pages with space for checksums.
+	return header[20] < 8
+}
+
 // New opens the sqlite3 database with acquiring exclusive lock.
 // Callers must calls `Close` after using the returned repository.
 // In addition, callers are in charge of removing the database file.
 func New(filename string) (*FinRepository, error) {
+	needsVacuum := needsCksumVacuum(filename)
+
 	dsn := fmt.Sprintf("file:%s?_txlock=exclusive", filename)
-	db, err := sql.Open("sqlite3", dsn)
+	db, err := sql.Open(cksumDriverName, dsn)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
@@ -69,6 +102,12 @@ func New(filename string) (*FinRepository, error) {
 	err = tx.Commit()
 	if err != nil {
 		return nil, fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	if needsVacuum {
+		if _, err := db.Exec("VACUUM"); err != nil {
+			return nil, fmt.Errorf("failed to vacuum database: %w", err)
+		}
 	}
 
 	return &FinRepository{
