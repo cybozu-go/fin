@@ -6,11 +6,9 @@ import (
 	"fmt"
 	"slices"
 
-	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
-	"sigs.k8s.io/controller-runtime/pkg/webhook"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	finv1 "github.com/cybozu-go/fin/api/v1"
@@ -22,7 +20,7 @@ var finbackuplog = log.Log.WithName("finbackup-resource")
 
 // SetupFinBackupWebhookWithManager registers the webhook for FinBackup in the manager.
 func SetupFinBackupWebhookWithManager(mgr ctrl.Manager) error {
-	return ctrl.NewWebhookManagedBy(mgr).For(&finv1.FinBackup{}).
+	return ctrl.NewWebhookManagedBy(mgr, &finv1.FinBackup{}).
 		WithValidator(&FinBackupCustomValidator{client: mgr.GetClient(), apiReader: mgr.GetAPIReader()}).
 		Complete()
 }
@@ -42,38 +40,25 @@ type FinBackupCustomValidator struct {
 	apiReader client.Reader
 }
 
-var _ webhook.CustomValidator = &FinBackupCustomValidator{}
+var _ admission.Validator[*finv1.FinBackup] = &FinBackupCustomValidator{}
 
-// ValidateCreate implements webhook.CustomValidator so a webhook will be registered for the type FinBackup.
-func (v *FinBackupCustomValidator) ValidateCreate(_ context.Context, obj runtime.Object) (admission.Warnings, error) {
-	finbackup, ok := obj.(*finv1.FinBackup)
-	if !ok {
-		return nil, fmt.Errorf("expected a FinBackup object but got %T", obj)
-	}
+// ValidateCreate implements admission.Validator so a webhook will be registered for the type FinBackup.
+func (v *FinBackupCustomValidator) ValidateCreate(_ context.Context, finbackup *finv1.FinBackup) (admission.Warnings, error) {
 	finbackuplog.Info("Validation for FinBackup upon creation", "name", finbackup.GetName())
 
 	return nil, nil
 }
 
-// ValidateUpdate implements webhook.CustomValidator so a webhook will be registered for the type FinBackup.
-func (v *FinBackupCustomValidator) ValidateUpdate(_ context.Context, oldObj, newObj runtime.Object) (admission.Warnings, error) {
-	finbackup, ok := newObj.(*finv1.FinBackup)
-	if !ok {
-		return nil, fmt.Errorf("expected a FinBackup object for the newObj but got %T", newObj)
-	}
+// ValidateUpdate implements admission.Validator so a webhook will be registered for the type FinBackup.
+func (v *FinBackupCustomValidator) ValidateUpdate(_ context.Context, _, finbackup *finv1.FinBackup) (admission.Warnings, error) {
 	finbackuplog.Info("Validation for FinBackup upon update", "name", finbackup.GetName())
 
 	return nil, nil
 }
 
-// ValidateDelete implements webhook.CustomValidator so a webhook will be registered for the type FinBackup.
-func (v *FinBackupCustomValidator) ValidateDelete(ctx context.Context, obj runtime.Object) (admission.Warnings, error) {
+// ValidateDelete implements admission.Validator so a webhook will be registered for the type FinBackup.
+func (v *FinBackupCustomValidator) ValidateDelete(ctx context.Context, target *finv1.FinBackup) (admission.Warnings, error) {
 	logger := log.FromContext(ctx)
-
-	target, ok := obj.(*finv1.FinBackup)
-	if !ok {
-		return nil, fmt.Errorf("expected a FinBackup object but got %T", obj)
-	}
 
 	// Retrieve the list of FinBackups with the same targetPVCName.
 	// Deny deletion if any FinBackup has a snapID smaller than target.SnapID.
