@@ -46,7 +46,7 @@ func needsCksumVacuum(filename string) bool {
 	if err != nil {
 		return false
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	var header [21]byte
 	if _, err := io.ReadFull(f, header[:]); err != nil {
