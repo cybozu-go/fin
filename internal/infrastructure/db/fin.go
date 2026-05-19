@@ -287,6 +287,10 @@ func (fr *FinRepository) GetBackupMetadata() ([]byte, error) {
 	if !rows.Next() {
 		err := rows.Err()
 		if err != nil {
+			var sqliteErr sqlite3.Error
+			if errors.As(err, &sqliteErr) {
+				return nil, fmt.Errorf("checksum fault? (code=%d, extended=%d): %w", sqliteErr.Code, sqliteErr.ExtendedCode, err)
+			}
 			return nil, fmt.Errorf("failed to find row: %w", err)
 		}
 		return nil, model.ErrNotFound
