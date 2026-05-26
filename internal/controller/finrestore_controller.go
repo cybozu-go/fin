@@ -493,9 +493,8 @@ func (r *FinRestoreReconciler) createRestoreJobPVIfNotExists(
 			VolumeMode:       ptr.To(corev1.PersistentVolumeBlock),
 			PersistentVolumeSource: corev1.PersistentVolumeSource{
 				CSI: &corev1.CSIPersistentVolumeSource{
-					ControllerExpandSecretRef: restorePV.Spec.CSI.ControllerExpandSecretRef,
-					Driver:                    restorePV.Spec.CSI.Driver,
-					NodeStageSecretRef:        restorePV.Spec.CSI.NodeStageSecretRef,
+					Driver:             restorePV.Spec.CSI.Driver,
+					NodeStageSecretRef: restorePV.Spec.CSI.NodeStageSecretRef,
 					VolumeAttributes: map[string]string{
 						"clusterID":     restorePV.Spec.CSI.VolumeAttributes["clusterID"],
 						"imageFeatures": restorePV.Spec.CSI.VolumeAttributes["imageFeatures"],
