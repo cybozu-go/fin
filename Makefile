@@ -129,6 +129,43 @@ lint-fix: golangci-lint ## Run golangci-lint linter and perform fixes
 check-uncommitted: ## Check if latest generated artifacts are committed.
 	git diff --exit-code --name-only
 
+# update-cksumvfs downloads SQLite sources from sqlite.org and updates the
+# C files in internal/cksumvfs/. The SQLite version and release year are read
+# from sqlite3-binding.h/c bundled in the go-sqlite3 module.
+#
+# Two zips are downloaded:
+#   - sqlite-amalgamation-XXXXXXX.zip: contains sqlite3.h
+#   - sqlite-src-XXXXXXX.zip:          contains ext/misc/cksumvfs.c
+#
+# sqlite.org download URLs embed a compact version number derived as:
+#   X.Y.Z -> X*1000000 + Y*10000 + Z*100  (e.g. 3.53.0 -> 3530000)
+# See https://sqlite.org/download.html for the format.
+#
+# The release year is taken from SQLITE_SOURCE_ID in sqlite3-binding.c
+# (e.g. "2026-04-09 ..."), which matches the year directory in the URL.
+# The temp directory is cleaned up automatically via trap on EXIT.
+.PHONY: update-cksumvfs
+update-cksumvfs: ## Update internal/cksumvfs/sqlite3.h and cksumvfs.c to match the SQLite version bundled in go-sqlite3.
+	SQLITE_VERSION=$$(sed -n 's/^#define SQLITE_VERSION *"\([^"]*\)".*/\1/p' \
+	  "$$(go env GOMODCACHE)/$$(go list -m -f '{{.Path}}@{{.Version}}' github.com/mattn/go-sqlite3)/sqlite3-binding.h"); \
+	IFS='.' read -r MAJOR MINOR PATCH <<< "$$SQLITE_VERSION"; \
+	FILE_NUMBER=$$(( MAJOR * 1000000 + MINOR * 10000 + PATCH * 100 )); \
+	YEAR=$$(sed -n 's/^#define SQLITE_SOURCE_ID *"\([0-9]\{4\}\).*/\1/p' \
+	  "$$(go env GOMODCACHE)/$$(go list -m -f '{{.Path}}@{{.Version}}' github.com/mattn/go-sqlite3)/sqlite3-binding.c"); \
+	TMPDIR=$$(mktemp -d); \
+	trap "rm -rf $$TMPDIR" EXIT; \
+	if curl -fsSL "https://sqlite.org/$$YEAR/sqlite-amalgamation-$$FILE_NUMBER.zip" \
+	       -o "$$TMPDIR/amalgamation.zip" 2>/dev/null && \
+	   curl -fsSL "https://sqlite.org/$$YEAR/sqlite-src-$$FILE_NUMBER.zip" \
+	       -o "$$TMPDIR/src.zip" 2>/dev/null; then :; else \
+	  echo "Failed to download SQLite $$SQLITE_VERSION (year=$$YEAR) from sqlite.org" >&2; exit 1; \
+	fi; \
+	unzip -q "$$TMPDIR/amalgamation.zip" "*/sqlite3.h" -d "$$TMPDIR"; \
+	unzip -q "$$TMPDIR/src.zip" "*/ext/misc/cksumvfs.c" -d "$$TMPDIR"; \
+	cp "$$TMPDIR/sqlite-amalgamation-$$FILE_NUMBER/sqlite3.h" internal/cksumvfs/sqlite3.h; \
+	cp "$$TMPDIR/sqlite-src-$$FILE_NUMBER/ext/misc/cksumvfs.c" internal/cksumvfs/cksumvfs.c; \
+	echo "Updated internal/cksumvfs/sqlite3.h and cksumvfs.c to SQLite $$SQLITE_VERSION"
+
 ##@ Build
 
 .PHONY: build
