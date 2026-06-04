@@ -8,6 +8,10 @@ on:
       - "**/*.md"
     branches:
       - "main"
+
+permissions:
+  contents: read
+
 jobs:
   build:
     name: "build"
