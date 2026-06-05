@@ -206,6 +206,18 @@ func (r *FinBackupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	return ctrl.Result{}, nil
 }
 
+func (r *FinBackupReconciler) setFinBackupChecksumMismatched(ctx context.Context, backup *finv1.FinBackup) (ctrl.Result, error) {
+	if _, err := patchFinBackupCondition(ctx, r.Client, backup, metav1.Condition{
+		Type:    finv1.BackupConditionChecksumMismatched,
+		Status:  metav1.ConditionTrue,
+		Reason:  "ChecksumMismatch",
+		Message: "Data corruption detected: checksum mismatch",
+	}); err != nil {
+		return ctrl.Result{}, fmt.Errorf("failed to set FinBackup ChecksumMismatched condition: %w", err)
+	}
+	return ctrl.Result{}, nil
+}
+
 func (r *FinBackupReconciler) setFinBackupMetadataCorrupted(ctx context.Context, backup *finv1.FinBackup) (ctrl.Result, error) {
 	if _, err := patchFinBackupCondition(ctx, r.Client, backup, metav1.Condition{
 		Type:    finv1.BackupConditionMetadataCorrupted,
@@ -374,15 +386,7 @@ func (r *FinBackupReconciler) reconcileBackup(
 	case JobStatusInProgress:
 		return ctrl.Result{}, errNonRetryableReconcile
 	case JobStatusFailedWithExitCode2:
-		if _, err := patchFinBackupCondition(ctx, r.Client, &backup, metav1.Condition{
-			Type:    finv1.BackupConditionChecksumMismatched,
-			Status:  metav1.ConditionTrue,
-			Reason:  "ChecksumMismatch",
-			Message: "Data corruption detected: checksum mismatch",
-		}); err != nil {
-			return ctrl.Result{}, fmt.Errorf("failed to set FinBackup ChecksumMismatched condition to true: %w", err)
-		}
-		return ctrl.Result{}, nil
+		return r.setFinBackupChecksumMismatched(ctx, &backup)
 	case JobStatusFailedWithExitCode4:
 		return r.setFinBackupMetadataCorrupted(ctx, &backup)
 	default:
@@ -563,15 +567,7 @@ func (r *FinBackupReconciler) reconcileDelete(
 		case JobStatusInProgress:
 			return ctrl.Result{}, nil
 		case JobStatusFailedWithExitCode2:
-			if _, err := patchFinBackupCondition(ctx, r.Client, backup, metav1.Condition{
-				Type:    finv1.BackupConditionChecksumMismatched,
-				Status:  metav1.ConditionTrue,
-				Reason:  "ChecksumMismatch",
-				Message: "Data corruption detected: checksum mismatch",
-			}); err != nil {
-				return ctrl.Result{}, fmt.Errorf("failed to set FinBackup ChecksumMismatched condition to true: %w", err)
-			}
-			return ctrl.Result{}, nil
+			return r.setFinBackupChecksumMismatched(ctx, backup)
 		case JobStatusFailedWithExitCode4:
 			return r.setFinBackupMetadataCorrupted(ctx, backup)
 		default:
@@ -1450,15 +1446,7 @@ func (r *FinBackupReconciler) reconcileVerification(
 	case JobStatusInProgress:
 		return ctrl.Result{}, nil
 	case JobStatusFailedWithExitCode2:
-		if _, err := patchFinBackupCondition(ctx, r.Client, backup, metav1.Condition{
-			Type:    finv1.BackupConditionChecksumMismatched,
-			Status:  metav1.ConditionTrue,
-			Reason:  "ChecksumMismatch",
-			Message: "Data corruption detected: checksum mismatch",
-		}); err != nil {
-			return ctrl.Result{}, fmt.Errorf("failed to set FinBackup ChecksumMismatched condition to true: %w", err)
-		}
-		return ctrl.Result{}, nil
+		return r.setFinBackupChecksumMismatched(ctx, backup)
 	case JobStatusFailedWithExitCode3:
 		if _, err := patchFinBackupCondition(ctx, r.Client, backup, metav1.Condition{
 			Type:    finv1.BackupConditionVerified,
