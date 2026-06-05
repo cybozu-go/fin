@@ -9,11 +9,10 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/cybozu-go/fin/internal/model"
 	sqlite3 "github.com/mattn/go-sqlite3"
 	"github.com/stretchr/testify/require"
 )
-
-var errIoErrData = sqlite3.ErrIoErr.Extend(32)
 
 const legacyDriver = "sqlite3-legacy-test"
 
@@ -57,6 +56,45 @@ func reserveBytes(t *testing.T, dbFile string) byte {
 	return hdr[20]
 }
 
+// TestHandleSQLiteError verifies that handleSQLiteError maps low-level sqlite3 errors to
+// Fin's sentinel errors. This exercises the classification logic directly,
+// independent of triggering real corruption.
+func TestHandleSQLiteError(t *testing.T) {
+	otherErr := errors.New("some non-sqlite error")
+	genericSQLiteErr := sqlite3.Error{Code: sqlite3.ErrError}
+
+	tests := []struct {
+		name  string
+		input error
+		want  error
+	}{
+		{name: "nil", input: nil, want: nil},
+		{
+			name:  "checksum fault",
+			input: sqlite3.Error{Code: sqlite3.ErrIoErr, ExtendedCode: errChecksumFault},
+			want:  ErrDBCorrupted,
+		},
+		{
+			name:  "busy",
+			input: sqlite3.Error{Code: sqlite3.ErrBusy},
+			want:  model.ErrBusy,
+		},
+		{name: "other sqlite error", input: genericSQLiteErr, want: genericSQLiteErr},
+		{name: "non-sqlite error", input: otherErr, want: otherErr},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := handleSQLiteError(tt.input)
+			if tt.want == nil {
+				require.NoError(t, got)
+				return
+			}
+			require.ErrorIs(t, got, tt.want)
+		})
+	}
+}
+
 func TestCksumVFS_DetectsCorruption(t *testing.T) {
 	dbFile := "test_cksum.db"
 	t.Cleanup(func() { _ = os.Remove(dbFile) })
@@ -91,11 +129,8 @@ func TestCksumVFS_DetectsCorruption(t *testing.T) {
 	t.Cleanup(func() { _ = repo.Close() })
 
 	_, err = repo.GetBackupMetadata()
-
-	var sqliteErr sqlite3.Error
-	require.True(t, errors.As(err, &sqliteErr), "expected sqlite3.Error, got: %v", err)
-	require.Equal(t, errIoErrData, sqliteErr.ExtendedCode,
-		"expected SQLITE_IOERR_DATA (extended code %d), got extended code %d", errIoErrData, sqliteErr.ExtendedCode)
+	require.ErrorIs(t, err, ErrDBCorrupted,
+		"corruption must be reported as ErrDBCorrupted, got: %v", err)
 }
 
 // TestCksumVFS_Migration tests that a SQLite database created without cksumvfs
@@ -140,8 +175,6 @@ func TestCksumVFS_Migration(t *testing.T) {
 	t.Cleanup(func() { _ = repo.Close() })
 
 	_, err = repo.GetBackupMetadata()
-	var sqliteErr sqlite3.Error
-	require.True(t, errors.As(err, &sqliteErr), "expected sqlite3.Error after corruption, got: %v", err)
-	require.Equal(t, errIoErrData, sqliteErr.ExtendedCode,
-		"expected SQLITE_IOERR_DATA after migration+corruption, got extended code %d", sqliteErr.ExtendedCode)
+	require.ErrorIs(t, err, ErrDBCorrupted,
+		"corruption after migration must be reported as ErrDBCorrupted, got: %v", err)
 }
