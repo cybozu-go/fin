@@ -143,18 +143,23 @@ func (r *FinRestoreReconciler) reconcileCreateOrUpdate(
 		return ctrl.Result{}, nil
 	}
 
-	controllerutil.AddFinalizer(restore, FinRestoreFinalizerName)
-	err := r.Update(ctx, restore)
-	if err != nil {
-		logger.Error(err, "failed to add finalizer")
-		return ctrl.Result{}, err
+	if controllerutil.AddFinalizer(restore, FinRestoreFinalizerName) {
+		if err := r.Update(ctx, restore); err != nil {
+			logger.Error(err, "failed to add finalizer")
+			return ctrl.Result{}, err
+		}
 	}
 
 	var backup finv1.FinBackup
-	err = r.Get(ctx, client.ObjectKey{Name: restore.Spec.Backup, Namespace: restore.Namespace}, &backup)
+	err := r.Get(ctx, client.ObjectKey{Name: restore.Spec.Backup, Namespace: restore.Namespace}, &backup)
 	if err != nil {
 		logger.Error(err, "failed to get FinBackup", "name", restore.Spec.Backup, "namespace", restore.Namespace)
 		return ctrl.Result{}, err
+	}
+
+	if backup.IsMetadataCorrupted() {
+		logger.Info("backup metadata is corrupted; skip restore")
+		return ctrl.Result{}, nil
 	}
 
 	pvc, _, err := getBackupTargetPVCFromSpecOrStatus(ctx, r.Client, &backup)
@@ -258,6 +263,22 @@ func (r *FinRestoreReconciler) reconcileCreateOrUpdate(
 			return ctrl.Result{}, fmt.Errorf("failed to set FinBackup ChecksumMismatched condition: %w", err)
 		}
 		return ctrl.Result{}, nil
+	case JobStatusFailedWithExitCode4:
+		var backup finv1.FinBackup
+		err = r.Get(ctx, client.ObjectKey{Name: restore.Spec.Backup, Namespace: restore.Namespace}, &backup)
+		if err != nil {
+			return ctrl.Result{}, fmt.Errorf("failed to get FinBackup for metadata corrupted update: %w", err)
+		}
+		_, err = patchFinBackupCondition(ctx, r.Client, &backup, metav1.Condition{
+			Type:    finv1.BackupConditionMetadataCorrupted,
+			Status:  metav1.ConditionTrue,
+			Reason:  "MetadataCorrupted",
+			Message: "Backup metadata corruption detected",
+		})
+		if err != nil {
+			return ctrl.Result{}, fmt.Errorf("failed to set FinBackup MetadataCorrupted condition: %w", err)
+		}
+		return ctrl.Result{}, nil
 	default:
 		return ctrl.Result{}, fmt.Errorf("unknown restore job status: %d", jobStatus.Status)
 	}
@@ -327,7 +348,7 @@ func (r *FinRestoreReconciler) createOrUpdateRestoreJob(
 					OnExitCodes: &batchv1.PodFailurePolicyOnExitCodesRequirement{
 						ContainerName: ptr.To("restore"),
 						Operator:      batchv1.PodFailurePolicyOnExitCodesOpIn,
-						Values:        []int32{2},
+						Values:        []int32{2, 4},
 					},
 				},
 			},
