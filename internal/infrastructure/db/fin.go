@@ -91,6 +91,11 @@ func New(filename string) (_ *FinRepository, err error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
+	defer func() {
+		if err != nil {
+			_ = db.Close()
+		}
+	}()
 
 	tx, err := db.Begin()
 	if err != nil {
