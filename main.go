@@ -7,6 +7,7 @@ import (
 
 	"github.com/cybozu-go/fin/cmd"
 	"github.com/cybozu-go/fin/internal/infrastructure/ceph"
+	"github.com/cybozu-go/fin/internal/infrastructure/db"
 	"github.com/cybozu-go/fin/internal/job/verification"
 )
 
@@ -14,6 +15,8 @@ func main() {
 	if err := cmd.Execute(); err != nil {
 		slog.Error("failed to execute command", "error", err)
 		switch {
+		case errors.Is(err, db.ErrDBCorrupted):
+			os.Exit(4)
 		case errors.Is(err, verification.ErrFsckFailed):
 			os.Exit(3)
 		case errors.Is(err, ceph.ErrChecksumMismatch):
