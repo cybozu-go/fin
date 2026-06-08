@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -13,15 +14,14 @@ import (
 	sqlite3 "github.com/mattn/go-sqlite3"
 )
 
-const cksumDriverName = "sqlite3-cksumvfs"
+const (
+	cksumDriverName   = "sqlite3-cksumvfs"
+	cksumReserveBytes = 8
+)
 
 func init() {
 	cksumvfs.Register()
-	sql.Register(cksumDriverName, &sqlite3.SQLiteDriver{
-		ConnectHook: func(conn *sqlite3.SQLiteConn) error {
-			return conn.SetFileControlInt("", sqlite3.SQLITE_FCNTL_RESERVE_BYTES, 8)
-		},
-	})
+	sql.Register(cksumDriverName, &sqlite3.SQLiteDriver{})
 }
 
 // FinRepository implements model.FinRepository interface.
@@ -61,21 +61,29 @@ func handleSQLiteError(err error) error {
 	return err
 }
 
-func needsCksumVacuum(filename string) bool {
+func needsCksumVacuum(filename string) (bool, error) {
 	f, err := os.Open(filename)
 	if err != nil {
-		return false
+		return true, nil // no database file yet, so it needs setup
 	}
 	defer func() { _ = f.Close() }()
 
 	var header [21]byte
 	if _, err := io.ReadFull(f, header[:]); err != nil {
-		return false
+		return true, nil // file too short to be a database, so it needs setup
 	}
-	// Byte 20 of the SQLite header is "reserved space at the end of each page".
-	// cksumvfs requires exactly 8. If it's less, VACUUM is needed to rewrite
-	// all pages with space for checksums.
-	return header[20] < 8
+
+	// Byte 20 of the SQLite header is the number of reserved bytes at the end
+	// of each page. cksumvfs uses exactly 8 of them for the page checksum, so a
+	// migrated database has 8 and a legacy one has 0; no other value is valid.
+	switch header[20] {
+	case cksumReserveBytes:
+		return false, nil // already has checksum space
+	case 0:
+		return true, nil // needs VACUUM to add checksum space
+	default:
+		return false, fmt.Errorf("%w: unexpected reserved-bytes value in SQLite header: %d", ErrDBCorrupted, header[20])
+	}
 }
 
 // New opens the sqlite3 database with acquiring exclusive lock.
@@ -84,7 +92,10 @@ func needsCksumVacuum(filename string) bool {
 func New(filename string) (_ *FinRepository, err error) {
 	defer func() { err = handleSQLiteError(err) }()
 
-	needsVacuum := needsCksumVacuum(filename)
+	needsVacuum, err := needsCksumVacuum(filename)
+	if err != nil {
+		return nil, err
+	}
 
 	dsn := fmt.Sprintf("file:%s?_txlock=exclusive", filename)
 	db, err := sql.Open(cksumDriverName, dsn)
@@ -92,10 +103,24 @@ func New(filename string) (_ *FinRepository, err error) {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
 	defer func() {
-		if err != nil {
+		if err != nil && db != nil {
 			_ = db.Close()
 		}
 	}()
+
+	if needsVacuum {
+		if err = activateCksum(db); err != nil {
+			return nil, err
+		}
+		// cksumvfs requires reopening connections after VACUUM.
+		if err = db.Close(); err != nil {
+			return nil, fmt.Errorf("failed to close database after vacuum: %w", err)
+		}
+		db, err = sql.Open(cksumDriverName, dsn)
+		if err != nil {
+			return nil, fmt.Errorf("failed to reopen database after vacuum: %w", err)
+		}
+	}
 
 	tx, err := db.Begin()
 	if err != nil {
@@ -128,13 +153,30 @@ func New(filename string) (_ *FinRepository, err error) {
 		return nil, fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
-	if needsVacuum {
-		if _, err := db.Exec("VACUUM"); err != nil {
-			return nil, fmt.Errorf("failed to vacuum database: %w", err)
-		}
+	return &FinRepository{db: db}, nil
+}
+
+// activateCksum enables cksumvfs page checksums. On a single pinned connection
+// it sets the reserve bytes and immediately runs VACUUM; cksumvfs requires the
+// file-control to be followed directly by VACUUM with nothing in between.
+func activateCksum(db *sql.DB) error {
+	conn, err := db.Conn(context.Background())
+	if err != nil {
+		return fmt.Errorf("failed to get connection: %w", err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	if err := conn.Raw(func(driverConn any) error {
+		sqliteConn := driverConn.(*sqlite3.SQLiteConn)
+		return sqliteConn.SetFileControlInt("", sqlite3.SQLITE_FCNTL_RESERVE_BYTES, cksumReserveBytes)
+	}); err != nil {
+		return fmt.Errorf("failed to set reserve bytes: %w", err)
 	}
 
-	return &FinRepository{db: db}, nil
+	if _, err := conn.ExecContext(context.Background(), "VACUUM"); err != nil {
+		return fmt.Errorf("failed to vacuum database: %w", err)
+	}
+	return nil
 }
 
 func (fr *FinRepository) Close() error {
