@@ -913,6 +913,7 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 			expectChecksumChunkSizesInBackupJob(ctx, backupJobName(finbackup1))
 		})
 
+		//nolint:dupl
 		It("should set ChecksumMismatched=True when backup Job exits with code 2", func(ctx SpecContext) {
 			// Description:
 			//   Ensure that when backup Job detects a checksum mismatch (exit code 2),
@@ -1008,6 +1009,7 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 			}, "3s", "1s").Should(Succeed())
 		})
 
+		//nolint:dupl
 		It("should set ChecksumMismatched=True when deletion Job exits with code 2", func(ctx SpecContext) {
 			// Description:
 			//   Ensure that when deletion Job detects a checksum mismatch (exit code 2),
@@ -1099,6 +1101,7 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 			DeletePVCAndPV(ctx, pvc.Namespace, pvc.Name)
 		})
 
+		//nolint:dupl
 		It("should set MetadataCorrupted=True when backup Job exits with code 4", func(ctx SpecContext) {
 			// Description:
 			//   Ensure that when backup Job detects fin.sqlite3 corruption (exit code 4),
@@ -1150,6 +1153,7 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 			}, "3s", "1s").Should(Succeed())
 		})
 
+		//nolint:dupl
 		It("should set MetadataCorrupted=True when verification Job exits with code 4", func(ctx SpecContext) {
 			// Description:
 			//   Ensure that when the verification Job exits with code 4 (fin.sqlite3 corruption),
@@ -1193,6 +1197,7 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 			}, "3s", "1s").Should(Succeed())
 		})
 
+		//nolint:dupl
 		It("should set MetadataCorrupted=True when cleanup Job exits with code 4", func(ctx SpecContext) {
 			// Description:
 			//   Ensure that when cleanup Job detects fin.sqlite3 corruption (exit code 4),
@@ -1255,6 +1260,7 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 			ExpectNoJob(ctx, k8sClient, deletionJobName(finbackup1), cephNamespace)
 		})
 
+		//nolint:dupl
 		It("should set MetadataCorrupted=True when deletion Job exits with code 4", func(ctx SpecContext) {
 			// Description:
 			//   Ensure that when deletion Job detects fin.sqlite3 corruption (exit code 4),
