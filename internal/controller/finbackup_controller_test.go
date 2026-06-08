@@ -1083,6 +1083,253 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 		})
 	})
 
+	Describe("fin.sqlite3 corruption (MetadataCorrupted)", func() {
+		var pvc *corev1.PersistentVolumeClaim
+		var pv *corev1.PersistentVolume
+
+		BeforeEach(func(ctx SpecContext) {
+			By("creating a pair of PVC and PV for fin.sqlite3 corruption cases")
+			pvc, pv = NewPVCAndPV(normalSC, userNamespace, utils.GetUniqueName("pvc-csum-"), utils.GetUniqueName("pv-csum-"), rbdImageName)
+			Expect(k8sClient.Create(ctx, pvc)).Should(Succeed())
+			Expect(k8sClient.Create(ctx, pv)).Should(Succeed())
+		})
+
+		AfterEach(func(ctx SpecContext) {
+			By("cleaning up PVC and PV")
+			DeletePVCAndPV(ctx, pvc.Namespace, pvc.Name)
+		})
+
+		It("should set MetadataCorrupted=True when backup Job exits with code 4", func(ctx SpecContext) {
+			// Description:
+			//   Ensure that when backup Job detects fin.sqlite3 corruption (exit code 4),
+			//   the FinBackup is set to MetadataCorrupted=True and subsequent
+			//   reconciliation is stopped.
+			//
+			// Arrange:
+			//   - Create a full FinBackup to trigger backup Job creation.
+			//
+			// Act:
+			//   - Wait for the backup Job to be created.
+			//   - Make the backup Job fail with exit code 4 (fin.sqlite3 corruption).
+			//
+			// Assert:
+			//   - The FinBackup has MetadataCorrupted=True condition.
+			//   - The FinBackup does not have StoredToNode=True condition.
+
+			// Arrange
+			By("creating a full FinBackup")
+			finbackup1 := NewFinBackup(workNamespace, utils.GetUniqueName("fb-full-"), pvc.Name, pvc.Namespace, "test-node")
+			Expect(k8sClient.Create(ctx, finbackup1)).Should(Succeed())
+
+			// Act
+			By("waiting for the backup Job to be created")
+			backupJobKey := client.ObjectKey{Namespace: cephNamespace, Name: backupJobName(finbackup1)}
+			Eventually(func(g Gomega, ctx SpecContext) {
+				var job batchv1.Job
+				g.Expect(k8sClient.Get(ctx, backupJobKey, &job)).To(Succeed())
+			}, "5s", "1s").WithContext(ctx).Should(Succeed())
+
+			By("making the backup Job fail with exit code 4")
+			makeJobFailWithExitCode(ctx, backupJobKey.Name, 4)
+
+			// Assert
+			By("checking the FinBackup has the condition MetadataCorrupted=True")
+			Eventually(func(g Gomega) {
+				var updated finv1.FinBackup
+				err := k8sClient.Get(ctx, client.ObjectKeyFromObject(finbackup1), &updated)
+				g.Expect(err).ShouldNot(HaveOccurred())
+				g.Expect(updated.IsMetadataCorrupted()).Should(BeTrue())
+			}, "5s", "1s").Should(Succeed())
+
+			By("checking the FinBackup does not have StoredToNode=True condition")
+			Consistently(func(g Gomega) {
+				var updated finv1.FinBackup
+				err := k8sClient.Get(ctx, client.ObjectKeyFromObject(finbackup1), &updated)
+				g.Expect(err).ShouldNot(HaveOccurred())
+				g.Expect(updated.IsStoredToNode()).Should(BeFalse())
+			}, "3s", "1s").Should(Succeed())
+		})
+
+		It("should set MetadataCorrupted=True when verification Job exits with code 4", func(ctx SpecContext) {
+			// Description:
+			//   Ensure that when the verification Job exits with code 4 (fin.sqlite3 corruption),
+			//   FinBackup is set to MetadataCorrupted=True and subsequent reconciliation is stopped.
+			//
+			// Arrange:
+			//   - Create a full FinBackup and make it StoredToNode.
+			//
+			// Act:
+			//   - Make the verification Job fail with exit code 4.
+			//
+			// Assert:
+			//   - The FinBackup has MetadataCorrupted=True condition.
+			//   - The FinBackup does not have Verified=True condition.
+
+			// Arrange
+			By("creating a full FinBackup")
+			finbackup1 := NewFinBackup(workNamespace, utils.GetUniqueName("fb-full-"), pvc.Name, pvc.Namespace, "test-node")
+			Expect(k8sClient.Create(ctx, finbackup1)).Should(Succeed())
+			MakeFinBackupStoredToNode(ctx, finbackup1)
+
+			// Act
+			By("making the verification Job fail with exit code 4")
+			makeJobFailWithExitCode(ctx, verificationJobName(finbackup1), 4)
+
+			// Assert
+			By("checking the FinBackup has the condition MetadataCorrupted=True")
+			Eventually(func(g Gomega) {
+				var updated finv1.FinBackup
+				err := k8sClient.Get(ctx, client.ObjectKeyFromObject(finbackup1), &updated)
+				g.Expect(err).ShouldNot(HaveOccurred())
+				g.Expect(updated.IsMetadataCorrupted()).Should(BeTrue())
+			}, "5s", "1s").Should(Succeed())
+
+			By("checking the FinBackup does not have Verified=True condition")
+			Consistently(func(g Gomega) {
+				var updated finv1.FinBackup
+				err := k8sClient.Get(ctx, client.ObjectKeyFromObject(finbackup1), &updated)
+				g.Expect(err).ShouldNot(HaveOccurred())
+				g.Expect(updated.IsVerifiedTrue()).Should(BeFalse())
+			}, "3s", "1s").Should(Succeed())
+		})
+
+		It("should set MetadataCorrupted=True when cleanup Job exits with code 4", func(ctx SpecContext) {
+			// Description:
+			//   Ensure that when cleanup Job detects fin.sqlite3 corruption (exit code 4),
+			//   the FinBackup is set to MetadataCorrupted=True and the deletion process
+			//   is stopped before the deletion Job is created.
+			//
+			// Arrange:
+			//   - Create a full FinBackup, make it StoredToNode and Verified.
+			//
+			// Act:
+			//   - Delete the FinBackup to trigger deletion reconciliation.
+			//   - Wait for cleanup Job to be created and make it fail with exit code 4.
+			//
+			// Assert:
+			//   - The FinBackup has MetadataCorrupted=True condition.
+			//   - The FinBackup has DeletionTimestamp set.
+			//   - The deletion process is stopped.
+			//   - No deletion Job is created.
+
+			// Arrange
+			By("creating a full FinBackup")
+			finbackup1 := NewFinBackup(workNamespace, utils.GetUniqueName("fb-full-"), pvc.Name, pvc.Namespace, "test-node")
+			Expect(k8sClient.Create(ctx, finbackup1)).Should(Succeed())
+			MakeFinBackupStoredToNode(ctx, finbackup1)
+			MakeFinBackupVerified(ctx, finbackup1)
+
+			// Act
+			By("deleting the FinBackup to trigger deletion reconciliation")
+			Expect(k8sClient.Delete(ctx, finbackup1)).Should(Succeed())
+
+			By("waiting for the cleanup Job to be created")
+			cleanupJobKey := client.ObjectKey{Namespace: cephNamespace, Name: cleanupJobName(finbackup1)}
+			Eventually(func(g Gomega, ctx SpecContext) {
+				var job batchv1.Job
+				g.Expect(k8sClient.Get(ctx, cleanupJobKey, &job)).To(Succeed())
+			}, "30s", "1s").WithContext(ctx).Should(Succeed())
+
+			By("making the cleanup Job fail with exit code 4")
+			makeJobFailWithExitCode(ctx, cleanupJobKey.Name, 4)
+
+			// Assert
+			By("checking the FinBackup has MetadataCorrupted=True and deletion is stopped")
+			Eventually(func(g Gomega) {
+				var updated finv1.FinBackup
+				err := k8sClient.Get(ctx, client.ObjectKeyFromObject(finbackup1), &updated)
+				g.Expect(err).ShouldNot(HaveOccurred())
+				g.Expect(updated.IsMetadataCorrupted()).Should(BeTrue())
+				g.Expect(updated.DeletionTimestamp.IsZero()).Should(BeFalse())
+			}, "5s", "1s").Should(Succeed())
+
+			By("confirming the deletion process is stopped")
+			Consistently(func(g Gomega) {
+				var updated finv1.FinBackup
+				err := k8sClient.Get(ctx, client.ObjectKeyFromObject(finbackup1), &updated)
+				g.Expect(err).ShouldNot(HaveOccurred())
+				g.Expect(updated.Finalizers).Should(ContainElement("finbackup.fin.cybozu.io/finalizer"))
+			}, "3s", "1s").Should(Succeed())
+
+			By("checking no deletion Job is created")
+			ExpectNoJob(ctx, k8sClient, deletionJobName(finbackup1), cephNamespace)
+		})
+
+		It("should set MetadataCorrupted=True when deletion Job exits with code 4", func(ctx SpecContext) {
+			// Description:
+			//   Ensure that when deletion Job detects fin.sqlite3 corruption (exit code 4),
+			//   the FinBackup is set to MetadataCorrupted=True and the deletion process
+			//   is stopped.
+			//
+			// Arrange:
+			//   - Create a full FinBackup, make it StoredToNode and Verified.
+			//
+			// Act:
+			//   - Delete the FinBackup to trigger deletion reconciliation.
+			//   - Wait for cleanup Job to be created and make it succeed.
+			//   - Wait for deletion Job to be created and make it fail with exit code 4.
+			//
+			// Assert:
+			//   - The FinBackup has MetadataCorrupted=True condition.
+			//   - The FinBackup has DeletionTimestamp set.
+			//   - The deletion process is stopped.
+
+			// Arrange
+			By("creating a full FinBackup")
+			finbackup1 := NewFinBackup(workNamespace, utils.GetUniqueName("fb-full-"), pvc.Name, pvc.Namespace, "test-node")
+			Expect(k8sClient.Create(ctx, finbackup1)).Should(Succeed())
+			MakeFinBackupStoredToNode(ctx, finbackup1)
+			MakeFinBackupVerified(ctx, finbackup1)
+
+			// Act
+			By("deleting the FinBackup to trigger deletion reconciliation")
+			Expect(k8sClient.Delete(ctx, finbackup1)).Should(Succeed())
+
+			By("waiting for the cleanup Job to be created")
+			cleanupJobKey := client.ObjectKey{Namespace: cephNamespace, Name: cleanupJobName(finbackup1)}
+			Eventually(func(g Gomega, ctx SpecContext) {
+				var job batchv1.Job
+				g.Expect(k8sClient.Get(ctx, cleanupJobKey, &job)).To(Succeed())
+			}, "30s", "1s").WithContext(ctx).Should(Succeed())
+
+			By("making the cleanup Job succeed")
+			Eventually(func(g Gomega, ctx SpecContext) {
+				var job batchv1.Job
+				g.Expect(k8sClient.Get(ctx, cleanupJobKey, &job)).To(Succeed())
+				makeJobSucceeded(&job)
+				g.Expect(k8sClient.Status().Update(ctx, &job)).Should(Succeed())
+			}, "5s", "1s").WithContext(ctx).Should(Succeed())
+
+			By("waiting for the deletion Job to be created")
+			delJobKey := client.ObjectKey{Namespace: cephNamespace, Name: deletionJobName(finbackup1)}
+			Eventually(func(g Gomega, ctx SpecContext) {
+				var job batchv1.Job
+				g.Expect(k8sClient.Get(ctx, delJobKey, &job)).To(Succeed())
+			}, "30s", "1s").WithContext(ctx).Should(Succeed())
+
+			By("making the deletion Job fail with exit code 4")
+			makeJobFailWithExitCode(ctx, delJobKey.Name, 4)
+
+			// Assert
+			By("checking the FinBackup has MetadataCorrupted=True and deletion is stopped")
+			Eventually(func(g Gomega) {
+				var updated finv1.FinBackup
+				err := k8sClient.Get(ctx, client.ObjectKeyFromObject(finbackup1), &updated)
+				g.Expect(err).ShouldNot(HaveOccurred())
+				g.Expect(updated.IsMetadataCorrupted()).Should(BeTrue())
+				g.Expect(updated.DeletionTimestamp.IsZero()).Should(BeFalse())
+			}, "5s", "1s").Should(Succeed())
+
+			By("confirming the deletion process is stopped")
+			Consistently(func(g Gomega) {
+				var updated finv1.FinBackup
+				err := k8sClient.Get(ctx, client.ObjectKeyFromObject(finbackup1), &updated)
+				g.Expect(err).ShouldNot(HaveOccurred())
+				g.Expect(updated.Finalizers).Should(ContainElement("finbackup.fin.cybozu.io/finalizer"))
+			}, "3s", "1s").Should(Succeed())
+		})
+	})
+
 	Describe("Auto Deletion Feature", func() {
 		var pvc *corev1.PersistentVolumeClaim
 
@@ -1229,6 +1476,60 @@ var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
 		AfterEach(func(ctx SpecContext) {
 			Expect(k8sClient.Delete(ctx, finbackup)).Should(Succeed())
 			DeletePVCAndPV(ctx, pvc2.Namespace, pvc2.Name)
+		})
+
+		It("should neither return an error nor create a backup job during reconciliation", func(ctx SpecContext) {
+			By("reconciling the FinBackup")
+			_, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(finbackup)})
+			Expect(err).ShouldNot(HaveOccurred())
+
+			By("checking that no backup job is created")
+			ExpectNoJob(ctx, k8sClient, backupJobName(finbackup), cephNamespace)
+		})
+	})
+
+	// Description:
+	//   Ensure that a FinBackup already marked MetadataCorrupted=True is not
+	//   reconciled further: the reconciler must exit early without creating a
+	//   backup job.
+	//
+	// Arrange:
+	//   - Create a pair of PVC and PV.
+	//   - Create a FinBackup with MetadataCorrupted=True set on its status.
+	//
+	// Act:
+	//   - Run FinBackup Controller's Reconcile().
+	//
+	// Assert:
+	//   - The reconciler does not return any errors.
+	//   - The reconciler does not create a backup job.
+	Context("Prevent reconciliation of a FinBackup with MetadataCorrupted=True", func() {
+		var pvc *corev1.PersistentVolumeClaim
+		var pv *corev1.PersistentVolume
+		var finbackup *finv1.FinBackup
+
+		BeforeEach(func(ctx SpecContext) {
+			By("creating a pair of PVC and PV")
+			pvc, pv = NewPVCAndPV(normalSC, userNamespace, "test-pvc-corrupted", "test-pv-corrupted", rbdImageName)
+			Expect(k8sClient.Create(ctx, pvc)).Should(Succeed())
+			Expect(k8sClient.Create(ctx, pv)).Should(Succeed())
+
+			By("creating a FinBackup with MetadataCorrupted=True")
+			finbackup = NewFinBackup(workNamespace, "test-fin-backup-corrupted", pvc.Name, pvc.Namespace, "test-node")
+			Expect(k8sClient.Create(ctx, finbackup)).Should(Succeed())
+			finbackup.Status.Conditions = append(finbackup.Status.Conditions, metav1.Condition{
+				Type:               finv1.BackupConditionMetadataCorrupted,
+				Status:             metav1.ConditionTrue,
+				Reason:             "MetadataCorrupted",
+				Message:            "fin.sqlite3 corruption detected",
+				LastTransitionTime: metav1.Now(),
+			})
+			Expect(k8sClient.Status().Update(ctx, finbackup)).Should(Succeed())
+		})
+
+		AfterEach(func(ctx SpecContext) {
+			Expect(k8sClient.Delete(ctx, finbackup)).Should(Succeed())
+			DeletePVCAndPV(ctx, pvc.Namespace, pvc.Name)
 		})
 
 		It("should neither return an error nor create a backup job during reconciliation", func(ctx SpecContext) {
