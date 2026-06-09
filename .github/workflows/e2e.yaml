@@ -13,6 +13,9 @@ on:
     branches:
       - "main"
 
+permissions:
+  contents: read
+
 env:
   # Github runner's extra disk is mounted on the /mnt directory.
   MINIKUBE_HOME: "/mnt/"
