@@ -57,6 +57,7 @@ To change their versions, edit `versions.mk`.
 - [minikube](https://github.com/kubernetes/minikube/releases)
 - [Rook](https://github.com/rook/rook/releases)
 - [golangci-lint](https://github.com/golangci/golangci-lint/releases)
+- [Ceph](https://quay.io/repository/ceph/ceph?tab=tags)
 
 Some operators are described in `test/utils/utils.go`. Please check their versions and update them, if necessary. Note that it should use the LTS version for cert-manager.
 
@@ -66,10 +67,6 @@ Some operators are described in `test/utils/utils.go`. Please check their versio
 Update the following version in Dockerfile, if necessary, too:
 
 - custom rbd-export-diff
-
-The Ceph version is described in the following file:
-
-- `test/e2e/testdata/values-cluster.yaml`
 
 #### Depending modules
 

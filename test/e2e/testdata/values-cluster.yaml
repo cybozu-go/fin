@@ -6,7 +6,7 @@ cephObjectStores: []
 
 toolbox:
   enabled: true
-  image: quay.io/ceph/ceph:v19.2.2
+  image: quay.io/ceph/ceph:${CEPH_IMAGE_VERSION}
   resources: null
 
 cephClusterSpec:
@@ -15,7 +15,7 @@ cephClusterSpec:
     count: 1
     allowMultiplePerNode: false
   cephVersion:
-    image: quay.io/ceph/ceph:v19.2.2
+    image: quay.io/ceph/ceph:${CEPH_IMAGE_VERSION}
     allowUnsupported: false
   skipUpgradeChecks: false
   continueUpgradeAfterChecksEvenIfNotHealthy: false
