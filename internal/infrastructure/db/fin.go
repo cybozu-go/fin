@@ -1,14 +1,28 @@
 package db
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
+	"io"
+	"os"
 	"time"
 
+	"github.com/cybozu-go/fin/internal/cksumvfs"
 	"github.com/cybozu-go/fin/internal/model"
 	sqlite3 "github.com/mattn/go-sqlite3"
 )
+
+const (
+	cksumDriverName   = "sqlite3-cksumvfs"
+	cksumReserveBytes = 8
+)
+
+func init() {
+	cksumvfs.Register()
+	sql.Register(cksumDriverName, &sqlite3.SQLiteDriver{})
+}
 
 // FinRepository implements model.FinRepository interface.
 type FinRepository struct {
@@ -17,31 +31,99 @@ type FinRepository struct {
 
 var _ model.FinRepository = &FinRepository{}
 
-func isSQLiteBusy(err error) bool {
+// ErrDBCorrupted is returned when fin.sqlite3 is found to be corrupted.
+var ErrDBCorrupted = errors.New("fin db corrupted")
+
+// errChecksumFault is the extended SQLite error code cksumvfs returns when a
+// page fails its checksum (i.e. the database is corrupt). That code is
+// SQLITE_IOERR_DATA (8202), which SQLite defines as SQLITE_IOERR plus the
+// sub-code 32. go-sqlite3 has no named constant for it, so we pass 32 to
+// Extend() here.
+var errChecksumFault = sqlite3.ErrIoErr.Extend(32)
+
+// handleSQLiteError converts sqlite3-specific errors to Fin's sentinel errors.
+// A checksum fault (fin.sqlite3 corrupted) becomes ErrDBCorrupted;
+// a busy error (transient lock contention) becomes model.ErrBusy.
+// All other errors are returned as-is.
+func handleSQLiteError(err error) error {
+	if err == nil {
+		return nil
+	}
 	var sqliteErr sqlite3.Error
 	if errors.As(err, &sqliteErr) {
-		if sqliteErr.Code == sqlite3.ErrBusy {
-			return true
+		switch {
+		case sqliteErr.ExtendedCode == errChecksumFault:
+			return fmt.Errorf("%w: %w", ErrDBCorrupted, err)
+		case sqliteErr.Code == sqlite3.ErrBusy:
+			return model.ErrBusy
 		}
 	}
-	return false
+	return err
+}
+
+func needsCksumVacuum(filename string) (bool, error) {
+	f, err := os.Open(filename)
+	if err != nil {
+		return true, nil // no database file yet, so it needs setup
+	}
+	defer func() { _ = f.Close() }()
+
+	var header [21]byte
+	if _, err := io.ReadFull(f, header[:]); err != nil {
+		return true, nil // file too short to be a database, so it needs setup
+	}
+
+	// Byte 20 of the SQLite header is the number of reserved bytes at the end
+	// of each page. cksumvfs uses exactly 8 of them for the page checksum, so a
+	// migrated database has 8 and a legacy one has 0; no other value is valid.
+	switch header[20] {
+	case cksumReserveBytes:
+		return false, nil // already has checksum space
+	case 0:
+		return true, nil // needs VACUUM to add checksum space
+	default:
+		return false, fmt.Errorf("%w: unexpected reserved-bytes value in SQLite header: %d", ErrDBCorrupted, header[20])
+	}
 }
 
 // New opens the sqlite3 database with acquiring exclusive lock.
 // Callers must calls `Close` after using the returned repository.
 // In addition, callers are in charge of removing the database file.
-func New(filename string) (*FinRepository, error) {
+func New(filename string) (_ *FinRepository, err error) {
+	defer func() { err = handleSQLiteError(err) }()
+
+	needsVacuum, err := needsCksumVacuum(filename)
+	if err != nil {
+		return nil, err
+	}
+
 	dsn := fmt.Sprintf("file:%s?_txlock=exclusive", filename)
-	db, err := sql.Open("sqlite3", dsn)
+	db, err := sql.Open(cksumDriverName, dsn)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
+	}
+	defer func() {
+		if err != nil && db != nil {
+			_ = db.Close()
+		}
+	}()
+
+	if needsVacuum {
+		if err = activateCksum(db); err != nil {
+			return nil, err
+		}
+		// cksumvfs requires reopening connections after VACUUM.
+		if err = db.Close(); err != nil {
+			return nil, fmt.Errorf("failed to close database after vacuum: %w", err)
+		}
+		db, err = sql.Open(cksumDriverName, dsn)
+		if err != nil {
+			return nil, fmt.Errorf("failed to reopen database after vacuum: %w", err)
+		}
 	}
 
 	tx, err := db.Begin()
 	if err != nil {
-		if isSQLiteBusy(err) {
-			return nil, model.ErrBusy
-		}
 		return nil, fmt.Errorf("failed to begin transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
@@ -71,9 +153,30 @@ func New(filename string) (*FinRepository, error) {
 		return nil, fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
-	return &FinRepository{
-		db: db,
-	}, nil
+	return &FinRepository{db: db}, nil
+}
+
+// activateCksum enables cksumvfs page checksums. On a single pinned connection
+// it sets the reserve bytes and immediately runs VACUUM; cksumvfs requires the
+// file-control to be followed directly by VACUUM with nothing in between.
+func activateCksum(db *sql.DB) error {
+	conn, err := db.Conn(context.Background())
+	if err != nil {
+		return fmt.Errorf("failed to get connection: %w", err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	if err := conn.Raw(func(driverConn any) error {
+		sqliteConn := driverConn.(*sqlite3.SQLiteConn)
+		return sqliteConn.SetFileControlInt("", sqlite3.SQLITE_FCNTL_RESERVE_BYTES, cksumReserveBytes)
+	}); err != nil {
+		return fmt.Errorf("failed to set reserve bytes: %w", err)
+	}
+
+	if _, err := conn.ExecContext(context.Background(), "VACUUM"); err != nil {
+		return fmt.Errorf("failed to vacuum database: %w", err)
+	}
+	return nil
 }
 
 func (fr *FinRepository) Close() error {
@@ -83,12 +186,11 @@ func (fr *FinRepository) Close() error {
 	return nil
 }
 
-func (fr *FinRepository) StartOrRestartAction(uid string, action model.ActionKind) error {
+func (fr *FinRepository) StartOrRestartAction(uid string, action model.ActionKind) (err error) {
+	defer func() { err = handleSQLiteError(err) }()
+
 	tx, err := fr.db.Begin()
 	if err != nil {
-		if isSQLiteBusy(err) {
-			return model.ErrBusy
-		}
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
@@ -149,7 +251,9 @@ func (fr *FinRepository) StartOrRestartAction(uid string, action model.ActionKin
 	return tx.Commit()
 }
 
-func (fr *FinRepository) GetActionPrivateData(uid string) ([]byte, error) {
+func (fr *FinRepository) GetActionPrivateData(uid string) (_ []byte, err error) {
+	defer func() { err = handleSQLiteError(err) }()
+
 	stmt, err := fr.db.Prepare("SELECT private_data FROM action_status WHERE uid = ?")
 	if err != nil {
 		return nil, err
@@ -159,9 +263,6 @@ func (fr *FinRepository) GetActionPrivateData(uid string) ([]byte, error) {
 	var privateData []byte
 	err = stmt.QueryRow(uid).Scan(&privateData)
 	if err != nil {
-		if isSQLiteBusy(err) {
-			return nil, model.ErrBusy
-		}
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, model.ErrNotFound
 		}
@@ -170,12 +271,11 @@ func (fr *FinRepository) GetActionPrivateData(uid string) ([]byte, error) {
 	return privateData, nil
 }
 
-func (fr *FinRepository) UpdateActionPrivateData(uid string, privateData []byte) error {
+func (fr *FinRepository) UpdateActionPrivateData(uid string, privateData []byte) (err error) {
+	defer func() { err = handleSQLiteError(err) }()
+
 	tx, err := fr.db.Begin()
 	if err != nil {
-		if isSQLiteBusy(err) {
-			return model.ErrBusy
-		}
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
@@ -198,19 +298,14 @@ func (fr *FinRepository) UpdateActionPrivateData(uid string, privateData []byte)
 		return fmt.Errorf("no rows updated for uid: %s", uid)
 	}
 
-	err = tx.Commit()
-	if err != nil {
-		return err
-	}
-	return nil
+	return tx.Commit()
 }
 
-func (fr *FinRepository) CompleteAction(uid string) error {
+func (fr *FinRepository) CompleteAction(uid string) (err error) {
+	defer func() { err = handleSQLiteError(err) }()
+
 	tx, err := fr.db.Begin()
 	if err != nil {
-		if isSQLiteBusy(err) {
-			return model.ErrBusy
-		}
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
@@ -225,14 +320,12 @@ func (fr *FinRepository) CompleteAction(uid string) error {
 	if err != nil {
 		return err
 	}
-	err = tx.Commit()
-	if err != nil {
-		return err
-	}
-	return nil
+	return tx.Commit()
 }
 
-func (fr *FinRepository) GetBackupMetadata() ([]byte, error) {
+func (fr *FinRepository) GetBackupMetadata() (_ []byte, err error) {
+	defer func() { err = handleSQLiteError(err) }()
+
 	stmt, err := fr.db.Prepare("SELECT data FROM backup_metadata")
 	if err != nil {
 		return nil, err
@@ -265,7 +358,9 @@ func (fr *FinRepository) GetBackupMetadata() ([]byte, error) {
 	return data, rows.Err()
 }
 
-func (fr *FinRepository) SetBackupMetadata(data []byte) error {
+func (fr *FinRepository) SetBackupMetadata(data []byte) (err error) {
+	defer func() { err = handleSQLiteError(err) }()
+
 	tx, err := fr.db.Begin()
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
@@ -291,14 +386,12 @@ func (fr *FinRepository) SetBackupMetadata(data []byte) error {
 		return fmt.Errorf("backup_metadata was not updated")
 	}
 
-	err = tx.Commit()
-	if err != nil {
-		return err
-	}
-	return nil
+	return tx.Commit()
 }
 
-func (fr *FinRepository) DeleteBackupMetadata() error {
+func (fr *FinRepository) DeleteBackupMetadata() (err error) {
+	defer func() { err = handleSQLiteError(err) }()
+
 	tx, err := fr.db.Begin()
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
