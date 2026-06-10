@@ -57,6 +57,7 @@ const (
 	JobStatusFailedWithExitCode1
 	JobStatusFailedWithExitCode2
 	JobStatusFailedWithExitCode3
+	JobStatusFailedWithExitCode4
 	JobStatusUnknown
 )
 
@@ -118,6 +119,8 @@ func CheckJobStatus(
 		status = JobStatusFailedWithExitCode2
 	case 3:
 		status = JobStatusFailedWithExitCode3
+	case 4:
+		status = JobStatusFailedWithExitCode4
 	default:
 		status = JobStatusUnknown
 	}

@@ -156,6 +156,11 @@ func (r *FinBackupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		metrics.SetBackupCreateStatus(&backup, r.cephClusterNamespace, *status, isFullBackup(&backup))
 	}
 
+	if backup.IsMetadataCorrupted() {
+		logger.Info("metadata corruption detected; skip reconciling")
+		return ctrl.Result{}, nil
+	}
+
 	if backup.IsChecksumMismatched() {
 		annotations := backup.GetAnnotations()
 		if annotations != nil && annotations[annotationSkipChecksumVerify] != annotationValueTrue {
@@ -198,6 +203,30 @@ func (r *FinBackupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, err
 	}
 	logger.Info("automatic deletion of old FinBackup completed")
+	return ctrl.Result{}, nil
+}
+
+func (r *FinBackupReconciler) setFinBackupChecksumMismatched(ctx context.Context, backup *finv1.FinBackup) (ctrl.Result, error) {
+	if _, err := patchFinBackupCondition(ctx, r.Client, backup, metav1.Condition{
+		Type:    finv1.BackupConditionChecksumMismatched,
+		Status:  metav1.ConditionTrue,
+		Reason:  "ChecksumMismatch",
+		Message: "Data corruption detected: checksum mismatch",
+	}); err != nil {
+		return ctrl.Result{}, fmt.Errorf("failed to set FinBackup ChecksumMismatched condition: %w", err)
+	}
+	return ctrl.Result{}, nil
+}
+
+func (r *FinBackupReconciler) setFinBackupMetadataCorrupted(ctx context.Context, backup *finv1.FinBackup) (ctrl.Result, error) {
+	if _, err := patchFinBackupCondition(ctx, r.Client, backup, metav1.Condition{
+		Type:    finv1.BackupConditionMetadataCorrupted,
+		Status:  metav1.ConditionTrue,
+		Reason:  "MetadataCorrupted",
+		Message: "Backup metadata corruption detected",
+	}); err != nil {
+		return ctrl.Result{}, fmt.Errorf("failed to set FinBackup MetadataCorrupted condition: %w", err)
+	}
 	return ctrl.Result{}, nil
 }
 
@@ -357,15 +386,9 @@ func (r *FinBackupReconciler) reconcileBackup(
 	case JobStatusInProgress:
 		return ctrl.Result{}, errNonRetryableReconcile
 	case JobStatusFailedWithExitCode2:
-		if _, err := patchFinBackupCondition(ctx, r.Client, &backup, metav1.Condition{
-			Type:    finv1.BackupConditionChecksumMismatched,
-			Status:  metav1.ConditionTrue,
-			Reason:  "ChecksumMismatch",
-			Message: "Data corruption detected: checksum mismatch",
-		}); err != nil {
-			return ctrl.Result{}, fmt.Errorf("failed to set FinBackup ChecksumMismatched condition to true: %w", err)
-		}
-		return ctrl.Result{}, nil
+		return r.setFinBackupChecksumMismatched(ctx, &backup)
+	case JobStatusFailedWithExitCode4:
+		return r.setFinBackupMetadataCorrupted(ctx, &backup)
 	default:
 		return ctrl.Result{}, fmt.Errorf("unknown backup job status: %d", jobStatus.Status)
 	}
@@ -457,6 +480,7 @@ func (r *FinBackupReconciler) createSnapshot(ctx context.Context, backup *finv1.
 	return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 }
 
+//nolint:gocyclo
 func (r *FinBackupReconciler) reconcileDelete(
 	ctx context.Context,
 	backup *finv1.FinBackup,
@@ -507,14 +531,20 @@ func (r *FinBackupReconciler) reconcileDelete(
 		if err != nil {
 			return ctrl.Result{}, fmt.Errorf("failed to get cleanup job: %w", err)
 		}
-		done, err := jobCompleted(&cleanupJob)
+		jobStatus, err := CheckJobStatus(ctx, r.Client, cleanupJobName(backup), r.cephClusterNamespace)
 		if err != nil {
-			return ctrl.Result{}, err
+			return ctrl.Result{}, fmt.Errorf("failed to check cleanup job status: %w", err)
 		}
-		if !done {
+		switch jobStatus.Status {
+		case JobStatusComplete:
+			// do nothing
+		case JobStatusInProgress:
 			return ctrl.Result{}, nil
+		case JobStatusFailedWithExitCode4:
+			return r.setFinBackupMetadataCorrupted(ctx, backup)
+		default:
+			return ctrl.Result{}, fmt.Errorf("unknown cleanup job status: %d", jobStatus.Status)
 		}
-
 		err = r.createOrUpdateDeletionJob(ctx, backup)
 		if err != nil {
 			logger.Error(err, "failed to create or update deletion job")
@@ -527,7 +557,7 @@ func (r *FinBackupReconciler) reconcileDelete(
 			return ctrl.Result{}, fmt.Errorf("failed to get deletion job: %w", err)
 		}
 
-		jobStatus, err := CheckJobStatus(ctx, r.Client, deletionJobName(backup), r.cephClusterNamespace)
+		jobStatus, err = CheckJobStatus(ctx, r.Client, deletionJobName(backup), r.cephClusterNamespace)
 		if err != nil {
 			return ctrl.Result{}, fmt.Errorf("failed to check deletion job status: %w", err)
 		}
@@ -537,15 +567,9 @@ func (r *FinBackupReconciler) reconcileDelete(
 		case JobStatusInProgress:
 			return ctrl.Result{}, nil
 		case JobStatusFailedWithExitCode2:
-			if _, err := patchFinBackupCondition(ctx, r.Client, backup, metav1.Condition{
-				Type:    finv1.BackupConditionChecksumMismatched,
-				Status:  metav1.ConditionTrue,
-				Reason:  "ChecksumMismatch",
-				Message: "Data corruption detected: checksum mismatch",
-			}); err != nil {
-				return ctrl.Result{}, fmt.Errorf("failed to set FinBackup ChecksumMismatched condition to true: %w", err)
-			}
-			return ctrl.Result{}, nil
+			return r.setFinBackupChecksumMismatched(ctx, backup)
+		case JobStatusFailedWithExitCode4:
+			return r.setFinBackupMetadataCorrupted(ctx, backup)
 		default:
 			return ctrl.Result{}, fmt.Errorf("unknown deletion job status: %d", jobStatus.Status)
 		}
@@ -980,7 +1004,7 @@ func (r *FinBackupReconciler) createOrUpdateBackupJob(
 					OnExitCodes: &batchv1.PodFailurePolicyOnExitCodesRequirement{
 						ContainerName: ptr.To("backup"),
 						Operator:      batchv1.PodFailurePolicyOnExitCodesOpIn,
-						Values:        []int32{2},
+						Values:        []int32{2, 4},
 					},
 				},
 			},
@@ -1213,7 +1237,7 @@ func (r *FinBackupReconciler) createOrUpdateDeletionJob(ctx context.Context, bac
 					OnExitCodes: &batchv1.PodFailurePolicyOnExitCodesRequirement{
 						ContainerName: ptr.To("deletion"),
 						Operator:      batchv1.PodFailurePolicyOnExitCodesOpIn,
-						Values:        []int32{2},
+						Values:        []int32{2, 4},
 					},
 				},
 			},
@@ -1327,7 +1351,7 @@ func (r *FinBackupReconciler) createOrUpdateCleanupJob(ctx context.Context, back
 			RunAsUser:    ptr.To(int64(10000)),
 		}
 
-		job.Spec.Template.Spec.RestartPolicy = corev1.RestartPolicyOnFailure
+		job.Spec.Template.Spec.RestartPolicy = corev1.RestartPolicyNever
 
 		job.Spec.Template.Spec.Containers = []corev1.Container{
 			{
@@ -1378,6 +1402,19 @@ func (r *FinBackupReconciler) createOrUpdateCleanupJob(ctx context.Context, back
 			},
 		}
 
+		job.Spec.PodFailurePolicy = &batchv1.PodFailurePolicy{
+			Rules: []batchv1.PodFailurePolicyRule{
+				{
+					Action: batchv1.PodFailurePolicyActionFailJob,
+					OnExitCodes: &batchv1.PodFailurePolicyOnExitCodesRequirement{
+						ContainerName: ptr.To("cleanup"),
+						Operator:      batchv1.PodFailurePolicyOnExitCodesOpIn,
+						Values:        []int32{4},
+					},
+				},
+			},
+		}
+
 		return nil
 	})
 	return err
@@ -1409,15 +1446,7 @@ func (r *FinBackupReconciler) reconcileVerification(
 	case JobStatusInProgress:
 		return ctrl.Result{}, nil
 	case JobStatusFailedWithExitCode2:
-		if _, err := patchFinBackupCondition(ctx, r.Client, backup, metav1.Condition{
-			Type:    finv1.BackupConditionChecksumMismatched,
-			Status:  metav1.ConditionTrue,
-			Reason:  "ChecksumMismatch",
-			Message: "Data corruption detected: checksum mismatch",
-		}); err != nil {
-			return ctrl.Result{}, fmt.Errorf("failed to set FinBackup ChecksumMismatched condition to true: %w", err)
-		}
-		return ctrl.Result{}, nil
+		return r.setFinBackupChecksumMismatched(ctx, backup)
 	case JobStatusFailedWithExitCode3:
 		if _, err := patchFinBackupCondition(ctx, r.Client, backup, metav1.Condition{
 			Type:    finv1.BackupConditionVerified,
@@ -1428,6 +1457,8 @@ func (r *FinBackupReconciler) reconcileVerification(
 			return ctrl.Result{}, fmt.Errorf("failed to set FinBackup Verified condition to false: %w", err)
 		}
 		return ctrl.Result{}, nil
+	case JobStatusFailedWithExitCode4:
+		return r.setFinBackupMetadataCorrupted(ctx, backup)
 	default:
 		return ctrl.Result{}, fmt.Errorf("unknown verification job status: %d", jobStatus.Status)
 	}
@@ -1550,7 +1581,7 @@ func (r *FinBackupReconciler) createOrUpdateVerificationJob(
 					OnExitCodes: &batchv1.PodFailurePolicyOnExitCodesRequirement{
 						ContainerName: ptr.To("verification"),
 						Operator:      batchv1.PodFailurePolicyOnExitCodesOpIn,
-						Values:        []int32{2, 3},
+						Values:        []int32{2, 3, 4},
 					},
 				},
 			},

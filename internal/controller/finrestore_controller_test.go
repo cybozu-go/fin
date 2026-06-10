@@ -709,6 +709,128 @@ var _ = Describe("FinRestore Controller Reconcile Test", Ordered, func() {
 		})
 	})
 
+	Context("fin.sqlite3 corruption (MetadataCorrupted) features", func() {
+		var pvc *corev1.PersistentVolumeClaim
+
+		BeforeEach(func(ctx SpecContext) {
+			By("creating a pair of PVC and PV")
+			var pv *corev1.PersistentVolume
+			pvc, pv = NewPVCAndPV(normalSC, userNamespace, utils.GetUniqueName("pvc-mc-"), utils.GetUniqueName("pv-mc-"), rbdImageName)
+			Expect(k8sClient.Create(ctx, pvc)).Should(Succeed())
+			Expect(k8sClient.Create(ctx, pv)).Should(Succeed())
+		})
+
+		AfterEach(func(ctx SpecContext) {
+			By("cleaning up PVC and PV")
+			DeletePVCAndPV(ctx, pvc.Namespace, pvc.Name)
+		})
+
+		It("should set MetadataCorrupted=True on FinBackup when restore Job exits with code 4", func(ctx SpecContext) {
+			// Description:
+			//   Ensure that when restore Job detects fin.sqlite3 corruption (exit code 4),
+			//   the FinBackup is set to MetadataCorrupted=True.
+			//
+			// Arrange:
+			//   - Create a FinBackup that is StoredToNode and Verified.
+			//   - Create a FinRestore targeting the FinBackup.
+			//
+			// Act:
+			//   - Reconcile to create restore PVC.
+			//   - Bind restore PVC to PV.
+			//   - Reconcile to create restore Job.
+			//   - Make restore Job fail with exit code 4.
+			//   - Reconcile after job failure.
+			//
+			// Assert:
+			//   - The FinBackup has MetadataCorrupted=True condition.
+
+			// Arrange
+			By("creating a FinBackup that is StoredToNode and Verified")
+			finbackup := CreateFinBackupStoredAndVerified(ctx, k8sClient, workNamespace, utils.GetUniqueName("test-fin-backup"), pvc, 1, utils.GetUniqueName("test-node"))
+
+			By("creating a FinRestore targeting the FinBackup")
+			finrestore := NewFinRestore(
+				workNamespace,
+				utils.GetUniqueName("test-restore"),
+				finbackup.Name,
+				utils.GetUniqueName("restore-pvc"),
+				userNamespace,
+			)
+			Expect(k8sClient.Create(ctx, finrestore)).Should(Succeed())
+
+			// Act
+			By("reconciling to create restore PVC")
+			_, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(finrestore)})
+			Expect(err).ShouldNot(HaveOccurred())
+
+			By("binding the restore PVC to a PV")
+			createAndBindRestorePV(ctx, finrestore)
+
+			By("reconciling to create restore Job")
+			_, err = reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(finrestore)})
+			Expect(err).ShouldNot(HaveOccurred())
+
+			By("making the restore Job fail with exit code 4")
+			makeJobFailWithExitCode(ctx, restoreJobName(finrestore), 4)
+
+			By("reconciling after job failure")
+			_, err = reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(finrestore)})
+			Expect(err).ShouldNot(HaveOccurred())
+
+			// Assert
+			By("checking the FinBackup has MetadataCorrupted=True condition")
+			var updatedBackup finv1.FinBackup
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(finbackup), &updatedBackup)).Should(Succeed())
+			Expect(updatedBackup.IsMetadataCorrupted()).Should(BeTrue())
+		})
+
+		It("should not create restore Job when FinBackup has MetadataCorrupted=True", func(ctx SpecContext) {
+			// Description:
+			//   Ensure that when a FinBackup has MetadataCorrupted=True,
+			//   the reconciler skips creating a restore Job.
+			//
+			// Arrange:
+			//   - Create a FinBackup with MetadataCorrupted=True.
+			//   - Create a FinRestore targeting the FinBackup.
+			//
+			// Act:
+			//   - Reconcile the FinRestore.
+			//
+			// Assert:
+			//   - No restore Job is created.
+
+			// Arrange
+			By("creating a FinBackup with MetadataCorrupted=True")
+			finbackup := CreateFinBackupStoredAndVerified(ctx, k8sClient, workNamespace, utils.GetUniqueName("test-fin-backup"), pvc, 1, utils.GetUniqueName("test-node"))
+			meta.SetStatusCondition(&finbackup.Status.Conditions, metav1.Condition{
+				Type:    finv1.BackupConditionMetadataCorrupted,
+				Status:  metav1.ConditionTrue,
+				Reason:  "MetadataCorrupted",
+				Message: "fin.sqlite3 corruption detected",
+			})
+			Expect(k8sClient.Status().Update(ctx, finbackup)).Should(Succeed())
+
+			By("creating a FinRestore targeting the FinBackup")
+			finrestore := NewFinRestore(
+				workNamespace,
+				utils.GetUniqueName("test-restore"),
+				finbackup.Name,
+				utils.GetUniqueName("restore-pvc"),
+				userNamespace,
+			)
+			Expect(k8sClient.Create(ctx, finrestore)).Should(Succeed())
+
+			// Act
+			By("reconciling the FinRestore")
+			_, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(finrestore)})
+			Expect(err).ShouldNot(HaveOccurred())
+
+			// Assert
+			By("checking no restore Job is created")
+			ExpectNoJob(ctx, k8sClient, restoreJobName(finrestore), cephNamespace)
+		})
+	})
+
 	Context("Behavior of allowUnverified field", func() {
 		var pvc *corev1.PersistentVolumeClaim
 

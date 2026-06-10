@@ -59,6 +59,7 @@ const (
 	BackupConditionVerificationSkipped = "VerificationSkipped"
 	BackupConditionChecksumMismatched  = "ChecksumMismatched"
 	BackupConditionAutoDeleteCompleted = "AutoDeleteCompleted"
+	BackupConditionMetadataCorrupted   = "MetadataCorrupted"
 )
 
 //+kubebuilder:object:root=true
@@ -106,6 +107,10 @@ func (fb *FinBackup) IsVerificationSkipped() bool {
 
 func (fb *FinBackup) IsChecksumMismatched() bool {
 	return meta.IsStatusConditionTrue(fb.Status.Conditions, BackupConditionChecksumMismatched)
+}
+
+func (fb *FinBackup) IsMetadataCorrupted() bool {
+	return meta.IsStatusConditionTrue(fb.Status.Conditions, BackupConditionMetadataCorrupted)
 }
 
 func (fb *FinBackup) IsAutoDeleteCompleted() bool {
