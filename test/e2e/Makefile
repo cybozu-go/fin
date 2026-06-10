@@ -148,11 +148,13 @@ image-tar-load:
 
 ROOK_OPERATOR_IMAGE_TAR ?=
 CEPH_IMAGE_TAR ?=
+CEPH_CSI_IMAGE_TAR ?=
 
 .PHONY: load-rook-images
 load-rook-images: $(MINIKUBE_BIN)
 	$(MINIKUBE) image load $(ROOK_OPERATOR_IMAGE_TAR) & \
 	$(MINIKUBE) image load $(CEPH_IMAGE_TAR) & \
+	$(MINIKUBE) image load $(CEPH_CSI_IMAGE_TAR) & \
 	wait
 
 .PHONY: setup-components
