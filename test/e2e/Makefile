@@ -125,7 +125,8 @@ launch-rook-ceph: create-loop-dev $(KUBECTL) $(HELM)
 		-e "s%{NODE_NAME}%$(MINIKUBE_PROFILE_NAME)%" \
 		testdata/persistentvolumes-template.yaml | \
 		$(KUBECTL) apply -f -
-	$(HELM) upgrade --install --version $(ROOK_CHART_VERSION) --repo https://charts.rook.io/release --namespace $(NS) rook-ceph-cluster rook-ceph-cluster -f testdata/values-cluster.yaml --wait
+	CEPH_IMAGE_VERSION=$(CEPH_IMAGE_VERSION) envsubst < testdata/values-cluster.yaml | \
+		$(HELM) upgrade --install --version $(ROOK_CHART_VERSION) --repo https://charts.rook.io/release --namespace $(NS) rook-ceph-cluster rook-ceph-cluster -f - --wait
 	$(MAKE) wait-deploy-ready NS=$(NS) DEPLOY=rook-ceph-operator
 	$(MAKE) wait-deploy-ready NS=$(NS) DEPLOY=rook-ceph-osd-0
 	$(KUBECTL) apply -f testdata/cephblockpool.yaml
