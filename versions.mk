@@ -8,6 +8,8 @@ MINIKUBE_VERSION := v1.38.1
 ROOK_CHART_VERSION := v1.19.5
 # https://quay.io/repository/ceph/ceph
 CEPH_IMAGE_VERSION := v19.2.2
+# https://github.com/ceph/ceph-csi/releases
+CEPH_CSI_IMAGE_VERSION := v3.16.2
 # https://github.com/kubernetes-sigs/kustomize/releases
 KUSTOMIZE_VERSION := v5.8.1
 # https://github.com/kubernetes-sigs/controller-tools/releases
