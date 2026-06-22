@@ -64,6 +64,31 @@ jobs:
           cache-from: type=gha,scope=${{ github.ref_name }}
           cache-to: type=gha,mode=max,scope=${{ github.ref_name }}
 
+      - name: Get versions
+        id: versions
+        run: |
+          echo "rook=$(grep '^ROOK_CHART_VERSION' versions.mk | cut -d'=' -f2 | tr -d ' ')" >> $GITHUB_OUTPUT
+          echo "ceph=$(grep '^CEPH_IMAGE_VERSION' versions.mk | cut -d'=' -f2 | tr -d ' ')" >> $GITHUB_OUTPUT
+          echo "cephcsi=$(grep '^CEPH_CSI_IMAGE_VERSION' versions.mk | cut -d'=' -f2 | tr -d ' ')" >> $GITHUB_OUTPUT
+
+      - name: Restore rook-ceph image cache
+        id: cache-rook-images
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: /tmp/rook-images
+          key: rook-${{ steps.versions.outputs.rook }}-ceph-${{ steps.versions.outputs.ceph }}-cephcsi-${{ steps.versions.outputs.cephcsi }}
+
+      - name: Pull and save rook-ceph images
+        if: steps.cache-rook-images.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p /tmp/rook-images
+          docker pull docker.io/rook/ceph:${{ steps.versions.outputs.rook }}
+          docker pull quay.io/ceph/ceph:${{ steps.versions.outputs.ceph }}
+          docker pull quay.io/cephcsi/cephcsi:${{ steps.versions.outputs.cephcsi }}
+          docker save docker.io/rook/ceph:${{ steps.versions.outputs.rook }} -o /tmp/rook-images/rook-ceph.tar
+          docker save quay.io/ceph/ceph:${{ steps.versions.outputs.ceph }} -o /tmp/rook-images/ceph-ceph.tar
+          docker save quay.io/cephcsi/cephcsi:${{ steps.versions.outputs.cephcsi }} -o /tmp/rook-images/cephcsi.tar
+
       - name: Setup minikube with kvm2 driver
         run: |
             make -C test/e2e launch-minikube
@@ -73,6 +98,13 @@ jobs:
             make -C test/e2e image-tar-load
             # Display disk usage after loading image
             df -h /
+
+      - name: Load rook-ceph images into minikube
+        env:
+          ROOK_OPERATOR_IMAGE_TAR: /tmp/rook-images/rook-ceph.tar
+          CEPH_IMAGE_TAR: /tmp/rook-images/ceph-ceph.tar
+          CEPH_CSI_IMAGE_TAR: /tmp/rook-images/cephcsi.tar
+        run: make -C test/e2e load-rook-images
 
       - name: Launch rook-ceph and deploy components
         run: |
