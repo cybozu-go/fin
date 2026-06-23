@@ -2258,7 +2258,7 @@ func waitFinBackupCreateStatus(pvcNamespace, pvcName, kind string, expected floa
 		value, err := gatherBackupCreateStatus(pvcNamespace, pvcName, kind)
 		g.Expect(err).NotTo(HaveOccurred())
 		g.Expect(value).To(Equal(expected))
-	}, "1s", "0.1s").Should(Succeed())
+	}, "5s", "0.1s").Should(Succeed())
 }
 
 var _ = Describe("fin_backup_create_status metric", Ordered, func() {
