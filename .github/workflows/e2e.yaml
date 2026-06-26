@@ -38,12 +38,6 @@ jobs:
         with:
           go-version-file: "go.mod"
 
-      - name: Free up disk space
-        run: |
-          df -h /
-          sudo rm -rf /usr/share/dotnet /usr/local/.ghcup /usr/local/lib/android
-          df -h /
-
       - uses: ./.github/actions/set-up-kvm-for-e2e-tests
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
