@@ -133,6 +133,10 @@ run-actionlint: actionlint ## Run actionlint.
 run-ghalint: ghalint ## Run ghalint.
 	$(GHALINT) run && $(GHALINT) run-action
 
+.PHONY: run-zizmor
+run-zizmor: zizmor ## Run zizmor.
+	$(ZIZMOR) .
+
 .PHONY: check-uncommitted
 check-uncommitted: ## Check if latest generated artifacts are committed.
 	git diff --exit-code --name-only
@@ -260,6 +264,7 @@ GOLANGCI_LINT ?= $(LOCALBIN)/golangci-lint-$(GOLANGCI_LINT_VERSION)
 MOCKGEN ?= $(LOCALBIN)/mockgen-$(MOCKGEN_VERSION)
 ACTIONLINT ?= $(LOCALBIN)/actionlint-$(ACTIONLINT_VERSION)
 GHALINT ?= $(LOCALBIN)/ghalint-$(GHALINT_VERSION)
+ZIZMOR ?= $(LOCALBIN)/zizmor-$(ZIZMOR_VERSION)
 
 .PHONY: kustomize
 kustomize: $(KUSTOMIZE) ## Download kustomize locally if necessary.
@@ -290,6 +295,18 @@ $(ACTIONLINT): $(LOCALBIN)
 ghalint: $(GHALINT) ## Download ghalint locally if necessary.
 $(GHALINT): $(LOCALBIN)
 	$(call go-install-tool,$(GHALINT),github.com/suzuki-shunsuke/ghalint/cmd/ghalint,$(GHALINT_VERSION))
+
+.PHONY: zizmor
+zizmor: $(ZIZMOR) ## Download zizmor locally if necessary.
+$(ZIZMOR): $(LOCALBIN)
+	@[ -f $(ZIZMOR) ] || \
+	{ tmp=$$(mktemp) && \
+	  curl -sSLf https://github.com/zizmorcore/zizmor/releases/download/$(ZIZMOR_VERSION)/zizmor-x86_64-unknown-linux-gnu.tar.gz \
+	    -o $$tmp && \
+	  echo "$(ZIZMOR_SHA256)  $$tmp" | sha256sum -c - && \
+	  tar xzf $$tmp -C $(LOCALBIN) && \
+	  mv $(LOCALBIN)/zizmor $(ZIZMOR) && \
+	  rm -f $$tmp; }
 
 # go-install-tool will 'go install' any package with custom target and name of binary, if it doesn't exist
 # $1 - target path with name of binary (ideally with version)
