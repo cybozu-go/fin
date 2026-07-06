@@ -129,6 +129,10 @@ lint-fix: golangci-lint ## Run golangci-lint linter and perform fixes
 run-actionlint: actionlint ## Run actionlint.
 	$(ACTIONLINT)
 
+.PHONY: run-ghalint
+run-ghalint: ghalint ## Run ghalint.
+	$(GHALINT) run && $(GHALINT) run-action
+
 .PHONY: check-uncommitted
 check-uncommitted: ## Check if latest generated artifacts are committed.
 	git diff --exit-code --name-only
@@ -255,6 +259,7 @@ CONTROLLER_GEN ?= $(LOCALBIN)/controller-gen-$(CONTROLLER_TOOLS_VERSION)
 GOLANGCI_LINT ?= $(LOCALBIN)/golangci-lint-$(GOLANGCI_LINT_VERSION)
 MOCKGEN ?= $(LOCALBIN)/mockgen-$(MOCKGEN_VERSION)
 ACTIONLINT ?= $(LOCALBIN)/actionlint-$(ACTIONLINT_VERSION)
+GHALINT ?= $(LOCALBIN)/ghalint-$(GHALINT_VERSION)
 
 .PHONY: kustomize
 kustomize: $(KUSTOMIZE) ## Download kustomize locally if necessary.
@@ -280,6 +285,11 @@ $(MOCKGEN): $(LOCALBIN)
 actionlint: $(ACTIONLINT) ## Download actionlint locally if necessary.
 $(ACTIONLINT): $(LOCALBIN)
 	$(call go-install-tool,$(ACTIONLINT),github.com/rhysd/actionlint/cmd/actionlint,$(ACTIONLINT_VERSION))
+
+.PHONY: ghalint
+ghalint: $(GHALINT) ## Download ghalint locally if necessary.
+$(GHALINT): $(LOCALBIN)
+	$(call go-install-tool,$(GHALINT),github.com/suzuki-shunsuke/ghalint/cmd/ghalint,$(GHALINT_VERSION))
 
 # go-install-tool will 'go install' any package with custom target and name of binary, if it doesn't exist
 # $1 - target path with name of binary (ideally with version)
