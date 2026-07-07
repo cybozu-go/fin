@@ -18,6 +18,11 @@ CONTROLLER_TOOLS_VERSION := v0.20.1
 GOLANGCI_LINT_VERSION := v2.11.4
 # https://github.com/rhysd/actionlint/releases
 ACTIONLINT_VERSION := v1.7.12
+# https://github.com/suzuki-shunsuke/ghalint/releases
+GHALINT_VERSION := v1.5.6
+# https://github.com/woodruffw/zizmor/releases
+ZIZMOR_VERSION := v1.26.1
+ZIZMOR_SHA256 := 8556289a64e7aaf2400cd516f61a471aa91c5902cc56ad96a82fd12f90c2ef73
 
 # Tools versions which are defined in go.mod
 SELF_DIR := $(dir $(lastword $(MAKEFILE_LIST)))
