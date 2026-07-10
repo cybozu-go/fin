@@ -38,20 +38,20 @@ jobs:
       - run: echo "${GITHUB_TOKEN}" | docker login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - run: make docker-build IMG=ghcr.io/cybozu-go/fin TAG="${RELEASE_VERSION}"
+      - run: make docker-build IMG=ghcr.io/cybozu-go/fin TAG="${VERSION}"
         env:
-          RELEASE_VERSION: ${{ steps.check_version.outputs.version }}
-      - run: docker push "ghcr.io/cybozu-go/fin:${RELEASE_VERSION}"
+          VERSION: ${{ steps.check_version.outputs.version }}
+      - run: docker push "ghcr.io/cybozu-go/fin:${VERSION}"
         env:
-          RELEASE_VERSION: ${{ steps.check_version.outputs.version }}
+          VERSION: ${{ steps.check_version.outputs.version }}
 
       - name: "Push branch tag"
         if: ${{ steps.check_version.outputs.prerelease == 'false' }}
         env:
-          RELEASE_VERSION: ${{ steps.check_version.outputs.version }}
+          VERSION: ${{ steps.check_version.outputs.version }}
         run: |
-          BRANCH=$(echo "${RELEASE_VERSION}" | cut -d "." -f 1-2)
-          docker tag "ghcr.io/cybozu-go/fin:${RELEASE_VERSION}" "ghcr.io/cybozu-go/fin:${BRANCH}"
+          BRANCH=$(echo "${VERSION}" | cut -d "." -f 1-2)
+          docker tag "ghcr.io/cybozu-go/fin:${VERSION}" "ghcr.io/cybozu-go/fin:${BRANCH}"
           docker push "ghcr.io/cybozu-go/fin:${BRANCH}"
 
       - name: "Get previous tag"
