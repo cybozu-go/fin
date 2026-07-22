@@ -963,6 +963,9 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 				g.Expect(err).ShouldNot(HaveOccurred())
 				g.Expect(updated.IsStoredToNode()).Should(BeFalse())
 			}, "3s", "1s").Should(Succeed())
+
+			By("cleaning up")
+			ForceDeleteFinBackupAndWaitForRemoved(ctx, finbackup1)
 		})
 
 		It("should set ChecksumMismatched=True when verification Job exits with code 2", func(ctx SpecContext) {
@@ -1007,6 +1010,9 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 				g.Expect(err).ShouldNot(HaveOccurred())
 				g.Expect(updated.IsVerifiedTrue()).Should(BeFalse())
 			}, "3s", "1s").Should(Succeed())
+
+			By("cleaning up")
+			ForceDeleteFinBackupAndWaitForRemoved(ctx, finbackup1)
 		})
 
 		//nolint:dupl
@@ -1082,6 +1088,9 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 				g.Expect(err).ShouldNot(HaveOccurred())
 				g.Expect(updated.Finalizers).Should(ContainElement("finbackup.fin.cybozu.io/finalizer"))
 			}, "3s", "1s").Should(Succeed())
+
+			By("cleaning up")
+			ForceDeleteFinBackupAndWaitForRemoved(ctx, finbackup1)
 		})
 	})
 
@@ -1151,6 +1160,9 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 				g.Expect(err).ShouldNot(HaveOccurred())
 				g.Expect(updated.IsStoredToNode()).Should(BeFalse())
 			}, "3s", "1s").Should(Succeed())
+
+			By("cleaning up")
+			ForceDeleteFinBackupAndWaitForRemoved(ctx, finbackup1)
 		})
 
 		//nolint:dupl
@@ -1195,6 +1207,9 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 				g.Expect(err).ShouldNot(HaveOccurred())
 				g.Expect(updated.IsVerifiedTrue()).Should(BeFalse())
 			}, "3s", "1s").Should(Succeed())
+
+			By("cleaning up")
+			ForceDeleteFinBackupAndWaitForRemoved(ctx, finbackup1)
 		})
 
 		//nolint:dupl
@@ -1258,6 +1273,9 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 
 			By("checking no deletion Job is created")
 			ExpectNoJob(ctx, k8sClient, deletionJobName(finbackup1), cephNamespace)
+
+			By("cleaning up")
+			ForceDeleteFinBackupAndWaitForRemoved(ctx, finbackup1)
 		})
 
 		//nolint:dupl
@@ -1333,6 +1351,9 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 				g.Expect(err).ShouldNot(HaveOccurred())
 				g.Expect(updated.Finalizers).Should(ContainElement("finbackup.fin.cybozu.io/finalizer"))
 			}, "3s", "1s").Should(Succeed())
+
+			By("cleaning up")
+			ForceDeleteFinBackupAndWaitForRemoved(ctx, finbackup1)
 		})
 	})
 

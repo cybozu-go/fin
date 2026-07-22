@@ -216,6 +216,56 @@ func ExpectNoJob(ctx context.Context, k8sClient client.Client, jobName, namespac
 	Expect(k8serrors.IsNotFound(err)).Should(BeTrue())
 }
 
+// deleteJobAndWaitForRemoved deletes the named Job and waits until it is
+// actually gone.
+func deleteJobAndWaitForRemoved(ctx context.Context, jobName, namespace string) {
+	GinkgoHelper()
+	jobKey := types.NamespacedName{Name: jobName, Namespace: namespace}
+	propagationPolicy := metav1.DeletePropagationBackground
+	err := k8sClient.Delete(ctx, &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{Name: jobName, Namespace: namespace},
+	}, &client.DeleteOptions{PropagationPolicy: &propagationPolicy})
+	Expect(client.IgnoreNotFound(err)).Should(Succeed())
+
+	Eventually(func(g Gomega) {
+		var job batchv1.Job
+		err := k8sClient.Get(ctx, jobKey, &job)
+		g.Expect(k8serrors.IsNotFound(err)).Should(BeTrue())
+	}, "5s", "1s").Should(Succeed())
+}
+
+// ForceDeleteFinBackupAndWaitForRemoved force-deletes the given FinBackup by
+// stripping its finalizer, bypassing the controller. This functions is
+// intended to use if the controller is missing or doesn't handle the FinBackup
+// anymore (e.g. ChecksumMismatched or MetadataCorrupted is set).
+// It then deletes all jobs for this FinBackup to prevent resource leak.
+func ForceDeleteFinBackupAndWaitForRemoved(ctx context.Context, finbackup *finv1.FinBackup) {
+	GinkgoHelper()
+
+	var latest finv1.FinBackup
+	err := k8sClient.Get(ctx, client.ObjectKeyFromObject(finbackup), &latest)
+	if !k8serrors.IsNotFound(err) {
+		Expect(err).NotTo(HaveOccurred())
+		latest.Finalizers = nil
+		Expect(k8sClient.Update(ctx, &latest)).To(Succeed())
+		Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, &latest))).To(Succeed())
+
+		Eventually(func(g Gomega) {
+			err := k8sClient.Get(ctx, client.ObjectKeyFromObject(finbackup), &finv1.FinBackup{})
+			g.Expect(k8serrors.IsNotFound(err)).To(BeTrue())
+		}, "10s", "1s").Should(Succeed())
+	}
+
+	for _, jobName := range []string{
+		backupJobName(finbackup),
+		verificationJobName(finbackup),
+		cleanupJobName(finbackup),
+		deletionJobName(finbackup),
+	} {
+		deleteJobAndWaitForRemoved(ctx, jobName, cephNamespace)
+	}
+}
+
 func NewRBDStorageClass(prefix, clusterID, poolName string) *storagev1.StorageClass {
 	return &storagev1.StorageClass{
 		ObjectMeta: metav1.ObjectMeta{
