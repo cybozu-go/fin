@@ -963,6 +963,9 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 				g.Expect(err).ShouldNot(HaveOccurred())
 				g.Expect(updated.IsStoredToNode()).Should(BeFalse())
 			}, "3s", "1s").Should(Succeed())
+
+			By("cleaning up")
+			ForceDeleteFinBackupAndWaitForRemoved(ctx, finbackup1)
 		})
 
 		It("should set ChecksumMismatched=True when verification Job exits with code 2", func(ctx SpecContext) {
@@ -1007,6 +1010,9 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 				g.Expect(err).ShouldNot(HaveOccurred())
 				g.Expect(updated.IsVerifiedTrue()).Should(BeFalse())
 			}, "3s", "1s").Should(Succeed())
+
+			By("cleaning up")
+			ForceDeleteFinBackupAndWaitForRemoved(ctx, finbackup1)
 		})
 
 		//nolint:dupl
@@ -1082,6 +1088,9 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 				g.Expect(err).ShouldNot(HaveOccurred())
 				g.Expect(updated.Finalizers).Should(ContainElement("finbackup.fin.cybozu.io/finalizer"))
 			}, "3s", "1s").Should(Succeed())
+
+			By("cleaning up")
+			ForceDeleteFinBackupAndWaitForRemoved(ctx, finbackup1)
 		})
 	})
 
@@ -1151,6 +1160,9 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 				g.Expect(err).ShouldNot(HaveOccurred())
 				g.Expect(updated.IsStoredToNode()).Should(BeFalse())
 			}, "3s", "1s").Should(Succeed())
+
+			By("cleaning up")
+			ForceDeleteFinBackupAndWaitForRemoved(ctx, finbackup1)
 		})
 
 		//nolint:dupl
@@ -1195,6 +1207,9 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 				g.Expect(err).ShouldNot(HaveOccurred())
 				g.Expect(updated.IsVerifiedTrue()).Should(BeFalse())
 			}, "3s", "1s").Should(Succeed())
+
+			By("cleaning up")
+			ForceDeleteFinBackupAndWaitForRemoved(ctx, finbackup1)
 		})
 
 		//nolint:dupl
@@ -1258,6 +1273,9 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 
 			By("checking no deletion Job is created")
 			ExpectNoJob(ctx, k8sClient, deletionJobName(finbackup1), cephNamespace)
+
+			By("cleaning up")
+			ForceDeleteFinBackupAndWaitForRemoved(ctx, finbackup1)
 		})
 
 		//nolint:dupl
@@ -1333,6 +1351,9 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 				g.Expect(err).ShouldNot(HaveOccurred())
 				g.Expect(updated.Finalizers).Should(ContainElement("finbackup.fin.cybozu.io/finalizer"))
 			}, "3s", "1s").Should(Succeed())
+
+			By("cleaning up")
+			ForceDeleteFinBackupAndWaitForRemoved(ctx, finbackup1)
 		})
 	})
 
@@ -2409,4 +2430,161 @@ var _ = Describe("fin_backup_create_status metric", Ordered, func() {
 			g.Expect(value).To(Equal(0.0))
 		}, "1s", "0.1s").Should(Succeed())
 	})
+})
+
+var _ = Describe("should limit backup job concurrency", Ordered, func() {
+	startController := func(ctx SpecContext, maxBackupJobs uint64) {
+		rbdRepo := fake.NewRBDRepository2(rbdPoolName, rbdImageName)
+		mgr, err := ctrl.NewManager(cfg, ctrl.Options{
+			Scheme:  scheme.Scheme,
+			Metrics: metricsserver.Options{BindAddress: "0"},
+			Controller: configv1.Controller{
+				SkipNameValidation: ptr.To(true),
+			},
+		})
+		Expect(err).ToNot(HaveOccurred())
+
+		reconciler := &FinBackupReconciler{
+			Client:                  mgr.GetClient(),
+			Scheme:                  mgr.GetScheme(),
+			cephClusterNamespace:    cephNamespace,
+			podImage:                podImage,
+			maxPartSize:             &defaultMaxPartSize,
+			snapRepo:                rbdRepo,
+			imageLocker:             rbdRepo,
+			rawImgExpansionUnitSize: 100 * 1 << 20,
+			rawChecksumChunkSize:    testRawChecksumChunkSize,
+			diffChecksumChunkSize:   testDiffChecksumChunkSize,
+			maxBackupJobs:           maxBackupJobs,
+		}
+		Expect(reconciler.SetupWithManager(mgr)).ToNot(HaveOccurred())
+
+		go func() {
+			defer GinkgoRecover()
+			err := mgr.Start(ctx)
+			Expect(err).ToNot(HaveOccurred(), "failed to run controller")
+		}()
+	}
+
+	getActiveBackupJobCount := func(g Gomega, ctx SpecContext) int {
+		var jobList batchv1.JobList
+		g.Expect(k8sClient.List(ctx, &jobList,
+			client.InNamespace(cephNamespace),
+			client.MatchingLabels{
+				"app.kubernetes.io/name":      labelAppNameValue,
+				"app.kubernetes.io/component": labelComponentBackupJob,
+			},
+		)).To(Succeed())
+		count := 0
+		for i := range jobList.Items {
+			done, err := jobCompleted(&jobList.Items[i])
+			g.Expect(err).ToNot(HaveOccurred(), "failed to get job completion status")
+			if done {
+				continue
+			}
+			count++
+		}
+		return count
+	}
+
+	completeOneActiveBackupJob := func(g Gomega, ctx SpecContext) {
+		var jobList batchv1.JobList
+		g.Expect(k8sClient.List(ctx, &jobList,
+			client.InNamespace(cephNamespace),
+			client.MatchingLabels{
+				"app.kubernetes.io/name":      labelAppNameValue,
+				"app.kubernetes.io/component": labelComponentBackupJob,
+			},
+		)).To(Succeed())
+
+		found := false
+		for i := range jobList.Items {
+			done, err := jobCompleted(&jobList.Items[i])
+			g.Expect(err).ToNot(HaveOccurred(), "failed to get job completion status")
+			if done {
+				continue
+			}
+
+			makeJobSucceeded(&jobList.Items[i])
+			g.Expect(k8sClient.Status().Update(ctx, &jobList.Items[i])).To(Succeed())
+			found = true
+			break
+		}
+		g.Expect(found).To(BeTrue(), "no more active backup job to complete")
+	}
+
+	var fbs []*finv1.FinBackup
+	var pvcs []*corev1.PersistentVolumeClaim
+
+	BeforeEach(func(ctx SpecContext) {
+		By("creating 3 independent PVC/FinBackup pairs")
+		fbs = nil
+		pvcs = nil
+		for i := 0; i < 3; i++ {
+			pvc, pv := NewPVCAndPV(normalSC, userNamespace,
+				utils.GetUniqueName("pvc-"), utils.GetUniqueName("pv-"), rbdImageName)
+			Expect(k8sClient.Create(ctx, pvc)).Should(Succeed())
+			Expect(k8sClient.Create(ctx, pv)).Should(Succeed())
+			pvcs = append(pvcs, pvc)
+
+			fb := NewFinBackup(workNamespace, utils.GetUniqueName("fb-"), pvc.Name, pvc.Namespace, "test-node")
+			Expect(k8sClient.Create(ctx, fb)).Should(Succeed())
+			fbs = append(fbs, fb)
+		}
+	})
+
+	AfterEach(func(ctx SpecContext) {
+		// We are only interested in whether fin-controller creates the expected
+		// number of backup jobs, so we can force-delete the FinBackups to skip
+		// succeeding steps.
+		By("force-deleting the FinBackups created in this test")
+		for _, fb := range fbs {
+			ForceDeleteFinBackupAndWaitForRemoved(ctx, fb)
+		}
+
+		By("deleting the PVCs and PVs created in this test")
+		for _, pvc := range pvcs {
+			DeletePVCAndPV(ctx, pvc.Namespace, pvc.Name)
+		}
+	})
+
+	DescribeTable("should create at most maxBackupJobs backup jobs at a time", Ordered,
+		func(ctx SpecContext, maxBackupJobs int) {
+			startController(ctx, uint64(maxBackupJobs))
+
+			maxConcurrentJobs := maxBackupJobs
+			if maxBackupJobs == 0 {
+				maxConcurrentJobs = len(fbs)
+			}
+
+			for remaining := len(fbs); remaining > 0; remaining-- {
+				wantActive := min(maxConcurrentJobs, remaining)
+
+				By(fmt.Sprintf("waiting for %d backup job(s) to be created", wantActive))
+				Eventually(func(g Gomega, ctx SpecContext) {
+					count := getActiveBackupJobCount(g, ctx)
+					Expect(count).To(BeNumerically("<=", maxConcurrentJobs))
+					g.Expect(count).To(Equal(wantActive))
+				}, "30s", "1s").WithContext(ctx).Should(Succeed())
+
+				By(fmt.Sprintf("verifying that at most %d active backup job(s) exist at a time", wantActive))
+				Consistently(func(g Gomega, ctx SpecContext) {
+					count := getActiveBackupJobCount(g, ctx)
+					Expect(count).To(BeNumerically("<=", maxConcurrentJobs))
+					g.Expect(count).To(Equal(wantActive))
+				}, "5s", "1s").WithContext(ctx).Should(Succeed())
+
+				By("completing one backup job")
+				Eventually(completeOneActiveBackupJob, "5s", "1s").WithContext(ctx).Should(Succeed())
+			}
+
+			By("verifying that no backup job remains active after all backups are completed")
+			Eventually(func(g Gomega, ctx SpecContext) {
+				g.Expect(getActiveBackupJobCount(g, ctx)).To(Equal(0))
+			}, "30s", "1s").WithContext(ctx).Should(Succeed())
+		},
+		Entry("maxBackupJobs=1", 1),
+		Entry("maxBackupJobs=2", 2),
+		Entry("maxBackupJobs=0 means no limit", 0),
+	)
 })

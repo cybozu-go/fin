@@ -54,6 +54,7 @@ func controllerMain(args []string) error {
 	var webhookCertPath string
 	var webhookKeyPath string
 	var overwriteFBCSchedule string
+	var maxBackupJobs uint64
 
 	fs := flag.NewFlagSet("", flag.ExitOnError)
 	fs.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "The address the metric endpoint binds to.")
@@ -78,6 +79,8 @@ func controllerMain(args []string) error {
 	fs.StringVar(&overwriteFBCSchedule, "overwrite-fbc-schedule", "",
 		"By setting this option, every CronJob created by this controller for every FinBackupConfig "+
 			"will use its value as .spec.schedule. This option is intended for testing purposes only.")
+	fs.Uint64Var(&maxBackupJobs, "max-backup-jobs", 8,
+		"The maximum number of backup jobs that can run simultaneously. If you set this to 0, there is no limit.")
 	opts := zap.Options{
 		Development: true,
 	}
@@ -105,7 +108,6 @@ func controllerMain(args []string) error {
 	if diffChecksumChunkSize == 0 {
 		return fmt.Errorf("diff-checksum-chunk-size must be greater than 0")
 	}
-
 	// if the enable-http2 flag is false (the default), http/2 should be disabled
 	// due to its vulnerabilities. More specifically, disabling http/2 will
 	// prevent from being vulnerable to the HTTP/2 Stream Cancellation and
@@ -190,6 +192,7 @@ func controllerMain(args []string) error {
 		rawImgExpansionUnitSize,
 		rawChecksumChunkSize,
 		diffChecksumChunkSize,
+		maxBackupJobs,
 	)
 	if err = finBackupReconciler.SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("unable to create controller FinBackup: %w", err)

@@ -76,6 +76,7 @@ type FinBackupReconciler struct {
 	rawImgExpansionUnitSize uint64
 	rawChecksumChunkSize    uint64
 	diffChecksumChunkSize   uint64
+	maxBackupJobs           uint64
 }
 
 func NewFinBackupReconciler(
@@ -89,6 +90,7 @@ func NewFinBackupReconciler(
 	rawImgExpansionUnitSize,
 	rawChecksumChunkSize,
 	diffChecksumChunkSize uint64,
+	maxBackupJobs uint64,
 ) *FinBackupReconciler {
 	return &FinBackupReconciler{
 		Client:                  client,
@@ -101,6 +103,7 @@ func NewFinBackupReconciler(
 		rawImgExpansionUnitSize: rawImgExpansionUnitSize,
 		rawChecksumChunkSize:    rawChecksumChunkSize,
 		diffChecksumChunkSize:   diffChecksumChunkSize,
+		maxBackupJobs:           maxBackupJobs,
 	}
 }
 
@@ -295,6 +298,36 @@ func (r *FinBackupReconciler) deleteOldFinBackup(
 	return nil
 }
 
+func (r *FinBackupReconciler) canNewBackupJobBeCreated(ctx context.Context) (bool, error) {
+	if r.maxBackupJobs == 0 {
+		return true, nil
+	}
+
+	var jobList batchv1.JobList
+	if err := r.List(ctx, &jobList, &client.ListOptions{
+		Namespace: r.cephClusterNamespace,
+		LabelSelector: labels.SelectorFromSet(map[string]string{
+			"app.kubernetes.io/name":      labelAppNameValue,
+			"app.kubernetes.io/component": labelComponentBackupJob,
+		}),
+	}); err != nil {
+		return false, fmt.Errorf("failed to list backup jobs: %w", err)
+	}
+
+	var count uint64
+	for i := range jobList.Items {
+		done, err := jobCompleted(&jobList.Items[i])
+		if err != nil {
+			return false, fmt.Errorf("failed to check if backup job %s is completed: %w", jobList.Items[i].Name, err)
+		}
+		if !done {
+			count++
+		}
+	}
+
+	return count < r.maxBackupJobs, nil
+}
+
 func (r *FinBackupReconciler) reconcileBackup(
 	ctx context.Context,
 	backup finv1.FinBackup,
@@ -361,10 +394,18 @@ func (r *FinBackupReconciler) reconcileBackup(
 	}
 
 	if backup.Status.BackupStartTime.IsZero() {
+		ok, err := r.canNewBackupJobBeCreated(ctx)
+		if err != nil {
+			return ctrl.Result{}, fmt.Errorf("failed to check backup job limit: %w", err)
+		}
+		if !ok {
+			logger.Info("max-backup-jobs limit reached, waiting for other backup jobs to complete")
+			return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+		}
+
 		base := backup.DeepCopy()
 		backup.Status.BackupStartTime = metav1.Now()
-		err = r.Status().Patch(ctx, &backup, client.MergeFrom(base))
-		if err != nil {
+		if err := r.Status().Patch(ctx, &backup, client.MergeFrom(base)); err != nil {
 			logger.Error(err, "failed to update FinBackup status")
 			return ctrl.Result{}, err
 		}
