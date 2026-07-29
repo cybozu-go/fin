@@ -115,8 +115,9 @@ func finbackupconfigTestSuite() {
 		Eventually(func(g Gomega) {
 			fb := &finv1.FinBackup{}
 			g.Expect(ctrlClient.Get(ctx, client.ObjectKeyFromObject(fb_manual), fb)).NotTo(HaveOccurred())
+			g.Expect(fb.IsStoredToNode()).To(BeTrue())
 			g.Expect(fb.IsVerifiedTrue()).To(BeTrue())
-		}, "20s", "1s").Should(Succeed())
+		}, "60s", "1s").Should(Succeed())
 
 		By("FB_b should be auto-deleted")
 		WaitForFinBackupNotFound(ctx, ctrlClient, fb_b, 20*time.Second)
