@@ -73,8 +73,9 @@ func deleteIncrementalBackupTestSuite() {
 			fb := &finv1.FinBackup{}
 			err := ctrlClient.Get(ctx, client.ObjectKeyFromObject(finbackup2), fb)
 			g.Expect(err).ShouldNot(HaveOccurred())
+			g.Expect(fb.IsStoredToNode()).To(BeTrue())
 			g.Expect(fb.IsVerificationSkipped()).To(BeTrue())
-		}, "10s", "1s").Should(Succeed())
+		}, "60s", "1s").Should(Succeed())
 
 		// Act
 		Expect(DeleteFinBackup(ctx, ctrlClient, finbackup2)).NotTo(HaveOccurred())
