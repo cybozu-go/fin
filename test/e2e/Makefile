@@ -101,6 +101,8 @@ setup-fin-volume: $(MINIKUBE_BIN) $(KUBECTL)
 wait-deploy-ready: NS=
 wait-deploy-ready: DEPLOY=
 wait-deploy-ready:
+	$(KUBECTL) -n $(NS) get events -w --output=wide & EVENTS_PID=$$!; \
+	trap "kill $$EVENTS_PID 2>/dev/null" EXIT; \
 	is_ok="false"; \
 	for ((i=0;i<$(TIMEOUT_SECS);i+=$(POLLING_INTERVAL))); do \
 		available_replicas=$$($(KUBECTL) -n $(NS) get deploy $(DEPLOY) -o json | jq -r ".status.availableReplicas"); \
@@ -119,7 +121,8 @@ wait-deploy-ready:
 .PHONY: launch-rook-ceph
 launch-rook-ceph: create-loop-dev $(KUBECTL) $(HELM)
 	$(HELM) upgrade --install --version $(ROOK_CHART_VERSION) --repo https://charts.rook.io/release \
-		--create-namespace --namespace $(NS) rook-ceph rook-ceph -f testdata/values.yaml --wait
+		--create-namespace --namespace $(NS) rook-ceph rook-ceph -f testdata/values.yaml \
+		--set image.pullPolicy=IfNotPresent --wait
 	sed \
 		-e "s%{LOOP_DEV}%$(LOOP_DEV)%" \
 		-e "s%{NODE_NAME}%$(MINIKUBE_PROFILE_NAME)%" \
@@ -142,6 +145,17 @@ image-tar-load:
 	$(MINIKUBE) image load ../../${IMG_TAR}
 	$(MINIKUBE) ssh -- docker images || true
 	rm ../../${IMG_TAR} || true
+
+ROOK_OPERATOR_IMAGE_TAR ?=
+CEPH_IMAGE_TAR ?=
+CEPH_CSI_IMAGE_TAR ?=
+
+.PHONY: load-rook-images
+load-rook-images: $(MINIKUBE_BIN)
+	$(MINIKUBE) image load $(ROOK_OPERATOR_IMAGE_TAR) & \
+	$(MINIKUBE) image load $(CEPH_IMAGE_TAR) & \
+	$(MINIKUBE) image load $(CEPH_CSI_IMAGE_TAR) & \
+	wait
 
 .PHONY: setup-components
 setup-components:
