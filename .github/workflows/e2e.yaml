@@ -45,14 +45,42 @@ jobs:
       - uses: ./.github/actions/set-up-kvm-for-e2e-tests
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
-      - name: Build and push Docker image with cache
+
+      # The custom-ceph stage is expensive but rarely changes, so cache it using
+      # the Dockerfile hash. The key is branch-independent, meaning an entry
+      # created on the main branch can be restored from any pull request.
+      - name: Restore custom-ceph cache
+        id: cache-custom-ceph
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: /tmp/custom-ceph-cache
+          key: custom-ceph-${{ hashFiles('Dockerfile') }}
+
+      - name: Build custom-ceph stage
+        if: steps.cache-custom-ceph.outputs.cache-hit != 'true'
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          target: custom-ceph
+          cache-to: type=local,dest=/tmp/custom-ceph-cache
+
+      # Only main saves the cache: a PR-saved cache cannot be restored by
+      # other branches anyway, and not saving prevents cache poisoning.
+      - name: Save custom-ceph cache
+        if: github.ref == 'refs/heads/main' && steps.cache-custom-ceph.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: /tmp/custom-ceph-cache
+          key: custom-ceph-${{ hashFiles('Dockerfile') }}
+
+      - name: Build Docker image with cache
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           context: .
           tags: controller:latest
           load: true
-          cache-from: type=gha,scope=${{ github.ref_name }}
-          cache-to: type=gha,mode=max,scope=${{ github.ref_name }}
+          cache-from: type=local,src=/tmp/custom-ceph-cache
 
       - name: Setup minikube with kvm2 driver
         run: |
