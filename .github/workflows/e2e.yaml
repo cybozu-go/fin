@@ -46,14 +46,14 @@ jobs:
 
       - uses: ./.github/actions/set-up-kvm-for-e2e-tests
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
 
       # The custom-ceph stage is expensive but rarely changes, so cache it using
       # the Dockerfile hash. The key is branch-independent, meaning an entry
       # created on the main branch can be restored from any pull request.
       - name: Restore custom-ceph cache
         id: cache-custom-ceph
-        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: /tmp/custom-ceph-cache
           key: custom-ceph-${{ hashFiles('Dockerfile') }}
@@ -71,7 +71,7 @@ jobs:
       - name: Save custom-ceph cache
         if: github.ref == 'refs/heads/main' && steps.cache-custom-ceph.outputs.cache-hit != 'true'
         continue-on-error: true
-        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: /tmp/custom-ceph-cache
           key: custom-ceph-${{ hashFiles('Dockerfile') }}
