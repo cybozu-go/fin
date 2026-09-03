@@ -81,4 +81,5 @@ var _ = Describe("Fin", func() {
 	Context("pvc", Label("pvc-deletion"), Label("misc"), Ordered, pvcDeletionTestSuite)
 	Context("checksum mismatch", Label("checksum"), Label("misc"), Ordered, checksumMismatchTestSuite)
 	Context("finbackupconfig", Label("finbackupconfig"), Ordered, finbackupconfigTestSuite)
+	Context("node deletion", Label("node-deletion"), Label("misc"), Ordered, nodeDeletionTestSuite)
 })
