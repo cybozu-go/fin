@@ -16,10 +16,12 @@ import (
 	"github.com/cybozu-go/fin/test/utils"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/stretchr/testify/require"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -27,6 +29,8 @@ import (
 	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	ctrlfake "sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	configv1 "sigs.k8s.io/controller-runtime/pkg/config"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	crtlmetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
@@ -1397,6 +1401,272 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 			}, "5s", "1s").Should(Succeed())
 		})
 	})
+
+	// Description:
+	//   The backup destination node is missing or disappears.
+	//
+	// Assert:
+	//   - A FinBackup on an existing node gets an owner reference to that node.
+	//   - A FinBackup naming a node that does not exist is deleted, leaving no snapshot
+	//     and no job behind.
+	//   - A FinBackup is deleted when its node disappears, together with its running job
+	//     and without anyone completing a cleanup job.
+	//   - It is deleted whatever state it is in, including metadata marked corrupted and a
+	//     backup-target PVC that is gone but recorded in the status.
+	//   - One marked corrupted still gets the owner reference, so a node recreated under
+	//     the same name can be told apart from the original.
+	//   - It is kept while Ceph rejects the snapshot removal, and finalized once Ceph
+	//     recovers.
+	Describe("a FinBackup whose backup destination node is unavailable", func() {
+		var pvc *corev1.PersistentVolumeClaim
+		var pv *corev1.PersistentVolume
+		var finbackup *finv1.FinBackup
+		var node *corev1.Node
+
+		expectFinBackupGone := func(ctx SpecContext, fb *finv1.FinBackup) {
+			GinkgoHelper()
+			Eventually(func(g Gomega) {
+				var got finv1.FinBackup
+				err := k8sClient.Get(ctx, client.ObjectKeyFromObject(fb), &got)
+				g.Expect(k8serrors.IsNotFound(err)).To(BeTrue())
+			}, "10s", "1s").Should(Succeed())
+		}
+
+		BeforeEach(func(ctx SpecContext) {
+			node = nil
+
+			By("creating a pair of PVC and PV")
+			pvc, pv = NewPVCAndPV(normalSC, userNamespace, "pvc-node-gone", "pv-node-gone", rbdImageName)
+			Expect(k8sClient.Create(ctx, pvc)).Should(Succeed())
+			Expect(k8sClient.Create(ctx, pv)).Should(Succeed())
+		})
+
+		// The node is removed before the FinBackup so that teardown takes the gone-node
+		// path. Leaving the node in place would make the FinBackup wait for a cleanup
+		// job that nothing in this suite completes.
+		AfterEach(func(ctx SpecContext) {
+			if node != nil {
+				Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, node))).Should(Succeed())
+			}
+			Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, finbackup))).Should(Succeed())
+			expectFinBackupGone(ctx, finbackup)
+			DeletePVCAndPV(ctx, pvc.Namespace, pvc.Name)
+		})
+
+		It("should set an owner reference to its node", func(ctx SpecContext) {
+			node = &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "owner-ref-node"}}
+			Expect(k8sClient.Create(ctx, node)).Should(Succeed())
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(node), node)).To(Succeed())
+
+			finbackup = NewFinBackup(workNamespace, "fb-owner-ref", pvc.Name, pvc.Namespace, node.Name)
+			Expect(k8sClient.Create(ctx, finbackup)).Should(Succeed())
+
+			Eventually(func(g Gomega) {
+				var got finv1.FinBackup
+				g.Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(finbackup), &got)).To(Succeed())
+				g.Expect(got.OwnerReferences).To(HaveLen(1))
+
+				ref := got.OwnerReferences[0]
+				g.Expect(ref.APIVersion).To(Equal("v1"))
+				g.Expect(ref.Kind).To(Equal("Node"))
+				g.Expect(ref.Name).To(Equal(node.Name))
+				g.Expect(ref.UID).To(Equal(node.UID))
+				g.Expect(ref.BlockOwnerDeletion).To(HaveValue(BeFalse()))
+				g.Expect(ref.Controller).To(BeNil())
+			}, "10s", "1s").Should(Succeed())
+		})
+
+		It("should delete a never-started FinBackup and leave no snapshot or job behind", func(ctx SpecContext) {
+			finbackup = NewFinBackup(workNamespace, "fb-missing-node", pvc.Name, pvc.Namespace, "no-such-node")
+			Expect(k8sClient.Create(ctx, finbackup)).Should(Succeed())
+
+			expectFinBackupGone(ctx, finbackup)
+
+			Consistently(func(g Gomega) {
+				snapshots, err := rbdRepo.ListSnapshots(rbdPoolName, rbdImageName)
+				g.Expect(err).ShouldNot(HaveOccurred())
+				g.Expect(slices.IndexFunc(snapshots, func(snapshot *model.RBDSnapshot) bool {
+					return snapshot.Name == snapshotName(finbackup)
+				})).To(Equal(-1))
+
+				var job batchv1.Job
+				err = k8sClient.Get(ctx,
+					client.ObjectKey{Namespace: cephNamespace, Name: backupJobName(finbackup)}, &job)
+				g.Expect(k8serrors.IsNotFound(err)).To(BeTrue())
+			}, "3s", "1s").Should(Succeed())
+		})
+
+		It("should delete an in-progress backup and its job when the node disappears", func(ctx SpecContext) {
+			node = &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "retiring-node"}}
+			Expect(k8sClient.Create(ctx, node)).Should(Succeed())
+
+			finbackup = NewFinBackup(workNamespace, "fb-retiring", pvc.Name, pvc.Namespace, node.Name)
+			Expect(k8sClient.Create(ctx, finbackup)).Should(Succeed())
+
+			backupJobKey := client.ObjectKey{Namespace: cephNamespace, Name: backupJobName(finbackup)}
+			Eventually(func(g Gomega) {
+				var job batchv1.Job
+				g.Expect(k8sClient.Get(ctx, backupJobKey, &job)).To(Succeed())
+			}, "10s", "1s").Should(Succeed())
+
+			By("deleting the node")
+			Expect(k8sClient.Delete(ctx, node)).Should(Succeed())
+
+			By("checking the FinBackup is removed without anyone completing a job")
+			expectFinBackupGone(ctx, finbackup)
+
+			Eventually(func(g Gomega) {
+				var job batchv1.Job
+				err := k8sClient.Get(ctx, backupJobKey, &job)
+				g.Expect(k8serrors.IsNotFound(err)).To(BeTrue())
+			}, "10s", "1s").Should(Succeed())
+		})
+
+		It("should set an owner reference on a FinBackup marked corrupted", func(ctx SpecContext) {
+			node = &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "corrupt-owner-ref-node"}}
+			Expect(k8sClient.Create(ctx, node)).Should(Succeed())
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(node), node)).To(Succeed())
+
+			finbackup = NewFinBackup(workNamespace, "fb-corrupt-owner-ref", pvc.Name, pvc.Namespace, node.Name)
+			Expect(k8sClient.Create(ctx, finbackup)).Should(Succeed())
+			Eventually(func(g Gomega) {
+				var got finv1.FinBackup
+				g.Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(finbackup), &got)).To(Succeed())
+				meta.SetStatusCondition(&got.Status.Conditions, metav1.Condition{
+					Type:    finv1.BackupConditionMetadataCorrupted,
+					Status:  metav1.ConditionTrue,
+					Reason:  "MetadataCorrupted",
+					Message: "Backup metadata corruption detected",
+				})
+				g.Expect(k8sClient.Status().Update(ctx, &got)).To(Succeed())
+			}, "10s", "1s").Should(Succeed())
+
+			Eventually(func(g Gomega) {
+				var got finv1.FinBackup
+				g.Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(finbackup), &got)).To(Succeed())
+				ref, found := findNodeOwnerReference(got.OwnerReferences)
+				g.Expect(found).To(BeTrue())
+				g.Expect(ref.UID).To(Equal(node.UID))
+			}, "10s", "1s").Should(Succeed())
+		})
+
+		It("should delete a FinBackup whose metadata is marked corrupted", func(ctx SpecContext) {
+			node = &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "corrupt-node"}}
+			Expect(k8sClient.Create(ctx, node)).Should(Succeed())
+
+			finbackup = NewFinBackup(workNamespace, "fb-corrupt", pvc.Name, pvc.Namespace, node.Name)
+			Expect(k8sClient.Create(ctx, finbackup)).Should(Succeed())
+
+			Eventually(func(g Gomega) {
+				var got finv1.FinBackup
+				g.Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(finbackup), &got)).To(Succeed())
+				g.Expect(got.Status.SnapID).NotTo(BeNil())
+			}, "10s", "1s").Should(Succeed())
+
+			By("marking the FinBackup as metadata-corrupted")
+			Eventually(func(g Gomega) {
+				var got finv1.FinBackup
+				g.Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(finbackup), &got)).To(Succeed())
+				meta.SetStatusCondition(&got.Status.Conditions, metav1.Condition{
+					Type:    finv1.BackupConditionMetadataCorrupted,
+					Status:  metav1.ConditionTrue,
+					Reason:  "MetadataCorrupted",
+					Message: "Backup metadata corruption detected",
+				})
+				g.Expect(k8sClient.Status().Update(ctx, &got)).To(Succeed())
+			}, "5s", "1s").Should(Succeed())
+
+			By("deleting the node")
+			Expect(k8sClient.Delete(ctx, node)).Should(Succeed())
+
+			expectFinBackupGone(ctx, finbackup)
+		})
+
+		It("should delete a FinBackup whose backup-target PVC is gone as well", func(ctx SpecContext) {
+			node = &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "orphan-node"}}
+			Expect(k8sClient.Create(ctx, node)).Should(Succeed())
+
+			finbackup = NewFinBackup(workNamespace, "fb-orphan", pvc.Name, pvc.Namespace, node.Name)
+			Expect(k8sClient.Create(ctx, finbackup)).Should(Succeed())
+
+			By("waiting for the snapshot to be taken")
+			Eventually(func(g Gomega) {
+				var got finv1.FinBackup
+				g.Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(finbackup), &got)).To(Succeed())
+				g.Expect(got.Status.SnapID).NotTo(BeNil())
+			}, "10s", "1s").Should(Succeed())
+
+			By("deleting the backup-target PVC and then the node")
+			DeletePVCAndPV(ctx, pvc.Namespace, pvc.Name)
+			Expect(k8sClient.Delete(ctx, node)).Should(Succeed())
+
+			expectFinBackupGone(ctx, finbackup)
+		})
+
+		It("should keep retrying while Ceph rejects the snapshot removal", func(ctx SpecContext) {
+			node = &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "ceph-down-node"}}
+			Expect(k8sClient.Create(ctx, node)).Should(Succeed())
+
+			finbackup = NewFinBackup(workNamespace, "fb-ceph-down", pvc.Name, pvc.Namespace, node.Name)
+			Expect(k8sClient.Create(ctx, finbackup)).Should(Succeed())
+
+			By("waiting for the snapshot to be taken")
+			Eventually(func(g Gomega) {
+				var got finv1.FinBackup
+				g.Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(finbackup), &got)).To(Succeed())
+				g.Expect(got.Status.SnapID).NotTo(BeNil())
+			}, "10s", "1s").Should(Succeed())
+
+			By("making Ceph unreachable and deleting the node")
+			rbdRepo.SetError(errors.New("ceph is unreachable"))
+			DeferCleanup(func() { rbdRepo.SetError(nil) })
+			Expect(k8sClient.Delete(ctx, node)).Should(Succeed())
+
+			By("checking the FinBackup is kept instead of being finalized")
+			Consistently(func(g Gomega) {
+				var got finv1.FinBackup
+				g.Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(finbackup), &got)).To(Succeed())
+				g.Expect(got.Finalizers).To(ContainElement(FinBackupFinalizerName))
+			}, "5s", "1s").Should(Succeed())
+
+			By("checking it is finalized once Ceph recovers")
+			rbdRepo.SetError(nil)
+			expectFinBackupGone(ctx, finbackup)
+		})
+
+		It("should delete a completed backup without a cleanup job when the node disappears",
+			func(ctx SpecContext) {
+				node = &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "gone-node"}}
+				Expect(k8sClient.Create(ctx, node)).Should(Succeed())
+
+				finbackup = NewFinBackup(workNamespace, "fb-gone-node", pvc.Name, pvc.Namespace, node.Name)
+				Expect(k8sClient.Create(ctx, finbackup)).Should(Succeed())
+				MakeFinBackupStoredToNode(ctx, finbackup)
+				MakeFinBackupVerified(ctx, finbackup)
+
+				By("deleting the node")
+				Expect(k8sClient.Delete(ctx, node)).Should(Succeed())
+
+				By("checking the FinBackup is removed without anyone completing a job")
+				expectFinBackupGone(ctx, finbackup)
+
+				By("checking no cleanup or deletion job was left behind")
+				for _, name := range []string{cleanupJobName(finbackup), deletionJobName(finbackup)} {
+					var job batchv1.Job
+					err := k8sClient.Get(ctx, client.ObjectKey{Namespace: cephNamespace, Name: name}, &job)
+					Expect(k8serrors.IsNotFound(err)).To(BeTrue(), "job %s should not exist", name)
+				}
+
+				By("checking the snapshot is removed")
+				Eventually(func(g Gomega) {
+					snapshots, err := rbdRepo.ListSnapshots(rbdPoolName, rbdImageName)
+					g.Expect(err).ShouldNot(HaveOccurred())
+					g.Expect(slices.IndexFunc(snapshots, func(snapshot *model.RBDSnapshot) bool {
+						return snapshot.Name == snapshotName(finbackup)
+					})).To(Equal(-1))
+				}, "5s", "1s").Should(Succeed())
+			})
+	})
 })
 
 var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
@@ -2588,3 +2858,150 @@ var _ = Describe("should limit backup job concurrency", Ordered, func() {
 		Entry("maxBackupJobs=0 means no limit", 0),
 	)
 })
+
+func Test_reconcileDeleteOnGoneNode(t *testing.T) {
+	tests := []struct {
+		name          string
+		deletedAgo    time.Duration
+		wantErr       bool
+		wantFinalizer bool
+	}{
+		{
+			name:          "within the retry period, so Ceph is given another chance",
+			deletedAgo:    goneNodeSnapshotRetryPeriod / 2,
+			wantErr:       true,
+			wantFinalizer: true,
+		},
+		{
+			name:          "past the retry period, so the FinBackup is finalized anyway",
+			deletedAgo:    goneNodeSnapshotRetryPeriod * 2,
+			wantErr:       false,
+			wantFinalizer: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			deletedAt := metav1.NewTime(time.Now().Add(-tt.deletedAgo))
+			backup := &finv1.FinBackup{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace:         workNamespace,
+					Name:              "fb-gone-node",
+					Finalizers:        []string{FinBackupFinalizerName},
+					DeletionTimestamp: &deletedAt,
+					// Read instead of the PVC and PV, which are gone with the node.
+					Annotations: map[string]string{
+						annotationRBDPool:              rbdPoolName,
+						AnnotationBackupTargetRBDImage: rbdImageName,
+					},
+				},
+				Spec: finv1.FinBackupSpec{Node: "no-such-node"},
+			}
+
+			repo := fake.NewRBDRepository2(rbdPoolName, rbdImageName)
+			repo.SetError(errors.New("ceph is unreachable"))
+			r := &FinBackupReconciler{
+				Client:               ctrlfake.NewClientBuilder().WithScheme(testScheme(t)).WithObjects(backup).Build(),
+				snapRepo:             repo,
+				cephClusterNamespace: cephNamespace,
+			}
+
+			_, err := r.reconcileDeleteOnGoneNode(context.Background(), backup, false)
+			if tt.wantErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+			require.Equal(t, tt.wantFinalizer,
+				controllerutil.ContainsFinalizer(backup, FinBackupFinalizerName))
+		})
+	}
+}
+
+func Test_Reconcile_goneNodeOwnership(t *testing.T) {
+	transient := k8serrors.NewInternalError(errors.New("etcd leader changed"))
+
+	tests := []struct {
+		name        string
+		storageSC   *storagev1.StorageClass
+		getSCErr    error
+		noPVC       bool
+		wantErr     bool
+		wantDeleted bool
+	}{
+		{
+			name:        "a PVC on the Ceph cluster of this instance",
+			storageSC:   NewRBDStorageClass("owned", cephClusterID, rbdPoolName),
+			wantDeleted: true,
+		},
+		{
+			name:      "a PVC on the Ceph cluster of another instance",
+			storageSC: NewRBDStorageClass("owned", "other-ceph", rbdPoolName),
+		},
+		{
+			// Ownership stays unknowable, so this is retried rather than acted on.
+			name:    "a StorageClass that went away with the node",
+			wantErr: true,
+		},
+		{
+			name:      "a StorageClass that cannot be read right now",
+			storageSC: NewRBDStorageClass("owned", cephClusterID, rbdPoolName),
+			getSCErr:  transient,
+			wantErr:   true,
+		},
+		{
+			// The PVC is what ownership is read from, so it is retried rather than acted on.
+			name:      "a backup target PVC that cannot be read",
+			storageSC: NewRBDStorageClass("owned", cephClusterID, rbdPoolName),
+			noPVC:     true,
+			wantErr:   true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// The PVC always names the same StorageClass; each case decides whether one
+			// with that name exists and which Ceph cluster it points at.
+			const scName = "sc-gone"
+			pvc, pv := NewPVCAndPV(&storagev1.StorageClass{
+				ObjectMeta: metav1.ObjectMeta{Name: scName},
+			}, userNamespace, "pvc-gone", "pv-gone", rbdImageName)
+			backup := NewFinBackup(workNamespace, "fb-gone", pvc.Name, pvc.Namespace, "no-such-node")
+
+			objs := []client.Object{pvc, pv, backup}
+			if tt.noPVC {
+				objs = []client.Object{backup}
+			}
+			if tt.storageSC != nil {
+				tt.storageSC.Name = scName
+				objs = append(objs, tt.storageSC)
+			}
+			builder := ctrlfake.NewClientBuilder().WithScheme(testScheme(t)).WithObjects(objs...)
+			if tt.getSCErr != nil {
+				builder = builder.WithInterceptorFuncs(interceptor.Funcs{
+					Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey,
+						obj client.Object, opts ...client.GetOption) error {
+						if _, ok := obj.(*storagev1.StorageClass); ok {
+							return tt.getSCErr
+						}
+						return c.Get(ctx, key, obj, opts...)
+					},
+				})
+			}
+			r := &FinBackupReconciler{Client: builder.Build(), cephClusterNamespace: cephNamespace}
+
+			// Reconcile rather than reconcileGoneNode: the ownership check runs before the
+			// gone-node branch, so that is where the policy lives.
+			_, err := r.Reconcile(context.Background(),
+				ctrl.Request{NamespacedName: client.ObjectKeyFromObject(backup)})
+			if tt.wantErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+
+			err = r.Get(context.Background(), client.ObjectKeyFromObject(backup), &finv1.FinBackup{})
+			require.Equal(t, tt.wantDeleted, k8serrors.IsNotFound(err), "FinBackup deleted?")
+		})
+	}
+}

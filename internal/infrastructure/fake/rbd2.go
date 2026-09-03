@@ -26,8 +26,9 @@ type writtenHistory struct {
 type RBDRepository2 struct {
 	r *rand.ChaCha8
 
-	// if this is set, the snapshot and lock methods return this error. Tests set it from
-	// their own goroutine while the controller reads it, so it is guarded.
+	// if this is set, ListSnapshots, RemoveSnapshot, and the lock methods return this
+	// error; CreateSnapshot does not consult it. Tests set it from their own goroutine
+	// while the controller reads it, so it is guarded.
 	errMu sync.RWMutex
 	err   error
 	// key: pool/image

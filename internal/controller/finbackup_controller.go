@@ -28,6 +28,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
@@ -56,6 +57,10 @@ const (
 
 	maxOlderFinBackups  = 1
 	annotationValueTrue = "true"
+
+	// goneNodeSnapshotRetryPeriod bounds how long the gone-node path keeps retrying
+	// snapshot removal, measured from the deletion timestamp.
+	goneNodeSnapshotRetryPeriod = time.Hour
 )
 
 var (
@@ -113,6 +118,7 @@ func NewFinBackupReconciler(
 //+kubebuilder:rbac:groups=core,resources=persistentvolumeclaims,verbs=get;list;watch
 //+kubebuilder:rbac:groups=core,resources=persistentvolumes,verbs=get;list;watch
 //+kubebuilder:rbac:groups=core,resources=pods,verbs=get;list;watch
+//+kubebuilder:rbac:groups=core,resources=nodes,verbs=get;list;watch
 //+kubebuilder:rbac:groups=core,resources=configmaps,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;update;patch;delete
 
@@ -137,26 +143,47 @@ func (r *FinBackupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, err
 	}
 
-	pvc, gotFromStatus, err := getBackupTargetPVCFromSpecOrStatus(ctx, r.Client, &backup)
+	pvc, pvcDeleted, err := getBackupTargetPVCFromSpecOrStatus(ctx, r.Client, &backup)
 	if err != nil {
 		logger.Error(err, "failed to get backup target PVC")
 		return ctrl.Result{}, err
 	}
 
-	ok, err := checkCephCluster(ctx, r, pvc, r.cephClusterNamespace)
+	managed, err := checkCephCluster(ctx, r, pvc, r.cephClusterNamespace)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
-	if !ok {
+	if !managed {
 		logger.Info("FinBackup skipped: Ceph cluster is not managed by this instance",
 			"pvc", fmt.Sprintf("%s/%s", pvc.Namespace, pvc.Name),
 			"cephClusterNamespace", r.cephClusterNamespace)
 		return ctrl.Result{}, nil
 	}
 
+	// Placed after the ownership check so this instance never finalizes a FinBackup it
+	// does not manage. spec.node is immutable, so one whose node is gone can never make
+	// progress and is cleaned up instead.
+	nodeUID, nodeExists, err := lookupNode(ctx, r.Client, backup.Spec.Node)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if !nodeExists || !nodeHoldsBackupData(&backup, nodeUID) {
+		metrics.SetBackupCreateStatus(&backup, r.cephClusterNamespace, false, isFullBackup(&backup))
+		return r.reconcileGoneNode(ctx, &backup, pvcDeleted)
+	}
+
 	// export fin_backup_create_status metric according to the FinBackup status
 	if status := r.deriveBackupCreateStatus(&backup); status != nil {
 		metrics.SetBackupCreateStatus(&backup, r.cephClusterNamespace, *status, isFullBackup(&backup))
+	}
+
+	// Recorded before the guards below, which stop for a human: the reference is the only
+	// record of which node held the data, and without it a node recreated under the same
+	// name cannot be told apart from the original.
+	if backup.DeletionTimestamp.IsZero() {
+		if err := r.ensureNodeOwnerReference(ctx, &backup, nodeUID); err != nil {
+			return ctrl.Result{}, err
+		}
 	}
 
 	if backup.IsMetadataCorrupted() {
@@ -173,10 +200,10 @@ func (r *FinBackupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 
 	if !backup.DeletionTimestamp.IsZero() {
-		return r.reconcileDelete(ctx, &backup, gotFromStatus)
+		return r.reconcileDelete(ctx, &backup, pvcDeleted)
 	}
 
-	if gotFromStatus {
+	if pvcDeleted {
 		logger.Info("backup target PVC has already been deleted; skip reconciling")
 		return ctrl.Result{}, nil
 	}
@@ -207,6 +234,68 @@ func (r *FinBackupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 	logger.Info("automatic deletion of old FinBackup completed")
 	return ctrl.Result{}, nil
+}
+
+// reconcileGoneNode removes a FinBackup whose node no longer holds its data.
+func (r *FinBackupReconciler) reconcileGoneNode(
+	ctx context.Context,
+	backup *finv1.FinBackup,
+	pvcDeleted bool,
+) (ctrl.Result, error) {
+	logger := log.FromContext(ctx)
+
+	if !backup.DeletionTimestamp.IsZero() {
+		return r.reconcileDeleteOnGoneNode(ctx, backup, pvcDeleted)
+	}
+
+	// The garbage collector cannot cover a node that never existed, since there is no UID
+	// to reference, so the deletion is issued here as well.
+	logger.Info("the backup destination node no longer exists; delete this FinBackup",
+		"node", backup.Spec.Node)
+	if err := r.Delete(ctx, backup); err != nil && !k8serrors.IsNotFound(err) {
+		return ctrl.Result{}, fmt.Errorf("failed to delete FinBackup on a vanished node: %w", err)
+	}
+	return ctrl.Result{}, nil
+}
+
+// ensureNodeOwnerReference lets the garbage collector remove the FinBackup when its node
+// is deleted. The collector matches owners by UID, so a node recreated under the same
+// name counts as gone, and it works while this controller is stopped.
+func (r *FinBackupReconciler) ensureNodeOwnerReference(ctx context.Context, backup *finv1.FinBackup, nodeUID types.UID) error {
+	// Guarded rather than set unconditionally: SetOwnerReference matches by name and
+	// would overwrite the UID, and a reference to a UID that no longer exists is how the
+	// collector learns the node was replaced.
+	if _, found := findNodeOwnerReference(backup.GetOwnerReferences()); found {
+		return nil
+	}
+
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: backup.Spec.Node, UID: nodeUID}}
+	// The node must never wait for this FinBackup's finalizer to be removed.
+	if err := controllerutil.SetOwnerReference(node, backup, r.Scheme,
+		controllerutil.WithBlockOwnerDeletion(false)); err != nil {
+		return fmt.Errorf("failed to build the node owner reference: %w", err)
+	}
+
+	if err := r.Update(ctx, backup); err != nil {
+		return fmt.Errorf("failed to set the node owner reference: %w", err)
+	}
+	return nil
+}
+
+// deleteJob removes a job owned by this FinBackup, ignoring one that is already gone.
+func (r *FinBackupReconciler) deleteJob(ctx context.Context, name string) error {
+	job := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: r.cephClusterNamespace,
+		},
+	}
+	if err := r.Delete(ctx, job, &client.DeleteOptions{
+		PropagationPolicy: ptr.To(metav1.DeletePropagationBackground),
+	}); err != nil && !k8serrors.IsNotFound(err) {
+		return fmt.Errorf("failed to delete Job %s: %w", name, err)
+	}
+	return nil
 }
 
 func (r *FinBackupReconciler) setFinBackupChecksumMismatched(ctx context.Context, backup *finv1.FinBackup) (ctrl.Result, error) {
@@ -519,6 +608,62 @@ func (r *FinBackupReconciler) createSnapshot(ctx context.Context, backup *finv1.
 	}
 	// FIXME: The following "requeue after" is temporary code.
 	return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+}
+
+// reconcileDeleteOnGoneNode finishes a deletion the normal path cannot. The cleanup and
+// deletion jobs are removed rather than awaited, since nothing can schedule them once the
+// node is gone, and waiting is what leaves the FinBackup Terminating forever.
+func (r *FinBackupReconciler) reconcileDeleteOnGoneNode(
+	ctx context.Context,
+	backup *finv1.FinBackup,
+	pvcDeleted bool,
+) (ctrl.Result, error) {
+	if !controllerutil.ContainsFinalizer(backup, FinBackupFinalizerName) {
+		return ctrl.Result{}, nil
+	}
+
+	logger := log.FromContext(ctx)
+
+	for _, name := range []string{
+		backupJobName(backup),
+		verificationJobName(backup),
+		cleanupJobName(backup),
+		deletionJobName(backup),
+	} {
+		if err := r.deleteJob(ctx, name); err != nil {
+			return ctrl.Result{}, err
+		}
+	}
+
+	// Ceph is usually only briefly unreachable, so removal is retried until the deadline.
+	// Past it the FinBackup is finalized regardless: holding it in Terminating blocks every
+	// later backup of the same PVC, which is worse than leaving a snapshot behind.
+	if !pvcDeleted {
+		if err := r.removeSnapshot(ctx, backup); err != nil {
+			if time.Since(backup.DeletionTimestamp.Time) < goneNodeSnapshotRetryPeriod {
+				return ctrl.Result{}, fmt.Errorf("failed to remove the RBD snapshot: %w", err)
+			}
+			// Named after the outcome, not the failure, so it stands out from the retries
+			// the manager has been logging as "Reconciler error" all along.
+			logger.Error(err, "RBD snapshot left behind in Ceph: gave up after the retry period",
+				"node", backup.Spec.Node, "retryPeriod", goneNodeSnapshotRetryPeriod)
+		}
+	}
+
+	if err := r.deleteChecksumVerifyConfigMap(ctx, backup); err != nil {
+		return ctrl.Result{}, err
+	}
+
+	// The poll loop the normal path needs guards against a stale cache creating another
+	// cleanup job, and this path creates none.
+	controllerutil.RemoveFinalizer(backup, FinBackupFinalizerName)
+	if err := r.Update(ctx, backup); err != nil && !k8serrors.IsNotFound(err) {
+		logger.Error(err, "failed to remove finalizer")
+		return ctrl.Result{}, err
+	}
+
+	logger.Info("cleaned up FinBackup whose node no longer exists", "node", backup.Spec.Node)
+	return ctrl.Result{}, nil
 }
 
 //nolint:gocyclo
@@ -1701,8 +1846,38 @@ func (r *FinBackupReconciler) createOrUpdateVerificationJob(
 	return nil
 }
 
+// enqueueFinBackupsOnNode maps a Node event to every FinBackup pinned to that node. It
+// deliberately does not filter by state: one whose backup is complete, or whose deletion
+// is stuck, has no other wake-up path.
+func (r *FinBackupReconciler) enqueueFinBackupsOnNode(ctx context.Context, node client.Object) []ctrl.Request {
+	var backups finv1.FinBackupList
+	if err := r.List(ctx, &backups, client.MatchingFields{indexFinBackupNode: node.GetName()}); err != nil {
+		log.FromContext(ctx).Error(err, "failed to list FinBackups for a node event", "node", node.GetName())
+		return nil
+	}
+
+	requests := make([]ctrl.Request, 0, len(backups.Items))
+	for i := range backups.Items {
+		requests = append(requests, ctrl.Request{
+			NamespacedName: client.ObjectKeyFromObject(&backups.Items[i]),
+		})
+	}
+	return requests
+}
+
 // SetupWithManager sets up the controller with the Manager.
 func (r *FinBackupReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &finv1.FinBackup{}, indexFinBackupNode,
+		func(o client.Object) []string {
+			backup, ok := o.(*finv1.FinBackup)
+			if !ok || backup.Spec.Node == "" {
+				return nil
+			}
+			return []string{backup.Spec.Node}
+		}); err != nil {
+		return fmt.Errorf("failed to index FinBackup by %s: %w", indexFinBackupNode, err)
+	}
+
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&finv1.FinBackup{}).
 		Watches(&batchv1.Job{},
@@ -1710,6 +1885,16 @@ func (r *FinBackupReconciler) SetupWithManager(mgr ctrl.Manager) error {
 				annotationFinBackupName, annotationFinBackupNamespace)),
 			builder.WithPredicates(predicate.Funcs{
 				UpdateFunc: enqueueOnJobCompletionOrFailure,
+			})).
+		// OnlyMetadata keeps the manager from caching node status, which is dominated by
+		// the container image list. The node classification only needs metadata.
+		Watches(&corev1.Node{},
+			handler.EnqueueRequestsFromMapFunc(r.enqueueFinBackupsOnNode),
+			builder.OnlyMetadata,
+			builder.WithPredicates(predicate.Funcs{
+				CreateFunc:  func(event.CreateEvent) bool { return false },
+				UpdateFunc:  func(event.UpdateEvent) bool { return false },
+				GenericFunc: func(event.GenericEvent) bool { return false },
 			})).
 		Complete(r)
 }
