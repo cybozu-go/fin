@@ -7,6 +7,7 @@ import (
 	"io"
 	"math/rand/v2"
 	"slices"
+	"sync"
 	"time"
 
 	"github.com/cybozu-go/fin/internal/diffgenerator"
@@ -25,8 +26,10 @@ type writtenHistory struct {
 type RBDRepository2 struct {
 	r *rand.ChaCha8
 
-	// if this is set, all methods return this error
-	err error
+	// if this is set, the snapshot and lock methods return this error. Tests set it from
+	// their own goroutine while the controller reads it, so it is guarded.
+	errMu sync.RWMutex
+	err   error
 	// key: pool/image
 	locks map[string][]*model.RBDLock
 
@@ -66,7 +69,15 @@ func NewRBDRepository2(poolName, imageName string) *RBDRepository2 {
 }
 
 func (r *RBDRepository2) SetError(err error) {
+	r.errMu.Lock()
+	defer r.errMu.Unlock()
 	r.err = err
+}
+
+func (r *RBDRepository2) getError() error {
+	r.errMu.RLock()
+	defer r.errMu.RUnlock()
+	return r.err
 }
 
 func (r *RBDRepository2) CreateSnapshot(poolName, imageName, snapName string) error {
@@ -127,6 +138,9 @@ func (r *RBDRepository2) CreateSnapshotWithRandomData(snapName string, volumeSiz
 }
 
 func (r *RBDRepository2) ListSnapshots(poolName, imageName string) ([]*model.RBDSnapshot, error) {
+	if err := r.getError(); err != nil {
+		return nil, err
+	}
 	if poolName != r.poolName || imageName != r.imageName {
 		return nil, model.ErrNotFound
 	}
@@ -134,6 +148,9 @@ func (r *RBDRepository2) ListSnapshots(poolName, imageName string) ([]*model.RBD
 }
 
 func (r *RBDRepository2) RemoveSnapshot(poolName, imageName, snapName string) error {
+	if err := r.getError(); err != nil {
+		return err
+	}
 	if poolName != r.poolName || imageName != r.imageName {
 		return errors.New("invalid pool or image")
 	}
@@ -148,8 +165,8 @@ func (r *RBDRepository2) RemoveSnapshot(poolName, imageName, snapName string) er
 }
 
 func (r *RBDRepository2) LockAdd(pool, image, lockID string) error {
-	if r.err != nil {
-		return r.err
+	if err := r.getError(); err != nil {
+		return err
 	}
 
 	key := pool + "/" + image
@@ -173,8 +190,8 @@ func (r *RBDRepository2) LockAdd(pool, image, lockID string) error {
 }
 
 func (r *RBDRepository2) LockRm(pool, image string, lock *model.RBDLock) error {
-	if r.err != nil {
-		return r.err
+	if err := r.getError(); err != nil {
+		return err
 	}
 
 	key := pool + "/" + image
@@ -191,8 +208,8 @@ func (r *RBDRepository2) LockRm(pool, image string, lock *model.RBDLock) error {
 }
 
 func (r *RBDRepository2) LockLs(pool, image string) ([]*model.RBDLock, error) {
-	if r.err != nil {
-		return nil, r.err
+	if err := r.getError(); err != nil {
+		return nil, err
 	}
 
 	key := pool + "/" + image
