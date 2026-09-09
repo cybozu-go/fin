@@ -25,6 +25,9 @@ import (
 )
 
 const (
+	// indexFinBackupNode lets a Node event be mapped back to the FinBackups pinned to it.
+	indexFinBackupNode = "spec.node"
+
 	maxJobBackoffLimit = 65535
 
 	EnvRawImgExpansionUnitSize = "FIN_RAW_IMG_EXPANSION_UNIT_SIZE"
