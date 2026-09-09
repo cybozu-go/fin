@@ -34,7 +34,7 @@ RUN --mount=type=secret,id=netrc,target=/root/.netrc \
 # cf. https://github.com/cybozu-go/mantle/blob/main/ceph/Dockerfile#L1
 FROM ubuntu:22.04 AS custom-ceph
 
-ARG EXPORT_DIFF_VERSION=19.2.1.0
+ARG EXPORT_DIFF_VERSION=20.2.1.0
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 ENV DEBIAN_FRONTEND=noninteractive
