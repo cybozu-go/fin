@@ -3,6 +3,7 @@ package v1
 import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 )
 
 // EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
@@ -51,6 +52,10 @@ type FinBackupStatus struct {
 
 	// 'backupStartTime' specifies the timestamp of when the backup started
 	BackupStartTime metav1.Time `json:"backupStartTime,omitempty"`
+
+	// 'nodeUID' specifies the UID of the node that holds the backup data. It pins the node
+	// instance, not the name: a node recreated under the same name holds none of the data.
+	NodeUID types.UID `json:"nodeUID,omitempty"`
 }
 
 const (

@@ -139,6 +139,11 @@ spec:
                 description: '''createdAt'' specifies the creation date and time'
                 format: date-time
                 type: string
+              nodeUID:
+                description: |-
+                  'nodeUID' specifies the UID of the node that holds the backup data. It pins the node
+                  instance, not the name: a node recreated under the same name holds none of the data.
+                type: string
               pvcManifest:
                 description: '''pvcManifest'' specifies the manifest of the backup
                   target PVC'
