@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"testing"
 	"time"
 
 	finv1 "github.com/cybozu-go/fin/api/v1"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/stretchr/testify/require"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
@@ -16,7 +18,9 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -32,6 +36,15 @@ const (
 	rbdPoolName    = "test-pool"
 	rbdImageName   = "test-image"
 )
+
+// testScheme builds its own scheme rather than reusing the global one, which only the
+// Ginkgo suite registers the Fin types into.
+func testScheme(t *testing.T) *runtime.Scheme {
+	s := runtime.NewScheme()
+	require.NoError(t, clientgoscheme.AddToScheme(s))
+	require.NoError(t, finv1.AddToScheme(s))
+	return s
+}
 
 func makeJobSucceeded(job *batchv1.Job) {
 	job.Status.Conditions = []batchv1.JobCondition{

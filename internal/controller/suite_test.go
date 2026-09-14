@@ -87,6 +87,19 @@ var _ = BeforeSuite(func(ctx SpecContext) {
 		)).Should(Succeed())
 	}
 
+	// Create the Nodes named by the specs. The controller refuses to start work on a node
+	// that does not exist, so a FinBackup pointing at a missing node never gets a
+	// snapshot or a job.
+	for _, name := range []string{"test-node", "node1", "node2", "different-node"} {
+		Expect(k8sClient.Create(ctx,
+			&corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: name,
+				},
+			},
+		)).Should(Succeed())
+	}
+
 	// Create StorageClass.
 	normalSC = NewRBDStorageClass("normal", cephClusterID, rbdPoolName)
 	Expect(k8sClient.Create(ctx, normalSC)).Should(Succeed())
