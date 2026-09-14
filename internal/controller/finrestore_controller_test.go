@@ -624,7 +624,8 @@ var _ = Describe("FinRestore Controller Reconcile Test", Ordered, func() {
 
 			// Arrange
 			By("creating FinBackup with ChecksumMismatched=True")
-			finbackup := CreateFinBackupStoredAndVerified(ctx, k8sClient, workNamespace, utils.GetUniqueName("test-fin-backup"), pvc, 1, utils.GetUniqueName("test-node"))
+			finbackup := CreateFinBackupStoredAndVerified(ctx, k8sClient, workNamespace, utils.GetUniqueName("test-fin-backup"), pvc, 1,
+				CreateNode(ctx, k8sClient, utils.GetUniqueName("test-node")))
 			meta.SetStatusCondition(&finbackup.Status.Conditions, metav1.Condition{
 				Type:    finv1.BackupConditionChecksumMismatched,
 				Status:  metav1.ConditionTrue,
@@ -673,7 +674,8 @@ var _ = Describe("FinRestore Controller Reconcile Test", Ordered, func() {
 
 			// Arrange
 			By("creating FinBackup with ChecksumMismatched=True")
-			finbackup := CreateFinBackupStoredAndVerified(ctx, k8sClient, workNamespace, utils.GetUniqueName("test-fin-backup"), pvc, 1, utils.GetUniqueName("test-node"))
+			finbackup := CreateFinBackupStoredAndVerified(ctx, k8sClient, workNamespace, utils.GetUniqueName("test-fin-backup"), pvc, 1,
+				CreateNode(ctx, k8sClient, utils.GetUniqueName("test-node")))
 			meta.SetStatusCondition(&finbackup.Status.Conditions, metav1.Condition{
 				Type:    finv1.BackupConditionChecksumMismatched,
 				Status:  metav1.ConditionTrue,
@@ -746,7 +748,8 @@ var _ = Describe("FinRestore Controller Reconcile Test", Ordered, func() {
 
 			// Arrange
 			By("creating a FinBackup that is StoredToNode and Verified")
-			finbackup := CreateFinBackupStoredAndVerified(ctx, k8sClient, workNamespace, utils.GetUniqueName("test-fin-backup"), pvc, 1, utils.GetUniqueName("test-node"))
+			finbackup := CreateFinBackupStoredAndVerified(ctx, k8sClient, workNamespace, utils.GetUniqueName("test-fin-backup"), pvc, 1,
+				CreateNode(ctx, k8sClient, utils.GetUniqueName("test-node")))
 
 			By("creating a FinRestore targeting the FinBackup")
 			finrestore := NewFinRestore(
@@ -801,7 +804,8 @@ var _ = Describe("FinRestore Controller Reconcile Test", Ordered, func() {
 
 			// Arrange
 			By("creating a FinBackup with MetadataCorrupted=True")
-			finbackup := CreateFinBackupStoredAndVerified(ctx, k8sClient, workNamespace, utils.GetUniqueName("test-fin-backup"), pvc, 1, utils.GetUniqueName("test-node"))
+			finbackup := CreateFinBackupStoredAndVerified(ctx, k8sClient, workNamespace, utils.GetUniqueName("test-fin-backup"), pvc, 1,
+				CreateNode(ctx, k8sClient, utils.GetUniqueName("test-node")))
 			meta.SetStatusCondition(&finbackup.Status.Conditions, metav1.Condition{
 				Type:    finv1.BackupConditionMetadataCorrupted,
 				Status:  metav1.ConditionTrue,
@@ -863,7 +867,8 @@ var _ = Describe("FinRestore Controller Reconcile Test", Ordered, func() {
 			// Arrange
 			By("creating unverified FinBackup targeting the PVC")
 			finbackup := CreateFinBackupStoredAndVerified(
-				ctx, k8sClient, workNamespace, utils.GetUniqueName("test-fin-backup"), pvc, 1, utils.GetUniqueName("test-node"))
+				ctx, k8sClient, workNamespace, utils.GetUniqueName("test-fin-backup"), pvc, 1,
+				CreateNode(ctx, k8sClient, utils.GetUniqueName("test-node")))
 			finbackup.Status.Conditions = []metav1.Condition{}
 			meta.SetStatusCondition(&finbackup.Status.Conditions, metav1.Condition{
 				Type:   finv1.BackupConditionStoredToNode,
@@ -922,7 +927,8 @@ var _ = Describe("FinRestore Controller Reconcile Test", Ordered, func() {
 			// Arrange
 			By("creating unverified FinBackup targeting the PVC")
 			finbackup := CreateFinBackupStoredAndVerified(
-				ctx, k8sClient, workNamespace, utils.GetUniqueName("test-fin-backup"), pvc, 1, utils.GetUniqueName("test-node"))
+				ctx, k8sClient, workNamespace, utils.GetUniqueName("test-fin-backup"), pvc, 1,
+				CreateNode(ctx, k8sClient, utils.GetUniqueName("test-node")))
 			finbackup.Status.Conditions = []metav1.Condition{}
 			meta.SetStatusCondition(&finbackup.Status.Conditions, metav1.Condition{
 				Type:   finv1.BackupConditionStoredToNode,
@@ -980,7 +986,7 @@ var _ = Describe("FinRestore Controller Reconcile Test", Ordered, func() {
 				utils.GetUniqueName("test-fin-backup"),
 				pvc.Name,
 				pvc.Namespace,
-				utils.GetUniqueName("test-node"),
+				CreateNode(ctx, k8sClient, utils.GetUniqueName("test-node")),
 			)
 			Expect(k8sClient.Create(ctx, finbackup)).Should(Succeed())
 			pvcManifest, err := json.Marshal(pvc)
