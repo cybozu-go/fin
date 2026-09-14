@@ -19,6 +19,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
@@ -177,6 +178,16 @@ func (r *FinRestoreReconciler) reconcileCreateOrUpdate(
 			"pvc", fmt.Sprintf("%s/%s", pvc.Namespace, pvc.Name),
 			"cephClusterNamespace", r.cephClusterNamespace)
 		return ctrl.Result{}, nil
+	}
+
+	aborted, err := r.abortRestoreOnGoneBackupNode(ctx, restore, &backup)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if aborted {
+		logger.Info("the node no longer holds the backup, so the restore cannot proceed",
+			"node", backup.Spec.Node)
+		return ctrl.Result{}, r.recordBackupNodeGone(ctx, restore, backup.Spec.Node)
 	}
 
 	if !backup.CanBeRestored(restore.Spec.AllowUnverified) {
@@ -576,6 +587,100 @@ func (r *FinRestoreReconciler) createRestoreJobPVCIfNotExists(
 	return nil
 }
 
+// Matching on the job's own nodeName would be fooled by a node recreated under that name
+// between the Node event and this check, so the node identity comes from the FinBackup.
+func (r *FinRestoreReconciler) restoreJobCanProceed(ctx context.Context, restore *finv1.FinRestore) (bool, error) {
+	var backup finv1.FinBackup
+	key := client.ObjectKey{Name: restore.Spec.Backup, Namespace: restore.Namespace}
+	if err := r.Get(ctx, key, &backup); err != nil {
+		// Not an error. With no FinBackup, there is nothing left to restore from,
+		// regardless of the node state.
+		if k8serrors.IsNotFound(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("failed to get FinBackup %s: %w", key.Name, err)
+	}
+
+	nodeUID, nodeExists, err := lookupNode(ctx, r.Client, backup.Spec.Node)
+	if err != nil {
+		return false, err
+	}
+	return nodeExists && nodeHoldsBackupData(&backup, nodeUID), nil
+}
+
+// A node recreated with the same name counts as gone. The name still matches,
+// but the new node holds none of the backup data.
+func (r *FinRestoreReconciler) abortRestoreOnGoneBackupNode(ctx context.Context, restore *finv1.FinRestore, backup *finv1.FinBackup) (bool, error) {
+	nodeUID, nodeExists, err := lookupNode(ctx, r.Client, backup.Spec.Node)
+	if err != nil {
+		return false, err
+	}
+	if nodeExists && nodeHoldsBackupData(backup, nodeUID) {
+		return false, nil
+	}
+
+	finished, err := r.restoreJobFinished(ctx, restore)
+	if err != nil {
+		return false, err
+	}
+	if finished {
+		return false, nil
+	}
+
+	// There's no need to wait for the restore job to complete or release the lock,
+	// because the backup node is gone.
+	return true, r.deleteRestoreJob(ctx, restore)
+}
+
+func (r *FinRestoreReconciler) recordBackupNodeGone(ctx context.Context, restore *finv1.FinRestore, node string) error {
+	updatedRestore := restore.DeepCopy()
+	meta.SetStatusCondition(&updatedRestore.Status.Conditions, metav1.Condition{
+		Type:    finv1.RestoreConditionReadyToUse,
+		Status:  metav1.ConditionFalse,
+		Reason:  "BackupNodeGone",
+		Message: fmt.Sprintf("node %q no longer holds the backup", node),
+	})
+	if err := r.Status().Patch(ctx, updatedRestore, client.MergeFrom(restore)); err != nil {
+		return fmt.Errorf("failed to record that the backup node is gone: %w", err)
+	}
+	metrics.SetRestoreStatusCondition(updatedRestore)
+	return nil
+}
+
+// A failed job counts as unfinished, just like an absent or running job.
+// None of these states leaves a result to read.
+func (r *FinRestoreReconciler) restoreJobFinished(ctx context.Context, restore *finv1.FinRestore) (bool, error) {
+	var job batchv1.Job
+	key := client.ObjectKey{Namespace: r.cephClusterNamespace, Name: restoreJobName(restore)}
+	if err := r.Get(ctx, key, &job); err != nil {
+		if k8serrors.IsNotFound(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("failed to get restore Job %s: %w", key.Name, err)
+	}
+
+	// Not propagated. This error only reports that the job failed, and its exit
+	// code cannot be read once the pod is gone with the node.
+	finished, err := jobCompleted(&job)
+	if err != nil {
+		return false, nil
+	}
+	return finished, nil
+}
+
+func (r *FinRestoreReconciler) deleteRestoreJob(ctx context.Context, restore *finv1.FinRestore) error {
+	job := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{
+		Namespace: r.cephClusterNamespace,
+		Name:      restoreJobName(restore),
+	}}
+	if err := r.Delete(ctx, job, &client.DeleteOptions{
+		PropagationPolicy: ptr.To(metav1.DeletePropagationBackground),
+	}); err != nil && !k8serrors.IsNotFound(err) {
+		return fmt.Errorf("failed to delete restore Job %s: %w", job.Name, err)
+	}
+	return nil
+}
+
 func (r *FinRestoreReconciler) reconcileDelete(ctx context.Context, restore *finv1.FinRestore) (ctrl.Result, error) {
 	if !controllerutil.ContainsFinalizer(restore, FinRestoreFinalizerName) {
 		return ctrl.Result{}, nil
@@ -591,15 +696,24 @@ func (r *FinRestoreReconciler) reconcileDelete(ctx context.Context, restore *fin
 		}
 		// Job not found => already deleted & proceed to the next step.
 	} else { // Job exists
-		// Skip reconciliation until the job is finished successfully.
-		done, err := jobCompleted(&restoreJob)
+		canProceed, err := r.restoreJobCanProceed(ctx, restore)
 		if err != nil {
-			logger.Error(err, "restore job failed")
 			return ctrl.Result{}, err
 		}
-		if !done {
-			logger.Info("waiting for restore job to finish")
-			return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+
+		// Only a job that can proceed is worth waiting for. The other kind never finishes,
+		// and this FinRestore would stay in Terminating.
+		if canProceed {
+			// Skip reconciliation until the job is finished successfully.
+			done, err := jobCompleted(&restoreJob)
+			if err != nil {
+				logger.Error(err, "restore job failed")
+				return ctrl.Result{}, err
+			}
+			if !done {
+				logger.Info("waiting for restore job to finish")
+				return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+			}
 		}
 
 		// Job finished => delete it
@@ -660,6 +774,26 @@ func (r *FinRestoreReconciler) reconcileDelete(ctx context.Context, restore *fin
 	return ctrl.Result{}, nil
 }
 
+// Not indexed the way the FinBackup side is. FinRestore has no spec.node to index on, and
+// node deletions are rare enough to scan the whole list.
+func (r *FinRestoreReconciler) enqueueUnfinishedFinRestores(ctx context.Context, _ client.Object) []ctrl.Request {
+	var restores finv1.FinRestoreList
+	if err := r.List(ctx, &restores); err != nil {
+		log.FromContext(ctx).Error(err, "failed to list FinRestores for a node event")
+		return nil
+	}
+
+	requests := make([]ctrl.Request, 0, len(restores.Items))
+	for i := range restores.Items {
+		restore := &restores.Items[i]
+		if restore.IsReady() && restore.DeletionTimestamp.IsZero() {
+			continue
+		}
+		requests = append(requests, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(restore)})
+	}
+	return requests
+}
+
 // SetupWithManager sets up the controller with the Manager.
 func (r *FinRestoreReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
@@ -669,6 +803,17 @@ func (r *FinRestoreReconciler) SetupWithManager(mgr ctrl.Manager) error {
 				annotationFinRestoreName, annotationFinRestoreNamespace)),
 			builder.WithPredicates(predicate.Funcs{
 				UpdateFunc: enqueueOnJobCompletionOrFailure,
+			})).
+		// A node vanishing under a running job produces no Job event, so this is the only
+		// thing that reports it. OnlyMetadata must match the form the FinBackup controller
+		// watches, otherwise the manager runs a second informer over the same nodes.
+		Watches(&corev1.Node{},
+			handler.EnqueueRequestsFromMapFunc(r.enqueueUnfinishedFinRestores),
+			builder.OnlyMetadata,
+			builder.WithPredicates(predicate.Funcs{
+				CreateFunc:  func(event.CreateEvent) bool { return false },
+				UpdateFunc:  func(event.UpdateEvent) bool { return false },
+				GenericFunc: func(event.GenericEvent) bool { return false },
 			})).
 		Complete(r)
 }

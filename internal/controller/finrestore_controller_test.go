@@ -3,11 +3,13 @@ package controller
 import (
 	"context"
 	"encoding/json"
+	"testing"
 
 	finv1 "github.com/cybozu-go/fin/api/v1"
 	"github.com/cybozu-go/fin/test/utils"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/stretchr/testify/require"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
@@ -19,6 +21,8 @@ import (
 	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
 
 func createAndBindRestorePV(ctx context.Context, finrestore *finv1.FinRestore) {
@@ -240,6 +244,97 @@ var _ = Describe("FinRestore Controller Reconcile Test", Ordered, func() {
 
 			By("checking that no restore job is created")
 			ExpectNoJob(ctx, k8sClient, restoreJobName(finrestore), cephNamespace)
+		})
+	})
+
+	// Description:
+	//   Stop restoring from a FinBackup whose node no longer exists.
+	//
+	// Arrange:
+	//   - A backup-target PVC exists.
+	//   - A restorable FinBackup naming a node that does not exist.
+	//   - A restore job already pinned to that node.
+	//
+	// Act:
+	//   - Reconcile the FinRestore.
+	//
+	// Assert:
+	//   - Reconcile() returns no error.
+	//   - The restore job is gone and no new one is created.
+	Context("Restore from a FinBackup whose node no longer exists", func() {
+		var pvc *corev1.PersistentVolumeClaim
+		var pv *corev1.PersistentVolume
+		var finbackup *finv1.FinBackup
+		var finrestore *finv1.FinRestore
+
+		BeforeEach(func(ctx SpecContext) {
+			By("creating PVC and PV")
+			pvc, pv = NewPVCAndPV(normalSC, userNamespace,
+				utils.GetUniqueName("test-pvc-gone"), utils.GetUniqueName("test-pv-gone"), rbdImageName)
+			Expect(k8sClient.Create(ctx, pvc)).Should(Succeed())
+			Expect(k8sClient.Create(ctx, pv)).Should(Succeed())
+
+			By("creating a restorable FinBackup on a node that does not exist")
+			finbackup = CreateFinBackupStoredAndVerified(ctx, k8sClient, workNamespace,
+				utils.GetUniqueName("test-fin-backup-gone"), pvc, 1, "gone-node")
+
+			By("creating a FinRestore targeting the FinBackup")
+			finrestore = NewFinRestore(workNamespace, utils.GetUniqueName("test-restore-gone"), finbackup.Name,
+				utils.GetUniqueName("restore-pvc-gone"), userNamespace)
+			Expect(k8sClient.Create(ctx, finrestore)).Should(Succeed())
+
+			By("creating a restore job pinned to that node")
+			Expect(k8sClient.Create(ctx, &batchv1.Job{
+				ObjectMeta: metav1.ObjectMeta{Namespace: cephNamespace, Name: restoreJobName(finrestore)},
+				Spec: batchv1.JobSpec{
+					Template: corev1.PodTemplateSpec{
+						Spec: corev1.PodSpec{
+							NodeName:      "gone-node",
+							RestartPolicy: corev1.RestartPolicyNever,
+							Containers:    []corev1.Container{{Name: "restore", Image: podImage}},
+						},
+					},
+				},
+			})).Should(Succeed())
+		})
+
+		AfterEach(func(ctx SpecContext) {
+			Expect(k8sClient.Delete(ctx, finrestore)).Should(Succeed())
+			Expect(k8sClient.Delete(ctx, finbackup)).Should(Succeed())
+			DeletePVCAndPV(ctx, pvc.Namespace, pvc.Name)
+		})
+
+		It("should delete the restore job and create no new one", func(ctx SpecContext) {
+			By("reconciling the FinRestore")
+			_, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(finrestore)})
+			Expect(err).ShouldNot(HaveOccurred())
+
+			By("checking that the restore job is gone")
+			ExpectNoJob(ctx, k8sClient, restoreJobName(finrestore), cephNamespace)
+
+			By("checking that the FinRestore says why it stopped")
+			var got finv1.FinRestore
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(finrestore), &got)).To(Succeed())
+			condition := meta.FindStatusCondition(got.Status.Conditions, finv1.RestoreConditionReadyToUse)
+			Expect(condition).NotTo(BeNil())
+			Expect(condition.Status).To(Equal(metav1.ConditionFalse))
+			Expect(condition.Reason).To(Equal("BackupNodeGone"))
+		})
+
+		It("should keep a restore job that had already finished", func(ctx SpecContext) {
+			By("completing the restore job")
+			var job batchv1.Job
+			jobKey := client.ObjectKey{Namespace: cephNamespace, Name: restoreJobName(finrestore)}
+			Expect(k8sClient.Get(ctx, jobKey, &job)).Should(Succeed())
+			makeJobSucceeded(&job)
+			Expect(k8sClient.Status().Update(ctx, &job)).Should(Succeed())
+
+			By("reconciling the FinRestore")
+			_, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(finrestore)})
+			Expect(err).ShouldNot(HaveOccurred())
+
+			By("checking that the restore job is still there")
+			Expect(k8sClient.Get(ctx, jobKey, &job)).Should(Succeed())
 		})
 	})
 
@@ -1031,3 +1126,234 @@ var _ = Describe("FinRestore Controller Reconcile Test", Ordered, func() {
 		})
 	})
 })
+
+// Description:
+//
+//	Map a Node event to the FinRestores that still have work to do.
+//
+// Arrange:
+//   - A FinRestore that is not ready.
+//   - A FinRestore that is ready.
+//   - A FinRestore that is ready and is being deleted.
+//
+// Act:
+//   - Map a Node event.
+//
+// Assert:
+//   - The unfinished one and the one being deleted are enqueued.
+//   - The ready one is not.
+var _ = Describe("mapping a Node event to FinRestores", func() {
+	var reconciler *FinRestoreReconciler
+	var unfinished, ready, readyDeleting *finv1.FinRestore
+
+	makeReady := func(ctx SpecContext, restore *finv1.FinRestore) {
+		GinkgoHelper()
+		meta.SetStatusCondition(&restore.Status.Conditions, metav1.Condition{
+			Type:   finv1.RestoreConditionReadyToUse,
+			Status: metav1.ConditionTrue,
+			Reason: "Test",
+		})
+		Expect(k8sClient.Status().Update(ctx, restore)).Should(Succeed())
+	}
+
+	BeforeEach(func(ctx SpecContext) {
+		reconciler = NewFinRestoreReconciler(
+			k8sClient, scheme.Scheme, cephNamespace, podImage, ptr.To(resource.MustParse("4096")))
+
+		newRestore := func(prefix string) *finv1.FinRestore {
+			restore := NewFinRestore(workNamespace, utils.GetUniqueName(prefix), "backup", "pvc", userNamespace)
+			Expect(k8sClient.Create(ctx, restore)).Should(Succeed())
+			return restore
+		}
+		unfinished = newRestore("enqueue-unfinished")
+		ready = newRestore("enqueue-ready")
+		makeReady(ctx, ready)
+
+		readyDeleting = newRestore("enqueue-ready-deleting")
+		controllerutil.AddFinalizer(readyDeleting, FinRestoreFinalizerName)
+		Expect(k8sClient.Update(ctx, readyDeleting)).Should(Succeed())
+		makeReady(ctx, readyDeleting)
+		Expect(k8sClient.Delete(ctx, readyDeleting)).Should(Succeed())
+	})
+
+	AfterEach(func(ctx SpecContext) {
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(readyDeleting), readyDeleting)).Should(Succeed())
+		controllerutil.RemoveFinalizer(readyDeleting, FinRestoreFinalizerName)
+		Expect(k8sClient.Update(ctx, readyDeleting)).Should(Succeed())
+		Expect(k8sClient.Delete(ctx, unfinished)).Should(Succeed())
+		Expect(k8sClient.Delete(ctx, ready)).Should(Succeed())
+	})
+
+	It("should enqueue the FinRestores that still have work to do", func(ctx SpecContext) {
+		requests := reconciler.enqueueUnfinishedFinRestores(ctx,
+			&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "gone-node"}})
+
+		Expect(requests).To(ContainElement(ctrl.Request{NamespacedName: client.ObjectKeyFromObject(unfinished)}))
+		Expect(requests).To(ContainElement(ctrl.Request{NamespacedName: client.ObjectKeyFromObject(readyDeleting)}))
+		Expect(requests).NotTo(ContainElement(ctrl.Request{NamespacedName: client.ObjectKeyFromObject(ready)}))
+	})
+})
+
+func Test_restoreJobCanProceed(t *testing.T) {
+	const liveNodeUID = types.UID("uid-live")
+
+	tests := []struct {
+		name        string
+		noBackup    bool
+		backupNode  string
+		recordedUID types.UID
+		want        bool
+	}{
+		{
+			name:        "the node that holds the backup",
+			backupNode:  "node0",
+			recordedUID: liveNodeUID,
+			want:        true,
+		},
+		{
+			name:       "a backup whose node UID is not recorded yet",
+			backupNode: "node0",
+			want:       true,
+		},
+		{
+			name:        "a node that no longer exists",
+			backupNode:  "gone-node",
+			recordedUID: liveNodeUID,
+			want:        false,
+		},
+		{
+			name:        "a node recreated under the same name",
+			backupNode:  "node0",
+			recordedUID: "uid-replaced",
+			want:        false,
+		},
+		{
+			name:       "a FinBackup that is missing",
+			noBackup:   true,
+			backupNode: "node0",
+			want:       false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			restore := NewFinRestore(workNamespace, "restore", "backup", "pvc", userNamespace)
+			objects := []client.Object{
+				&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node0", UID: liveNodeUID}},
+			}
+			if !tt.noBackup {
+				backup := NewFinBackup(workNamespace, "backup", "pvc", userNamespace, tt.backupNode)
+				backup.Status.NodeUID = tt.recordedUID
+				objects = append(objects, backup)
+			}
+			c := fake.NewClientBuilder().WithScheme(testScheme(t)).WithObjects(objects...).Build()
+			r := &FinRestoreReconciler{Client: c, cephClusterNamespace: cephNamespace}
+
+			got, err := r.restoreJobCanProceed(context.Background(), restore)
+			require.NoError(t, err)
+			require.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func Test_reconcileDelete_whenTheJobCannotFinish(t *testing.T) {
+	const liveNodeUID = types.UID("uid-live")
+
+	tests := []struct {
+		name        string
+		backupNode  string
+		recordedUID types.UID
+	}{
+		{
+			name:        "a node that no longer exists",
+			backupNode:  "gone-node",
+			recordedUID: liveNodeUID,
+		},
+		{
+			name:        "a node recreated under the same name while the job was waited on",
+			backupNode:  "node0",
+			recordedUID: "uid-replaced",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			restore := NewFinRestore(workNamespace, "restore", "backup", "pvc", userNamespace)
+			restore.UID = "restore-uid"
+			restore.Finalizers = []string{FinRestoreFinalizerName}
+			restore.DeletionTimestamp = ptr.To(metav1.Now())
+
+			backup := NewFinBackup(workNamespace, "backup", "pvc", userNamespace, tt.backupNode)
+			backup.Status.NodeUID = tt.recordedUID
+			job := &batchv1.Job{
+				ObjectMeta: metav1.ObjectMeta{Namespace: cephNamespace, Name: restoreJobName(restore)},
+				Spec: batchv1.JobSpec{
+					Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{NodeName: tt.backupNode}},
+				},
+			}
+			c := fake.NewClientBuilder().WithScheme(testScheme(t)).WithObjects(
+				restore, backup, job,
+				&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node0", UID: liveNodeUID}},
+			).Build()
+			r := &FinRestoreReconciler{Client: c, cephClusterNamespace: cephNamespace}
+
+			_, err := r.reconcileDelete(context.Background(), restore)
+			require.NoError(t, err)
+
+			err = c.Get(context.Background(), client.ObjectKeyFromObject(job), &batchv1.Job{})
+			require.True(t, k8serrors.IsNotFound(err), "the unfinished job should not be waited for, got %v", err)
+		})
+	}
+}
+
+func Test_abortRestoreOnGoneBackupNode(t *testing.T) {
+	const liveNodeUID = types.UID("uid-live")
+
+	tests := []struct {
+		name        string
+		backupNode  string
+		recordedUID types.UID
+		want        bool
+	}{
+		{
+			name:        "the node that holds the backup",
+			backupNode:  "node0",
+			recordedUID: liveNodeUID,
+			want:        false,
+		},
+		{
+			name:        "a node that no longer exists",
+			backupNode:  "gone-node",
+			recordedUID: liveNodeUID,
+			want:        true,
+		},
+		{
+			name:        "a node recreated under the same name",
+			backupNode:  "node0",
+			recordedUID: "uid-replaced",
+			want:        true,
+		},
+		{
+			name:       "a backup whose node UID is not recorded yet",
+			backupNode: "node0",
+			want:       false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			backup := NewFinBackup(workNamespace, "backup", "pvc", userNamespace, tt.backupNode)
+			backup.Status.NodeUID = tt.recordedUID
+			restore := &finv1.FinRestore{ObjectMeta: metav1.ObjectMeta{
+				Namespace: workNamespace, Name: "restore", UID: "restore-uid",
+			}}
+			c := fake.NewClientBuilder().WithScheme(testScheme(t)).
+				WithObjects(&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node0", UID: liveNodeUID}}).Build()
+			r := &FinRestoreReconciler{Client: c, cephClusterNamespace: cephNamespace}
+
+			got, err := r.abortRestoreOnGoneBackupNode(context.Background(), restore, backup)
+			require.NoError(t, err)
+			require.Equal(t, tt.want, got)
+		})
+	}
+}
