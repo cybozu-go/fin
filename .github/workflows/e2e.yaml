@@ -95,6 +95,50 @@ jobs:
           secret-files: |
             netrc=/home/runner/.netrc
 
+      - name: Get versions
+        id: versions
+        run: |
+          {
+            echo "rook=$(grep '^ROOK_CHART_VERSION' versions.mk | cut -d'=' -f2 | tr -d ' ')"
+            echo "ceph=$(grep '^CEPH_IMAGE_VERSION' versions.mk | cut -d'=' -f2 | tr -d ' ')"
+            echo "cephcsi=$(grep '^CEPH_CSI_IMAGE_VERSION' versions.mk | cut -d'=' -f2 | tr -d ' ')"
+          } >> "$GITHUB_OUTPUT"
+
+      # rook/ceph images are large and rarely change, so cache them keyed by
+      # their versions. The key is branch-independent, meaning an entry created
+      # on the main branch can be restored from any pull request.
+      - name: Restore rook-ceph image cache
+        id: cache-rook-images
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: /tmp/rook-images
+          key: rook-images-${{ steps.versions.outputs.rook }}-${{ steps.versions.outputs.ceph }}-${{ steps.versions.outputs.cephcsi }}
+
+      - name: Pull and save rook-ceph images
+        if: steps.cache-rook-images.outputs.cache-hit != 'true'
+        env:
+          ROOK_VERSION: ${{ steps.versions.outputs.rook }}
+          CEPH_VERSION: ${{ steps.versions.outputs.ceph }}
+          CEPH_CSI_VERSION: ${{ steps.versions.outputs.cephcsi }}
+        run: |
+          mkdir -p /tmp/rook-images
+          docker pull "docker.io/rook/ceph:${ROOK_VERSION}"
+          docker pull "quay.io/ceph/ceph:${CEPH_VERSION}"
+          docker pull "quay.io/cephcsi/cephcsi:${CEPH_CSI_VERSION}"
+          docker save "docker.io/rook/ceph:${ROOK_VERSION}" -o /tmp/rook-images/rook-ceph.tar
+          docker save "quay.io/ceph/ceph:${CEPH_VERSION}" -o /tmp/rook-images/ceph-ceph.tar
+          docker save "quay.io/cephcsi/cephcsi:${CEPH_CSI_VERSION}" -o /tmp/rook-images/cephcsi.tar
+
+      # Only main saves the cache: a PR-saved cache cannot be restored by
+      # other branches anyway, and not saving prevents cache poisoning.
+      - name: Save rook-ceph image cache
+        if: github.ref == 'refs/heads/main' && steps.cache-rook-images.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: /tmp/rook-images
+          key: rook-images-${{ steps.versions.outputs.rook }}-${{ steps.versions.outputs.ceph }}-${{ steps.versions.outputs.cephcsi }}
+
       - name: Setup minikube with kvm2 driver
         run: |
             make -C test/e2e launch-minikube
@@ -104,6 +148,13 @@ jobs:
             make -C test/e2e image-tar-load
             # Display disk usage after loading image
             df -h /
+
+      - name: Load rook-ceph images into minikube
+        env:
+          ROOK_OPERATOR_IMAGE_TAR: /tmp/rook-images/rook-ceph.tar
+          CEPH_IMAGE_TAR: /tmp/rook-images/ceph-ceph.tar
+          CEPH_CSI_IMAGE_TAR: /tmp/rook-images/cephcsi.tar
+        run: make -C test/e2e load-rook-images
 
       - name: Launch rook-ceph and deploy components
         run: |
