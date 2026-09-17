@@ -719,18 +719,11 @@ func (r *FinRestoreReconciler) reconcileDelete(ctx context.Context, restore *fin
 		// Job finished => delete it
 		// We need to wait until the job is deleted because it has a lock on the backup data stored in the backup node.
 		// If we don't wait, the next job may wait forever.
-		propagationPolicy := metav1.DeletePropagationBackground
-		if err := r.Delete(ctx, &restoreJob,
-			&client.DeleteOptions{
-				PropagationPolicy: &propagationPolicy,
-			}); err != nil {
-			if !k8serrors.IsNotFound(err) {
-				logger.Error(err, "failed to delete restore job")
-				return ctrl.Result{}, err
-			}
-		} else {
-			return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+		if err := r.deleteRestoreJob(ctx, restore); err != nil {
+			logger.Error(err, "failed to delete restore job")
+			return ctrl.Result{}, err
 		}
+		return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
 	}
 
 	restoreJobPVC := &corev1.PersistentVolumeClaim{
