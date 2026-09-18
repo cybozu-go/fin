@@ -348,6 +348,14 @@ func createTwoBackupsOrdered(
 	return smaller, larger
 }
 
+// CreateNode creates a Node of the given name and returns that name, so a FinBackup can
+// be placed on a node that exists.
+func CreateNode(ctx context.Context, c client.Client, name string) string {
+	GinkgoHelper()
+	Expect(c.Create(ctx, &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: name}})).Should(Succeed())
+	return name
+}
+
 func CreateFinBackupStoredAndVerified(
 	ctx context.Context,
 	c client.Client,
