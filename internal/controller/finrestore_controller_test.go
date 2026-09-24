@@ -22,6 +22,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
 
@@ -318,7 +319,7 @@ var _ = Describe("FinRestore Controller Reconcile Test", Ordered, func() {
 			condition := meta.FindStatusCondition(got.Status.Conditions, finv1.RestoreConditionReadyToUse)
 			Expect(condition).NotTo(BeNil())
 			Expect(condition.Status).To(Equal(metav1.ConditionFalse))
-			Expect(condition.Reason).To(Equal("BackupNodeGone"))
+			Expect(condition.Reason).To(Equal("BackupUnavailable"))
 		})
 
 		It("should keep a restore job that had already finished", func(ctx SpecContext) {
@@ -457,8 +458,10 @@ var _ = Describe("FinRestore Controller Reconcile Test", Ordered, func() {
 	//   - Create FinRestore referring to a non-existent FinBackup.
 	//
 	// Assert:
-	//   - Reconcile() returns an error.
-	Context("Reconcile error caused by missing FinBackup", func() {
+	//   - Reconcile() returns no error.
+	//   - The FinRestore records ReadyToUse=False with reason BackupUnavailable.
+	//   - No restore job is created.
+	Context("Reconcile stopped by missing FinBackup", func() {
 		var finrestore *finv1.FinRestore
 
 		BeforeEach(func(ctx SpecContext) {
@@ -471,10 +474,21 @@ var _ = Describe("FinRestore Controller Reconcile Test", Ordered, func() {
 			Expect(k8sClient.Delete(ctx, finrestore)).Should(Succeed())
 		})
 
-		It("should return an error during reconciliation", func(ctx SpecContext) {
+		It("should report the missing FinBackup and stop", func(ctx SpecContext) {
 			By("reconciling the FinRestore")
 			_, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(finrestore)})
-			Expect(err).To(MatchError(k8serrors.IsNotFound, "no-exists-fb should not be found"))
+			Expect(err).NotTo(HaveOccurred())
+
+			By("checking the FinRestore reports the missing FinBackup")
+			var got finv1.FinRestore
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(finrestore), &got)).To(Succeed())
+			condition := meta.FindStatusCondition(got.Status.Conditions, finv1.RestoreConditionReadyToUse)
+			Expect(condition).NotTo(BeNil())
+			Expect(condition.Status).To(Equal(metav1.ConditionFalse))
+			Expect(condition.Reason).To(Equal("BackupUnavailable"))
+
+			By("checking that no restore job is created")
+			ExpectNoJob(ctx, k8sClient, restoreJobName(finrestore), cephNamespace)
 		})
 	})
 
@@ -1356,4 +1370,118 @@ func Test_abortRestoreOnGoneBackupNode(t *testing.T) {
 			require.Equal(t, tt.want, got)
 		})
 	}
+}
+
+func Test_reconcileMissingBackup(t *testing.T) {
+	tests := []struct {
+		name       string
+		jobState   func(*batchv1.Job)
+		wantJob    bool
+		wantStatus metav1.ConditionStatus
+		wantReason string
+	}{
+		{
+			name:       "a FinRestore that has no job",
+			wantJob:    false,
+			wantStatus: metav1.ConditionFalse,
+			wantReason: "BackupUnavailable",
+		},
+		{
+			name:       "a job that is still running",
+			jobState:   func(*batchv1.Job) {},
+			wantJob:    false,
+			wantStatus: metav1.ConditionFalse,
+			wantReason: "BackupUnavailable",
+		},
+		{
+			name: "a job that failed",
+			jobState: func(job *batchv1.Job) {
+				job.Status.Conditions = []batchv1.JobCondition{
+					{Type: batchv1.JobFailed, Status: corev1.ConditionTrue},
+				}
+			},
+			wantJob:    false,
+			wantStatus: metav1.ConditionFalse,
+			wantReason: "BackupUnavailable",
+		},
+		{
+			name:       "a job that completed before the FinBackup went away",
+			jobState:   makeJobSucceeded,
+			wantJob:    true,
+			wantStatus: metav1.ConditionTrue,
+			wantReason: "RestoreCompleted",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			restore := NewFinRestore(workNamespace, "restore", "backup", "pvc", userNamespace)
+			restore.UID = "restore-uid"
+			objects := []client.Object{restore}
+			jobKey := client.ObjectKey{Namespace: cephNamespace, Name: restoreJobName(restore)}
+			if tt.jobState != nil {
+				job := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Namespace: jobKey.Namespace, Name: jobKey.Name}}
+				tt.jobState(job)
+				objects = append(objects, job)
+			}
+			c := fake.NewClientBuilder().WithScheme(testScheme(t)).
+				WithObjects(objects...).WithStatusSubresource(&finv1.FinRestore{}).Build()
+			r := &FinRestoreReconciler{Client: c, cephClusterNamespace: cephNamespace}
+
+			_, err := r.reconcileMissingBackup(context.Background(), restore)
+			require.NoError(t, err)
+
+			err = c.Get(context.Background(), jobKey, &batchv1.Job{})
+			if tt.wantJob {
+				require.NoError(t, err)
+			} else {
+				require.True(t, k8serrors.IsNotFound(err), "the job should be gone, got %v", err)
+			}
+
+			var got finv1.FinRestore
+			require.NoError(t, c.Get(context.Background(), client.ObjectKeyFromObject(restore), &got))
+			condition := meta.FindStatusCondition(got.Status.Conditions, finv1.RestoreConditionReadyToUse)
+			require.NotNil(t, condition)
+			require.Equal(t, tt.wantStatus, condition.Status)
+			require.Equal(t, tt.wantReason, condition.Reason)
+		})
+	}
+}
+
+func Test_reconcileMissingBackup_jobCompletesBeforeDelete(t *testing.T) {
+	restore := NewFinRestore(workNamespace, "restore", "backup", "pvc", userNamespace)
+	jobKey := client.ObjectKey{Namespace: cephNamespace, Name: restoreJobName(restore)}
+	job := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Namespace: jobKey.Namespace, Name: jobKey.Name}}
+
+	completed := false
+	c := fake.NewClientBuilder().WithScheme(testScheme(t)).
+		WithObjects(restore, job).
+		WithStatusSubresource(&finv1.FinRestore{}, &batchv1.Job{}).
+		WithInterceptorFuncs(interceptor.Funcs{
+			Delete: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.DeleteOption) error {
+				if _, ok := obj.(*batchv1.Job); ok && !completed {
+					var current batchv1.Job
+					require.NoError(t, c.Get(ctx, jobKey, &current))
+					makeJobSucceeded(&current)
+					require.NoError(t, c.Status().Update(ctx, &current))
+					completed = true
+				}
+				return c.Delete(ctx, obj, opts...)
+			},
+		}).Build()
+	r := &FinRestoreReconciler{Client: c, cephClusterNamespace: cephNamespace}
+
+	_, err := r.reconcileMissingBackup(context.Background(), restore)
+	require.Error(t, err, "the delete should fail on the job that changed after it was read")
+	require.NoError(t, c.Get(context.Background(), jobKey, &batchv1.Job{}))
+
+	_, err = r.reconcileMissingBackup(context.Background(), restore)
+	require.NoError(t, err)
+	require.NoError(t, c.Get(context.Background(), jobKey, &batchv1.Job{}))
+
+	var got finv1.FinRestore
+	require.NoError(t, c.Get(context.Background(), client.ObjectKeyFromObject(restore), &got))
+	condition := meta.FindStatusCondition(got.Status.Conditions, finv1.RestoreConditionReadyToUse)
+	require.NotNil(t, condition)
+	require.Equal(t, "RestoreCompleted", condition.Reason)
 }

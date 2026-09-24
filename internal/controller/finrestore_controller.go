@@ -153,8 +153,12 @@ func (r *FinRestoreReconciler) reconcileCreateOrUpdate(
 
 	var backup finv1.FinBackup
 	err := r.Get(ctx, client.ObjectKey{Name: restore.Spec.Backup, Namespace: restore.Namespace}, &backup)
+	if k8serrors.IsNotFound(err) {
+		logger.Info("the source FinBackup does not exist", "backup", restore.Spec.Backup, "namespace", restore.Namespace)
+		return r.reconcileMissingBackup(ctx, restore)
+	}
 	if err != nil {
-		logger.Error(err, "failed to get FinBackup", "name", restore.Spec.Backup, "namespace", restore.Namespace)
+		logger.Error(err, "failed to get FinBackup", "backup", restore.Spec.Backup, "namespace", restore.Namespace)
 		return ctrl.Result{}, err
 	}
 
@@ -258,55 +262,33 @@ func (r *FinRestoreReconciler) reconcileCreateOrUpdate(
 	case JobStatusInProgress:
 		return ctrl.Result{}, nil
 	case JobStatusFailedWithExitCode2:
-		var backup finv1.FinBackup
-		err = r.Get(ctx, client.ObjectKey{Name: restore.Spec.Backup, Namespace: restore.Namespace}, &backup)
-		if err != nil {
-			return ctrl.Result{}, fmt.Errorf("failed to get FinBackup for checksum mismatch update: %w", err)
-		}
-
-		_, err = patchFinBackupCondition(ctx, r.Client, &backup, metav1.Condition{
+		if err := r.patchSourceFinBackupCondition(ctx, restore, metav1.Condition{
 			Type:    finv1.BackupConditionChecksumMismatched,
 			Status:  metav1.ConditionTrue,
 			Reason:  "ChecksumMismatch",
 			Message: "Data corruption detected during restore: checksum mismatch",
-		})
-		if err != nil {
-			return ctrl.Result{}, fmt.Errorf("failed to set FinBackup ChecksumMismatched condition: %w", err)
+		}); err != nil {
+			return ctrl.Result{}, err
 		}
 		return ctrl.Result{}, nil
 	case JobStatusFailedWithExitCode4:
-		var backup finv1.FinBackup
-		err = r.Get(ctx, client.ObjectKey{Name: restore.Spec.Backup, Namespace: restore.Namespace}, &backup)
-		if err != nil {
-			return ctrl.Result{}, fmt.Errorf("failed to get FinBackup for metadata corrupted update: %w", err)
-		}
-		_, err = patchFinBackupCondition(ctx, r.Client, &backup, metav1.Condition{
+		if err := r.patchSourceFinBackupCondition(ctx, restore, metav1.Condition{
 			Type:    finv1.BackupConditionMetadataCorrupted,
 			Status:  metav1.ConditionTrue,
 			Reason:  "MetadataCorrupted",
 			Message: "Backup metadata corruption detected",
-		})
-		if err != nil {
-			return ctrl.Result{}, fmt.Errorf("failed to set FinBackup MetadataCorrupted condition: %w", err)
+		}); err != nil {
+			return ctrl.Result{}, err
 		}
 		return ctrl.Result{}, nil
 	default:
 		return ctrl.Result{}, fmt.Errorf("unknown restore job status: %d", jobStatus.Status)
 	}
 
-	updatedRestore := restore.DeepCopy()
-	meta.SetStatusCondition(&updatedRestore.Status.Conditions, metav1.Condition{
-		Type:    finv1.RestoreConditionReadyToUse,
-		Status:  metav1.ConditionTrue,
-		Reason:  "RestoreCompleted",
-		Message: "Restore completed successfully",
-	})
-	err = r.Status().Patch(ctx, updatedRestore, client.MergeFrom(restore))
-	if err != nil {
+	if err := r.markRestoreCompleted(ctx, restore); err != nil {
 		logger.Error(err, "failed to update status", "status", restore.Status)
 		return ctrl.Result{}, err
 	}
-	metrics.SetRestoreStatusCondition(updatedRestore)
 
 	return ctrl.Result{}, nil
 }
@@ -619,7 +601,7 @@ func (r *FinRestoreReconciler) abortRestoreOnGoneBackupNode(ctx context.Context,
 		return false, nil
 	}
 
-	finished, err := r.restoreJobFinished(ctx, restore)
+	_, finished, err := r.restoreJobFinished(ctx, restore)
 	if err != nil {
 		return false, err
 	}
@@ -637,7 +619,7 @@ func (r *FinRestoreReconciler) recordBackupNodeGone(ctx context.Context, restore
 	meta.SetStatusCondition(&updatedRestore.Status.Conditions, metav1.Condition{
 		Type:    finv1.RestoreConditionReadyToUse,
 		Status:  metav1.ConditionFalse,
-		Reason:  "BackupNodeGone",
+		Reason:  "BackupUnavailable",
 		Message: fmt.Sprintf("node %q no longer holds the backup", node),
 	})
 	if err := r.Status().Patch(ctx, updatedRestore, client.MergeFrom(restore)); err != nil {
@@ -649,23 +631,25 @@ func (r *FinRestoreReconciler) recordBackupNodeGone(ctx context.Context, restore
 
 // A failed job counts as unfinished, just like an absent or running job.
 // None of these states leaves a result to read.
-func (r *FinRestoreReconciler) restoreJobFinished(ctx context.Context, restore *finv1.FinRestore) (bool, error) {
+func (r *FinRestoreReconciler) restoreJobFinished(
+	ctx context.Context, restore *finv1.FinRestore,
+) (*batchv1.Job, bool, error) {
 	var job batchv1.Job
 	key := client.ObjectKey{Namespace: r.cephClusterNamespace, Name: restoreJobName(restore)}
 	if err := r.Get(ctx, key, &job); err != nil {
 		if k8serrors.IsNotFound(err) {
-			return false, nil
+			return nil, false, nil
 		}
-		return false, fmt.Errorf("failed to get restore Job %s: %w", key.Name, err)
+		return nil, false, fmt.Errorf("failed to get restore Job %s: %w", key.Name, err)
 	}
 
 	// Not propagated. This error only reports that the job failed, and its exit
 	// code cannot be read once the pod is gone with the node.
 	finished, err := jobCompleted(&job)
 	if err != nil {
-		return false, nil
+		return &job, false, nil
 	}
-	return finished, nil
+	return &job, finished, nil
 }
 
 func (r *FinRestoreReconciler) deleteRestoreJob(ctx context.Context, restore *finv1.FinRestore) error {
@@ -785,6 +769,75 @@ func (r *FinRestoreReconciler) enqueueUnfinishedFinRestores(ctx context.Context,
 		requests = append(requests, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(restore)})
 	}
 	return requests
+}
+
+func (r *FinRestoreReconciler) markRestoreCompleted(ctx context.Context, restore *finv1.FinRestore) error {
+	updatedRestore, err := patchFinRestoreCondition(ctx, r.Client, restore, metav1.Condition{
+		Type:    finv1.RestoreConditionReadyToUse,
+		Status:  metav1.ConditionTrue,
+		Reason:  "RestoreCompleted",
+		Message: "Restore completed successfully",
+	})
+	if err != nil {
+		return err
+	}
+	metrics.SetRestoreStatusCondition(updatedRestore)
+	return nil
+}
+
+// reconcileMissingBackup settles a FinRestore whose FinBackup is missing, rather than
+// retrying it. Nothing wakes the FinRestore if that FinBackup is created later.
+func (r *FinRestoreReconciler) reconcileMissingBackup(
+	ctx context.Context,
+	restore *finv1.FinRestore,
+) (ctrl.Result, error) {
+	// Checked before the job is deleted. A job that completed before its FinBackup went
+	// away already wrote the restored data, and deleting it unread loses that restore.
+	job, finished, err := r.restoreJobFinished(ctx, restore)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if finished {
+		return ctrl.Result{}, r.markRestoreCompleted(ctx, restore)
+	}
+
+	// Not left for the node check, which this early return never reaches. Pinned to the job
+	// as read above, so one that completes in between fails the delete and is read again.
+	if job != nil {
+		if err := r.Delete(ctx, job, &client.DeleteOptions{
+			PropagationPolicy: ptr.To(metav1.DeletePropagationBackground),
+			Preconditions:     &metav1.Preconditions{UID: &job.UID, ResourceVersion: &job.ResourceVersion},
+		}); err != nil && !k8serrors.IsNotFound(err) {
+			return ctrl.Result{}, fmt.Errorf("failed to delete restore Job %s: %w", job.Name, err)
+		}
+	}
+
+	updatedRestore, err := patchFinRestoreCondition(ctx, r.Client, restore, metav1.Condition{
+		Type:    finv1.RestoreConditionReadyToUse,
+		Status:  metav1.ConditionFalse,
+		Reason:  "BackupUnavailable",
+		Message: fmt.Sprintf("FinBackup %q does not exist", restore.Spec.Backup),
+	})
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	metrics.SetRestoreStatusCondition(updatedRestore)
+
+	return ctrl.Result{}, nil
+}
+
+func (r *FinRestoreReconciler) patchSourceFinBackupCondition(
+	ctx context.Context, restore *finv1.FinRestore, condition metav1.Condition,
+) error {
+	var backup finv1.FinBackup
+	key := client.ObjectKey{Name: restore.Spec.Backup, Namespace: restore.Namespace}
+	if err := r.Get(ctx, key, &backup); err != nil {
+		return fmt.Errorf("failed to get FinBackup %s for %s: %w", key.Name, condition.Type, err)
+	}
+	if _, err := patchFinBackupCondition(ctx, r.Client, &backup, condition); err != nil {
+		return fmt.Errorf("failed to set FinBackup %s condition: %w", condition.Type, err)
+	}
+	return nil
 }
 
 // SetupWithManager sets up the controller with the Manager.
