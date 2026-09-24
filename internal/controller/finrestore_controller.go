@@ -258,36 +258,23 @@ func (r *FinRestoreReconciler) reconcileCreateOrUpdate(
 	case JobStatusInProgress:
 		return ctrl.Result{}, nil
 	case JobStatusFailedWithExitCode2:
-		var backup finv1.FinBackup
-		err = r.Get(ctx, client.ObjectKey{Name: restore.Spec.Backup, Namespace: restore.Namespace}, &backup)
-		if err != nil {
-			return ctrl.Result{}, fmt.Errorf("failed to get FinBackup for checksum mismatch update: %w", err)
-		}
-
-		_, err = patchFinBackupCondition(ctx, r.Client, &backup, metav1.Condition{
+		if err := r.patchSourceFinBackupCondition(ctx, restore, metav1.Condition{
 			Type:    finv1.BackupConditionChecksumMismatched,
 			Status:  metav1.ConditionTrue,
 			Reason:  "ChecksumMismatch",
 			Message: "Data corruption detected during restore: checksum mismatch",
-		})
-		if err != nil {
-			return ctrl.Result{}, fmt.Errorf("failed to set FinBackup ChecksumMismatched condition: %w", err)
+		}); err != nil {
+			return ctrl.Result{}, err
 		}
 		return ctrl.Result{}, nil
 	case JobStatusFailedWithExitCode4:
-		var backup finv1.FinBackup
-		err = r.Get(ctx, client.ObjectKey{Name: restore.Spec.Backup, Namespace: restore.Namespace}, &backup)
-		if err != nil {
-			return ctrl.Result{}, fmt.Errorf("failed to get FinBackup for metadata corrupted update: %w", err)
-		}
-		_, err = patchFinBackupCondition(ctx, r.Client, &backup, metav1.Condition{
+		if err := r.patchSourceFinBackupCondition(ctx, restore, metav1.Condition{
 			Type:    finv1.BackupConditionMetadataCorrupted,
 			Status:  metav1.ConditionTrue,
 			Reason:  "MetadataCorrupted",
 			Message: "Backup metadata corruption detected",
-		})
-		if err != nil {
-			return ctrl.Result{}, fmt.Errorf("failed to set FinBackup MetadataCorrupted condition: %w", err)
+		}); err != nil {
+			return ctrl.Result{}, err
 		}
 		return ctrl.Result{}, nil
 	default:
@@ -785,6 +772,20 @@ func (r *FinRestoreReconciler) enqueueUnfinishedFinRestores(ctx context.Context,
 		requests = append(requests, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(restore)})
 	}
 	return requests
+}
+
+func (r *FinRestoreReconciler) patchSourceFinBackupCondition(
+	ctx context.Context, restore *finv1.FinRestore, condition metav1.Condition,
+) error {
+	var backup finv1.FinBackup
+	key := client.ObjectKey{Name: restore.Spec.Backup, Namespace: restore.Namespace}
+	if err := r.Get(ctx, key, &backup); err != nil {
+		return fmt.Errorf("failed to get FinBackup %s for %s: %w", key.Name, condition.Type, err)
+	}
+	if _, err := patchFinBackupCondition(ctx, r.Client, &backup, condition); err != nil {
+		return fmt.Errorf("failed to set FinBackup %s condition: %w", condition.Type, err)
+	}
+	return nil
 }
 
 // SetupWithManager sets up the controller with the Manager.
