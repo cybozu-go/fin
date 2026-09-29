@@ -43,6 +43,9 @@ jobs:
           go-version-file: "go.mod"
           cache: false
           takumi-guard-bot-id: ${{ vars.TAKUMI_GUARD_BOT_ID }}
+          # The default 1800s token lifetime doesn't cover this 60-minute
+          # job, so late Go module downloads got a 401 once it expired.
+          takumi-guard-expires-in: "3600"
 
       - uses: ./.github/actions/set-up-kvm-for-e2e-tests
       - name: Set up Docker Buildx
