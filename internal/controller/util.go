@@ -235,6 +235,20 @@ func patchFinBackupCondition(
 	return updatedBackup, nil
 }
 
+func patchFinRestoreCondition(
+	ctx context.Context,
+	r client.Client,
+	restore *finv1.FinRestore,
+	condition metav1.Condition,
+) (*finv1.FinRestore, error) {
+	updatedRestore := restore.DeepCopy()
+	meta.SetStatusCondition(&updatedRestore.Status.Conditions, condition)
+	if err := r.Status().Patch(ctx, updatedRestore, client.MergeFrom(restore)); err != nil {
+		return nil, fmt.Errorf("failed to update FinRestore condition: %w", err)
+	}
+	return updatedRestore, nil
+}
+
 func getBackupTargetPVCFromSpecOrStatus(
 	ctx context.Context,
 	r client.Client,

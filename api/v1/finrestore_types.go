@@ -3,6 +3,7 @@ package v1
 import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 )
 
 // EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
@@ -42,6 +43,9 @@ type FinRestoreStatus struct {
 
 	// 'conditions' specifies current restore conditions
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
+
+	// 'backupUID' specifies the UID of the FinBackup this restore reads from
+	BackupUID types.UID `json:"backupUID,omitempty"`
 }
 
 const (

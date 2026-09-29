@@ -89,6 +89,10 @@ spec:
           status:
             description: FinRestoreStatus defines the observed state of FinRestore
             properties:
+              backupUID:
+                description: '''backupUID'' specifies the UID of the FinBackup this
+                  restore reads from'
+                type: string
               conditions:
                 description: '''conditions'' specifies current restore conditions'
                 items:
