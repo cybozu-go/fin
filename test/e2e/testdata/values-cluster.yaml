@@ -16,6 +16,7 @@ cephClusterSpec:
     allowMultiplePerNode: false
   cephVersion:
     image: quay.io/ceph/ceph:${CEPH_IMAGE_VERSION}
+    imagePullPolicy: IfNotPresent
     allowUnsupported: false
   skipUpgradeChecks: false
   continueUpgradeAfterChecksEvenIfNotHealthy: false
