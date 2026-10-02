@@ -83,7 +83,7 @@ var _ = Describe("FinBackupConfig Controller under Manager", Ordered, func() {
 			Spec: finv1.FinBackupConfigSpec{
 				PVCNamespace: pvc.Namespace,
 				PVC:          pvc.Name,
-				Schedule:     "0 2 * * *",
+				Schedule:     testCronSchedule,
 				Suspend:      false,
 			},
 		}
@@ -168,7 +168,7 @@ var _ = Describe("FinBackupConfig Controller", func() {
 				Spec: finv1.FinBackupConfigSpec{
 					PVCNamespace: pvc.Namespace,
 					PVC:          pvc.Name,
-					Schedule:     "0 2 * * *",
+					Schedule:     testCronSchedule,
 					Suspend:      false,
 				},
 			}
@@ -192,7 +192,7 @@ var _ = Describe("FinBackupConfig Controller", func() {
 				return k8sClient.Get(ctx, types.NamespacedName{Name: cronJobName, Namespace: fbc.Namespace}, cronJob)
 			}, "5s", "1s").Should(Succeed())
 
-			Expect(cronJob.Spec.Schedule).To(Equal("0 2 * * *"))
+			Expect(cronJob.Spec.Schedule).To(Equal(testCronSchedule))
 			Expect(*cronJob.Spec.Suspend).To(Equal(false))
 			Expect(*cronJob.Spec.StartingDeadlineSeconds).To(Equal(int64(3600)))
 			Expect(cronJob.Spec.ConcurrencyPolicy).To(Equal(batchv1.ForbidConcurrent))
@@ -266,7 +266,7 @@ var _ = Describe("FinBackupConfig Controller", func() {
 				Spec: finv1.FinBackupConfigSpec{
 					PVCNamespace: pvc.Namespace,
 					PVC:          pvc.Name,
-					Schedule:     "0 2 * * *",
+					Schedule:     testCronSchedule,
 					Suspend:      false,
 				},
 			}
@@ -315,7 +315,7 @@ var _ = Describe("FinBackupConfig Controller", func() {
 				Spec: finv1.FinBackupConfigSpec{
 					PVCNamespace: pvc.Namespace,
 					PVC:          pvc.Name,
-					Schedule:     "0 2 * * *",
+					Schedule:     testCronSchedule,
 					Suspend:      false,
 				},
 			}

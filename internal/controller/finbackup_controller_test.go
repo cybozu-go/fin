@@ -631,7 +631,7 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 			By("creating a full FinBackup")
 			finbackup1 := NewFinBackup(workNamespace, "fb1-sample", pvc.Name, pvc.Namespace, "test-node")
 			finbackup1.SetAnnotations(map[string]string{
-				AnnotationSkipVerify: "true", // Set skip-verify annotation to true
+				AnnotationSkipVerify: annotationValueTrue, // Set skip-verify annotation to true
 			})
 			Expect(k8sClient.Create(ctx, finbackup1)).Should(Succeed())
 			MakeFinBackupStoredToNode(ctx, finbackup1)
@@ -1527,7 +1527,7 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 				meta.SetStatusCondition(&got.Status.Conditions, metav1.Condition{
 					Type:    finv1.BackupConditionMetadataCorrupted,
 					Status:  metav1.ConditionTrue,
-					Reason:  "MetadataCorrupted",
+					Reason:  reasonMetadataCorrupted,
 					Message: "Backup metadata corruption detected",
 				})
 				g.Expect(k8sClient.Status().Update(ctx, &got)).To(Succeed())
@@ -1560,7 +1560,7 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 				meta.SetStatusCondition(&got.Status.Conditions, metav1.Condition{
 					Type:    finv1.BackupConditionMetadataCorrupted,
 					Status:  metav1.ConditionTrue,
-					Reason:  "MetadataCorrupted",
+					Reason:  reasonMetadataCorrupted,
 					Message: "Backup metadata corruption detected",
 				})
 				g.Expect(k8sClient.Status().Update(ctx, &got)).To(Succeed())
@@ -1626,7 +1626,7 @@ var _ = Describe("FinBackup Controller integration test", Ordered, func() {
 
 		It("should delete a completed backup without a cleanup job when the node disappears",
 			func(ctx SpecContext) {
-				node = &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "gone-node"}}
+				node = &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: goneNodeName}}
 				Expect(k8sClient.Create(ctx, node)).Should(Succeed())
 
 				finbackup = NewFinBackup(workNamespace, "fb-gone-node", pvc.Name, pvc.Namespace, node.Name)
@@ -1807,7 +1807,7 @@ var _ = Describe("FinBackup Controller Reconcile Test", Ordered, func() {
 			finbackup.Status.Conditions = append(finbackup.Status.Conditions, metav1.Condition{
 				Type:               finv1.BackupConditionMetadataCorrupted,
 				Status:             metav1.ConditionTrue,
-				Reason:             "MetadataCorrupted",
+				Reason:             reasonMetadataCorrupted,
 				Message:            "fin.sqlite3 corruption detected",
 				LastTransitionTime: metav1.Now(),
 			})
@@ -2640,7 +2640,7 @@ var _ = Describe("fin_backup_create_status metric", Ordered, func() {
 		Eventually(func(g Gomega) {
 			g.Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(fb), fb)).Should(Succeed())
 			fb.SetAnnotations(map[string]string{
-				AnnotationSkipVerify: "true",
+				AnnotationSkipVerify: annotationValueTrue,
 			})
 			g.Expect(k8sClient.Update(ctx, fb)).Should(Succeed())
 		}, "1s", "0.1s").Should(Succeed())
@@ -2731,8 +2731,8 @@ var _ = Describe("should limit backup job concurrency", Ordered, func() {
 		g.Expect(k8sClient.List(ctx, &jobList,
 			client.InNamespace(cephNamespace),
 			client.MatchingLabels{
-				"app.kubernetes.io/name":      labelAppNameValue,
-				"app.kubernetes.io/component": labelComponentBackupJob,
+				labelKeyAppName:      labelAppNameValue,
+				labelKeyAppComponent: labelComponentBackupJob,
 			},
 		)).To(Succeed())
 		count := 0
@@ -2752,8 +2752,8 @@ var _ = Describe("should limit backup job concurrency", Ordered, func() {
 		g.Expect(k8sClient.List(ctx, &jobList,
 			client.InNamespace(cephNamespace),
 			client.MatchingLabels{
-				"app.kubernetes.io/name":      labelAppNameValue,
-				"app.kubernetes.io/component": labelComponentBackupJob,
+				labelKeyAppName:      labelAppNameValue,
+				labelKeyAppComponent: labelComponentBackupJob,
 			},
 		)).To(Succeed())
 
@@ -2857,14 +2857,14 @@ func Test_ensureNodeUIDRecorded(t *testing.T) {
 	}{
 		{
 			name:     "a node UID that is already recorded is left as it is",
-			recorded: "uid-replaced",
-			want:     "uid-replaced",
+			recorded: uidReplaced,
+			want:     uidReplaced,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			backup := NewFinBackup(workNamespace, "fb-uid", "pvc-uid", userNamespace, "node0")
+			backup := NewFinBackup(workNamespace, "fb-uid", "pvc-uid", userNamespace, node0Name)
 			backup.Status.NodeUID = tt.recorded
 			c := ctrlfake.NewClientBuilder().WithScheme(testScheme(t)).
 				WithObjects(backup).WithStatusSubresource(backup).Build()

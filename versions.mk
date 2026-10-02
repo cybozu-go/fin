@@ -15,7 +15,7 @@ KUSTOMIZE_VERSION := v5.8.2
 # https://github.com/kubernetes-sigs/controller-tools/releases
 CONTROLLER_TOOLS_VERSION := v0.21.0
 # https://github.com/golangci/golangci-lint/releases
-GOLANGCI_LINT_VERSION := v2.11.4
+GOLANGCI_LINT_VERSION := v2.14.0
 # https://github.com/rhysd/actionlint/releases
 ACTIONLINT_VERSION := v1.7.12
 # https://github.com/suzuki-shunsuke/ghalint/releases
