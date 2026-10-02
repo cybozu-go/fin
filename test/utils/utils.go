@@ -17,11 +17,11 @@ import (
 )
 
 const (
-	prometheusOperatorVersion = "v0.91.0"
+	prometheusOperatorVersion = "v0.94.1"
 	prometheusOperatorURL     = "https://github.com/prometheus-operator/prometheus-operator/" +
 		"releases/download/%s/bundle.yaml"
 
-	certmanagerVersion = "v1.19.5"
+	certmanagerVersion = "v1.21.1"
 	certmanagerURLTmpl = "https://github.com/cert-manager/cert-manager/releases/download/%s/cert-manager.yaml"
 
 	RawImgExpansionUnitSize uint64 = 4 * 1024 // 4 KiB

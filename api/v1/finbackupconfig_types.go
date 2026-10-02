@@ -53,7 +53,3 @@ type FinBackupConfigList struct {
 	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []FinBackupConfig `json:"items"`
 }
-
-func init() {
-	SchemeBuilder.Register(&FinBackupConfig{}, &FinBackupConfigList{})
-}
