@@ -13,6 +13,13 @@ import (
 	"github.com/cybozu-go/fin/internal/pkg/csumio"
 )
 
+const (
+	caseExactChunk       = "exact_chunk"
+	casePartialChunk     = "partial_chunk"
+	caseMoreThanChunk    = "more_than_chunk"
+	caseTwoChunksAligned = "two_chunks_aligned"
+)
+
 func TestReader_ChecksumMismatch_VerificationEnabled(t *testing.T) {
 	// Description:
 	// Check that checksum verification detects checksum mismatch when verification is enabled
@@ -33,10 +40,10 @@ func TestReader_ChecksumMismatch_VerificationEnabled(t *testing.T) {
 		name string
 		data []byte
 	}{
-		{name: "exact_chunk", data: bytes.Repeat([]byte("a"), chunkSize)},          // exactly one chunk
-		{name: "partial_chunk", data: bytes.Repeat([]byte("a"), chunkSize-1)},      // less than one chunk
-		{name: "more_than_chunk", data: bytes.Repeat([]byte("a"), chunkSize+1)},    // more than one chunk
-		{name: "two_chunks_aligned", data: bytes.Repeat([]byte("a"), chunkSize*2)}, // exactly two chunks
+		{name: caseExactChunk, data: bytes.Repeat([]byte("a"), chunkSize)},         // exactly one chunk
+		{name: casePartialChunk, data: bytes.Repeat([]byte("a"), chunkSize-1)},     // less than one chunk
+		{name: caseMoreThanChunk, data: bytes.Repeat([]byte("a"), chunkSize+1)},    // more than one chunk
+		{name: caseTwoChunksAligned, data: bytes.Repeat([]byte("a"), chunkSize*2)}, // exactly two chunks
 	}
 
 	for _, tc := range cases {
@@ -112,10 +119,10 @@ func TestReader_ChecksumMismatch_VerificationDisabled(t *testing.T) {
 		name string
 		data []byte
 	}{
-		{name: "exact_chunk", data: bytes.Repeat([]byte("a"), chunkSize)},          // exactly one chunk
-		{name: "partial_chunk", data: bytes.Repeat([]byte("a"), chunkSize-1)},      // less than one chunk
-		{name: "more_than_chunk", data: bytes.Repeat([]byte("a"), chunkSize+1)},    // more than one chunk
-		{name: "two_chunks_aligned", data: bytes.Repeat([]byte("a"), chunkSize*2)}, // exactly two chunks
+		{name: caseExactChunk, data: bytes.Repeat([]byte("a"), chunkSize)},         // exactly one chunk
+		{name: casePartialChunk, data: bytes.Repeat([]byte("a"), chunkSize-1)},     // less than one chunk
+		{name: caseMoreThanChunk, data: bytes.Repeat([]byte("a"), chunkSize+1)},    // more than one chunk
+		{name: caseTwoChunksAligned, data: bytes.Repeat([]byte("a"), chunkSize*2)}, // exactly two chunks
 	}
 
 	for _, tc := range cases {
@@ -163,10 +170,10 @@ func TestReader_CorrectChecksum_VerificationEnabled(t *testing.T) {
 		name string
 		data []byte
 	}{
-		{name: "exact_chunk", data: bytes.Repeat([]byte("a"), chunkSize)},          // exactly one chunk
-		{name: "partial_chunk", data: bytes.Repeat([]byte("a"), chunkSize-1)},      // less than one chunk
-		{name: "more_than_chunk", data: bytes.Repeat([]byte("a"), chunkSize+1)},    // more than one chunk
-		{name: "two_chunks_aligned", data: bytes.Repeat([]byte("a"), chunkSize*2)}, // exactly two chunks
+		{name: caseExactChunk, data: bytes.Repeat([]byte("a"), chunkSize)},         // exactly one chunk
+		{name: casePartialChunk, data: bytes.Repeat([]byte("a"), chunkSize-1)},     // less than one chunk
+		{name: caseMoreThanChunk, data: bytes.Repeat([]byte("a"), chunkSize+1)},    // more than one chunk
+		{name: caseTwoChunksAligned, data: bytes.Repeat([]byte("a"), chunkSize*2)}, // exactly two chunks
 	}
 
 	for _, tc := range cases {

@@ -10,6 +10,11 @@ import (
 	"k8s.io/utils/ptr"
 )
 
+const (
+	testPVCName  = "test-pvc"
+	testNodeName = "test-node"
+)
+
 var _ = Describe("FinBackup Webhook", func() {
 	var (
 		namespace *corev1.Namespace
@@ -34,9 +39,9 @@ var _ = Describe("FinBackup Webhook", func() {
 						Namespace: namespace.Name,
 					},
 					Spec: finv1.FinBackupSpec{
-						PVC:          "test-pvc",
+						PVC:          testPVCName,
 						PVCNamespace: namespace.Name,
-						Node:         "test-node",
+						Node:         testNodeName,
 					},
 					Status: finv1.FinBackupStatus{
 						SnapID: ptr.To(1),
@@ -49,9 +54,9 @@ var _ = Describe("FinBackup Webhook", func() {
 						Namespace: namespace.Name,
 					},
 					Spec: finv1.FinBackupSpec{
-						PVC:          "test-pvc",
+						PVC:          testPVCName,
 						PVCNamespace: namespace.Name,
-						Node:         "test-node",
+						Node:         testNodeName,
 					},
 					Status: finv1.FinBackupStatus{
 						SnapID: ptr.To(2),
@@ -79,9 +84,9 @@ var _ = Describe("FinBackup Webhook", func() {
 						Namespace: namespace.Name,
 					},
 					Spec: finv1.FinBackupSpec{
-						PVC:          "test-pvc",
+						PVC:          testPVCName,
 						PVCNamespace: namespace.Name,
-						Node:         "test-node",
+						Node:         testNodeName,
 					},
 					Status: finv1.FinBackupStatus{
 						SnapID: ptr.To(1),
@@ -94,9 +99,9 @@ var _ = Describe("FinBackup Webhook", func() {
 						Namespace: namespace.Name,
 					},
 					Spec: finv1.FinBackupSpec{
-						PVC:          "test-pvc",
+						PVC:          testPVCName,
 						PVCNamespace: namespace.Name,
-						Node:         "test-node",
+						Node:         testNodeName,
 					},
 					Status: finv1.FinBackupStatus{
 						SnapID: ptr.To(2),

@@ -126,7 +126,3 @@ func (fb *FinBackup) CanBeRestored(allowUnverified bool) bool {
 	return fb.IsStoredToNode() &&
 		(fb.IsVerifiedTrue() || (fb.IsVerificationSkipped() && allowUnverified))
 }
-
-func init() {
-	SchemeBuilder.Register(&FinBackup{}, &FinBackupList{})
-}

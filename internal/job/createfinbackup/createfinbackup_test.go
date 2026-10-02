@@ -20,6 +20,12 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 )
 
+const (
+	testNamespace    = "ns1"
+	testPVCNamespace = "pvcns"
+	testJobNamespace = "job-ns"
+)
+
 func Test_constructFinBackupName(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -66,12 +72,12 @@ func Test_newFinBackupFromConfig(t *testing.T) {
 			fbc: &finv1.FinBackupConfig{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "fbc1",
-					Namespace: "ns1",
+					Namespace: testNamespace,
 					UID:       "uid-123",
 				},
 				Spec: finv1.FinBackupConfigSpec{
 					PVC:          "pvc1",
-					PVCNamespace: "pvcns",
+					PVCNamespace: testPVCNamespace,
 					Node:         "node1",
 				},
 			},
@@ -80,11 +86,11 @@ func Test_newFinBackupFromConfig(t *testing.T) {
 			want: &finv1.FinBackup{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:        "fbc1-20220607080910-zzzzzz01",
-					Namespace:   "ns1",
+					Namespace:   testNamespace,
 					Labels:      map[string]string{controller.LabelFinBackupConfigUID: "uid-123"},
-					Annotations: map[string]string{annotationFinBackupConfigName: "fbc1", annotationFinBackupConfigNS: "ns1"},
+					Annotations: map[string]string{annotationFinBackupConfigName: "fbc1", annotationFinBackupConfigNS: testNamespace},
 				},
-				Spec: finv1.FinBackupSpec{PVC: "pvc1", PVCNamespace: "pvcns", Node: "node1"},
+				Spec: finv1.FinBackupSpec{PVC: "pvc1", PVCNamespace: testPVCNamespace, Node: "node1"},
 			},
 		},
 	}
@@ -106,7 +112,7 @@ func TestCreateFinBackup_Perform(t *testing.T) {
 	now := time.Date(2023, 1, 2, 3, 4, 5, 0, time.UTC)
 	fbc := &finv1.FinBackupConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "fbc-ok", Namespace: "ns"},
-		Spec:       finv1.FinBackupConfigSpec{PVC: "pvc", PVCNamespace: "pvcns", Node: "node"},
+		Spec:       finv1.FinBackupConfigSpec{PVC: "pvc", PVCNamespace: testPVCNamespace, Node: "node"},
 	}
 
 	makeJob := func(name, namespace string, timestamp time.Time) *batchv1.Job {
@@ -132,13 +138,13 @@ func TestCreateFinBackup_Perform(t *testing.T) {
 			name: "success-path",
 			existingObjects: []client.Object{
 				fbc,
-				makeJob("job-0001", "job-ns", now),
+				makeJob("job-0001", testJobNamespace, now),
 			},
 			input: &input.CreateFinBackup{
 				FinBackupConfigName:      fbc.Name,
 				FinBackupConfigNamespace: fbc.Namespace,
 				JobName:                  "job-0001",
-				JobNamespace:             "job-ns",
+				JobNamespace:             testJobNamespace,
 			},
 			wantErr: false,
 		},
@@ -146,7 +152,7 @@ func TestCreateFinBackup_Perform(t *testing.T) {
 			name: "already-exists-case",
 			existingObjects: []client.Object{
 				fbc,
-				makeJob("job-0002", "job-ns", now),
+				makeJob("job-0002", testJobNamespace, now),
 				&finv1.FinBackup{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      constructFinBackupName(fbc.GetName(), "job-0002", now),
@@ -158,20 +164,20 @@ func TestCreateFinBackup_Perform(t *testing.T) {
 				FinBackupConfigName:      fbc.Name,
 				FinBackupConfigNamespace: fbc.Namespace,
 				JobName:                  "job-0002",
-				JobNamespace:             "job-ns",
+				JobNamespace:             testJobNamespace,
 			},
 			wantErr: false,
 		},
 		{
 			name: "missing-finbackupconfig",
 			existingObjects: []client.Object{
-				makeJob("job-0003", "job-ns", now),
+				makeJob("job-0003", testJobNamespace, now),
 			},
 			input: &input.CreateFinBackup{
 				FinBackupConfigName:      "no-such-fbc",
 				FinBackupConfigNamespace: fbc.Namespace,
 				JobName:                  "job-0003",
-				JobNamespace:             "job-ns",
+				JobNamespace:             testJobNamespace,
 			},
 			wantErr: true,
 		},
@@ -179,13 +185,13 @@ func TestCreateFinBackup_Perform(t *testing.T) {
 			name: "create-error",
 			existingObjects: []client.Object{
 				fbc,
-				makeJob("job-0004", "job-ns", now),
+				makeJob("job-0004", testJobNamespace, now),
 			},
 			input: &input.CreateFinBackup{
 				FinBackupConfigName:      fbc.Name,
 				FinBackupConfigNamespace: fbc.Namespace,
 				JobName:                  "job-0004",
-				JobNamespace:             "job-ns",
+				JobNamespace:             testJobNamespace,
 			},
 			interceptor: &interceptor.Funcs{
 				Create: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
@@ -201,7 +207,7 @@ func TestCreateFinBackup_Perform(t *testing.T) {
 				&batchv1.Job{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:              "job-0005",
-						Namespace:         "job-ns",
+						Namespace:         testJobNamespace,
 						CreationTimestamp: metav1.NewTime(now),
 					},
 				},
@@ -210,7 +216,7 @@ func TestCreateFinBackup_Perform(t *testing.T) {
 				FinBackupConfigName:      fbc.Name,
 				FinBackupConfigNamespace: fbc.Namespace,
 				JobName:                  "job-0005",
-				JobNamespace:             "job-ns",
+				JobNamespace:             testJobNamespace,
 			},
 			wantErr: false,
 		},

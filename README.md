@@ -12,8 +12,8 @@ TBD
 
 ### Conformed environments
 
-- Kubernetes cluster: v1.34, v1.35
-- Rook: v1.19.5+
+- Kubernetes cluster: v1.35, v1.36
+- Rook: v1.20.8+
 
 ## Contributing
 
@@ -23,7 +23,7 @@ Currently, we are not accepting outside contributions to this repository.
 
 The following tools should be installed manually.
 
-- go: v1.25.0+
+- go: v1.26.0+
 
 ## License
 

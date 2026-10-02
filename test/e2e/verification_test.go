@@ -136,7 +136,7 @@ func verificationTestSuite() {
 						VolumeAttributes: map[string]string{
 							"clusterID":     "rook-ceph",
 							"pool":          poolName,
-							"staticVolume":  "true",
+							"staticVolume":  annotationValueTrue,
 							"imageFeatures": "layering",
 						},
 						NodeStageSecretRef: &corev1.SecretReference{
@@ -213,7 +213,7 @@ func verificationTestSuite() {
 			// Corrupting the RBD image may trigger a checksum mismatch before
 			// fsck runs. In this test we want to evaluate the fsck-based
 			// verification result, so skip checksum verification.
-			"fin.cybozu.io/skip-checksum-verify": "true",
+			"fin.cybozu.io/skip-checksum-verify": annotationValueTrue,
 		}
 		err = CreateFinBackup(ctx, ctrlClient, finbackup)
 		Expect(err).NotTo(HaveOccurred())
@@ -263,7 +263,7 @@ func verificationTestSuite() {
 				pvc, nodes[0])
 			Expect(err).NotTo(HaveOccurred())
 			finbackup.Annotations = map[string]string{
-				"fin.cybozu.io/skip-verify": "true",
+				"fin.cybozu.io/skip-verify": annotationValueTrue,
 			}
 			err = CreateFinBackup(ctx, ctrlClient, finbackup)
 			Expect(err).NotTo(HaveOccurred())

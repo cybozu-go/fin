@@ -39,6 +39,9 @@ const (
 	annotationFinRestoreName      = "fin.cybozu.io/finrestore-name"
 	annotationFinRestoreNamespace = "fin.cybozu.io/finrestore-namespace"
 	annotationRestoredBy          = "fin.cybozu.io/restored-by"
+
+	// condition reasons
+	reasonBackupUnavailable = "BackupUnavailable"
 )
 
 // FinRestoreReconciler reconciles a FinRestore object
@@ -158,7 +161,7 @@ func (r *FinRestoreReconciler) reconcileCreateOrUpdate(
 		return r.reconcileGoneBackup(ctx, restore, metav1.Condition{
 			Type:    finv1.RestoreConditionReadyToUse,
 			Status:  metav1.ConditionFalse,
-			Reason:  "BackupUnavailable",
+			Reason:  reasonBackupUnavailable,
 			Message: fmt.Sprintf("FinBackup %q does not exist", restore.Spec.Backup),
 		})
 	}
@@ -176,7 +179,7 @@ func (r *FinRestoreReconciler) reconcileCreateOrUpdate(
 		return r.reconcileGoneBackup(ctx, restore, metav1.Condition{
 			Type:    finv1.RestoreConditionReadyToUse,
 			Status:  metav1.ConditionFalse,
-			Reason:  "BackupUnavailable",
+			Reason:  reasonBackupUnavailable,
 			Message: fmt.Sprintf("FinBackup %q was recreated after this restore first saw it", backup.Name),
 		})
 	}
@@ -330,8 +333,8 @@ func (r *FinRestoreReconciler) createOrUpdateRestoreJob(
 		if labels == nil {
 			labels = map[string]string{}
 		}
-		labels["app.kubernetes.io/name"] = labelAppNameValue
-		labels["app.kubernetes.io/component"] = labelComponentRestoreJob
+		labels[labelKeyAppName] = labelAppNameValue
+		labels[labelKeyAppComponent] = labelComponentRestoreJob
 		job.SetLabels(labels)
 
 		annotations := job.GetAnnotations()
@@ -375,27 +378,27 @@ func (r *FinRestoreReconciler) createOrUpdateRestoreJob(
 		job.Spec.Template.Spec.Containers = []corev1.Container{
 			{
 				Name:    "restore",
-				Command: []string{"/manager"},
+				Command: []string{managerCommand},
 				Args:    []string{"restore"},
 				Env: []corev1.EnvVar{
 					{
-						Name:  "ACTION_UID",
+						Name:  envActionUID,
 						Value: string(restore.GetUID()),
 					},
 					{
-						Name:  "TARGET_SNAPSHOT_ID",
+						Name:  envTargetSnapshotID,
 						Value: strconv.Itoa(*backup.Status.SnapID),
 					},
 					{
-						Name:  "BACKUP_TARGET_PVC_NAME",
+						Name:  envBackupTargetPVCName,
 						Value: backup.Spec.PVC,
 					},
 					{
-						Name:  "BACKUP_TARGET_PVC_NAMESPACE",
+						Name:  envBackupTargetPVCNamespace,
 						Value: backup.Spec.PVCNamespace,
 					},
 					{
-						Name:  "BACKUP_TARGET_PVC_UID",
+						Name:  envBackupTargetPVCUID,
 						Value: backup.GetLabels()[labelBackupTargetPVCUID],
 					},
 					{
@@ -412,7 +415,7 @@ func (r *FinRestoreReconciler) createOrUpdateRestoreJob(
 				VolumeMounts: []corev1.VolumeMount{
 					{
 						MountPath: nlv.VolumePath,
-						Name:      "fin-volume",
+						Name:      volumeNameFin,
 					},
 				},
 				VolumeDevices: []corev1.VolumeDevice{
@@ -426,7 +429,7 @@ func (r *FinRestoreReconciler) createOrUpdateRestoreJob(
 
 		job.Spec.Template.Spec.Volumes = []corev1.Volume{
 			{
-				Name: "fin-volume",
+				Name: volumeNameFin,
 				VolumeSource: corev1.VolumeSource{
 					PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
 						ClaimName: finVolumePVCName(backup),
@@ -514,8 +517,8 @@ func (r *FinRestoreReconciler) createRestoreJobPVIfNotExists(
 		ObjectMeta: metav1.ObjectMeta{
 			Name: restoreJobPVName(restore),
 			Labels: map[string]string{
-				"app.kubernetes.io/name":      labelAppNameValue,
-				"app.kubernetes.io/component": labelComponentRestoreJob,
+				labelKeyAppName:      labelAppNameValue,
+				labelKeyAppComponent: labelComponentRestoreJob,
 			},
 		},
 		Spec: corev1.PersistentVolumeSpec{
@@ -569,8 +572,8 @@ func (r *FinRestoreReconciler) createRestoreJobPVCIfNotExists(
 			Namespace: r.cephClusterNamespace,
 			Name:      restoreJobPVCName(restore),
 			Labels: map[string]string{
-				"app.kubernetes.io/name":      labelAppNameValue,
-				"app.kubernetes.io/component": labelComponentRestoreJob,
+				labelKeyAppName:      labelAppNameValue,
+				labelKeyAppComponent: labelComponentRestoreJob,
 			},
 		},
 		Spec: corev1.PersistentVolumeClaimSpec{
@@ -643,7 +646,7 @@ func (r *FinRestoreReconciler) recordBackupNodeGone(ctx context.Context, restore
 	updatedRestore, err := patchFinRestoreCondition(ctx, r.Client, restore, metav1.Condition{
 		Type:    finv1.RestoreConditionReadyToUse,
 		Status:  metav1.ConditionFalse,
-		Reason:  "BackupUnavailable",
+		Reason:  reasonBackupUnavailable,
 		Message: fmt.Sprintf("node %q no longer holds the backup", node),
 	})
 	if err != nil {
