@@ -19,7 +19,7 @@ func Test_lookupNode(t *testing.T) {
 		wantUID    types.UID
 		wantExists bool
 	}{
-		{name: "the node exists", nodeName: "node0", wantUID: "uid-0", wantExists: true},
+		{name: "the node exists", nodeName: node0Name, wantUID: node0UID, wantExists: true},
 		{name: "the node does not exist", nodeName: "no-such-node"},
 	}
 
@@ -27,7 +27,7 @@ func Test_lookupNode(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			s := testScheme(t)
 			c := fake.NewClientBuilder().WithScheme(s).WithObjects(
-				&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node0", UID: "uid-0"}},
+				&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: node0Name, UID: node0UID}},
 			).Build()
 
 			uid, exists, err := lookupNode(context.Background(), c, tt.nodeName)
@@ -50,7 +50,7 @@ func Test_nodeHoldsBackupData(t *testing.T) {
 		},
 		{
 			name:    "a FinBackup recorded against the node that is there now",
-			nodeUID: "uid-0",
+			nodeUID: node0UID,
 			want:    true,
 		},
 		{
@@ -63,10 +63,10 @@ func Test_nodeHoldsBackupData(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			backup := &finv1.FinBackup{
-				Spec:   finv1.FinBackupSpec{Node: "node0"},
+				Spec:   finv1.FinBackupSpec{Node: node0Name},
 				Status: finv1.FinBackupStatus{NodeUID: tt.nodeUID},
 			}
-			require.Equal(t, tt.want, nodeHoldsBackupData(backup, "uid-0"))
+			require.Equal(t, tt.want, nodeHoldsBackupData(backup, node0UID))
 		})
 	}
 }

@@ -79,7 +79,3 @@ type FinRestoreList struct {
 func (fr *FinRestore) IsReady() bool {
 	return meta.IsStatusConditionTrue(fr.Status.Conditions, RestoreConditionReadyToUse)
 }
-
-func init() {
-	SchemeBuilder.Register(&FinRestore{}, &FinRestoreList{})
-}

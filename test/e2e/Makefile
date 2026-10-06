@@ -65,6 +65,7 @@ launch-minikube: $(MINIKUBE_BIN) $(KUBECTL)
 		$(MINIKUBE) start \
 			--kubernetes-version="v$(KUBERNETES_VERSION)" \
 			--driver=kvm2 \
+			--container-runtime=docker \
 			--nodes=2 \
 			--memory 6g \
 			--cpus=2; \
@@ -120,6 +121,11 @@ wait-deploy-ready:
 launch-rook-ceph: create-loop-dev $(KUBECTL) $(HELM)
 	$(HELM) upgrade --install --version $(ROOK_CHART_VERSION) --repo https://charts.rook.io/release \
 		--create-namespace --namespace $(NS) rook-ceph rook-ceph -f testdata/values.yaml --wait
+	$(CURL) -o $(BINDIR)/ceph-csi-drivers-values.yaml \
+		https://raw.githubusercontent.com/rook/rook/$(ROOK_CHART_VERSION)/deploy/charts/ceph-csi-drivers/values.yaml
+	$(HELM) upgrade --install --version $(CEPH_CSI_DRIVERS_CHART_VERSION) --repo https://ceph.github.io/ceph-csi-operator \
+		--namespace $(NS) ceph-csi-drivers ceph-csi-drivers -f $(BINDIR)/ceph-csi-drivers-values.yaml \
+		--set drivers.cephfs.enabled=false --wait
 	sed \
 		-e "s%{LOOP_DEV}%$(LOOP_DEV)%" \
 		-e "s%{NODE_NAME}%$(MINIKUBE_PROFILE_NAME)%" \
@@ -129,6 +135,8 @@ launch-rook-ceph: create-loop-dev $(KUBECTL) $(HELM)
 		$(HELM) upgrade --install --version $(ROOK_CHART_VERSION) --repo https://charts.rook.io/release --namespace $(NS) rook-ceph-cluster rook-ceph-cluster -f - --wait
 	$(MAKE) wait-deploy-ready NS=$(NS) DEPLOY=rook-ceph-operator
 	$(MAKE) wait-deploy-ready NS=$(NS) DEPLOY=rook-ceph-osd-0
+	$(KUBECTL) -n $(NS) wait --timeout=$(TIMEOUT_SECS)s --for=condition=available deployment/rook-ceph.rbd.csi.ceph.com-ctrlplugin
+	$(KUBECTL) -n $(NS) rollout status --timeout=$(TIMEOUT_SECS)s daemonset/rook-ceph.rbd.csi.ceph.com-nodeplugin
 	$(KUBECTL) apply -f testdata/cephblockpool.yaml
 	$(KUBECTL) apply -f testdata/storageclass.yaml
 

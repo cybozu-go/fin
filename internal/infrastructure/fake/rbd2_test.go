@@ -16,6 +16,10 @@ import (
 )
 
 const (
+	snapName1 = "snap1"
+	snapName2 = "snap2"
+	snapName3 = "snap3"
+
 	poolName              = "testpool"
 	imageName             = "testimage"
 	midSnapName           = "testmid-snap"
@@ -30,9 +34,9 @@ func TestRBDRepository2_getSnapshotVolume(t *testing.T) {
 	// append test data
 	rbdRepo.divideSize = 4
 	rbdRepo.snapshots = []*model.RBDSnapshot{
-		{ID: 1, Name: "snap1", Size: 12},
-		{ID: 2, Name: "snap2", Size: 16},
-		{ID: 3, Name: "snap3", Size: 16},
+		{ID: 1, Name: snapName1, Size: 12},
+		{ID: 2, Name: snapName2, Size: 16},
+		{ID: 3, Name: snapName3, Size: 16},
 	}
 	rbdRepo.writtenHistories = []*writtenHistory{
 		{
@@ -140,9 +144,9 @@ func TestRBDRepository2_exportDiff_random(t *testing.T) {
 
 	// prepare 3 random snapshots
 	volumes := []*testVolume{
-		{snapName: "snap1", size: 5 * 1024},
-		{snapName: "snap2", size: 5 * 1024},
-		{snapName: "snap3", size: 8 * 1024},
+		{snapName: snapName1, size: 5 * 1024},
+		{snapName: snapName2, size: 5 * 1024},
+		{snapName: snapName3, size: 8 * 1024},
 	}
 
 	for _, v := range volumes {
@@ -173,7 +177,7 @@ func TestRBDRepository2_exportDiff_specify(t *testing.T) {
 
 	volumes := []*testVolume{
 		{
-			snapName: "snap1",
+			snapName: snapName1,
 			size:     5 * 1024,
 			// 0x00 * 1000 + 0x11 * 2072 + 0x00 * 2048
 			data: bytes.Join([][]byte{
@@ -184,7 +188,7 @@ func TestRBDRepository2_exportDiff_specify(t *testing.T) {
 		},
 		// snap2 have overlapping data with snap1
 		{
-			snapName: "snap2",
+			snapName: snapName2,
 			size:     5 * 1024,
 			// 0x00 * 1000 + 0x11 * 24 + 0x22 * 3072 + 0x00 * 1024
 			data: bytes.Join([][]byte{
@@ -196,7 +200,7 @@ func TestRBDRepository2_exportDiff_specify(t *testing.T) {
 		},
 		// snap3 expand the volume and doesn't have overlapping data with snap1 and snap2
 		{
-			snapName: "snap3",
+			snapName: snapName3,
 			size:     8 * 1024,
 			// 0x00 * 1000 + 0x11 * 24 + 0x22 * 3072 + 0x00 * 2048 + 0x33 * 2048
 			data: bytes.Join([][]byte{

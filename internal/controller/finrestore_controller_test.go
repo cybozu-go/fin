@@ -46,11 +46,11 @@ func createAndBindRestorePV(ctx context.Context, finrestore *finv1.FinRestore) {
 				CSI: &corev1.CSIPersistentVolumeSource{
 					Driver: "rbd.csi.ceph.com",
 					VolumeAttributes: map[string]string{
-						"clusterID":     restorePVC.Namespace,
-						"pool":          rbdPoolName,
-						"imageName":     rbdImageName,
-						"imageFeatures": "layering",
-						"imageFormat":   "2",
+						csiParamClusterID:     restorePVC.Namespace,
+						csiParamPool:          rbdPoolName,
+						"imageName":           rbdImageName,
+						csiParamImageFeatures: "layering",
+						csiParamImageFormat:   "2",
 					},
 					VolumeHandle: utils.GetUniqueName("restore-volume-handle"),
 				},
@@ -105,8 +105,8 @@ var _ = Describe("FinRestore Controller", func() {
 			Expect(jobPV.UID).NotTo(BeEmpty())
 			Expect(jobPV.Annotations).To(BeEmpty())
 			Expect(jobPV.Labels).To(Equal(map[string]string{
-				"app.kubernetes.io/name":      labelAppNameValue,
-				"app.kubernetes.io/component": labelComponentRestoreJob,
+				labelKeyAppName:      labelAppNameValue,
+				labelKeyAppComponent: labelComponentRestoreJob,
 			}))
 			Expect(jobPV.Spec).To(Equal(corev1.PersistentVolumeSpec{
 				AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
@@ -119,11 +119,11 @@ var _ = Describe("FinRestore Controller", func() {
 					CSI: &corev1.CSIPersistentVolumeSource{
 						Driver: pv.Spec.CSI.Driver,
 						VolumeAttributes: map[string]string{
-							"clusterID":     pv.Spec.CSI.VolumeAttributes["clusterID"],
-							"imageFeatures": pv.Spec.CSI.VolumeAttributes["imageFeatures"],
-							"imageFormat":   pv.Spec.CSI.VolumeAttributes["imageFormat"],
-							"pool":          pv.Spec.CSI.VolumeAttributes["pool"],
-							"staticVolume":  "true",
+							csiParamClusterID:     pv.Spec.CSI.VolumeAttributes[csiParamClusterID],
+							csiParamImageFeatures: pv.Spec.CSI.VolumeAttributes[csiParamImageFeatures],
+							csiParamImageFormat:   pv.Spec.CSI.VolumeAttributes[csiParamImageFormat],
+							csiParamPool:          pv.Spec.CSI.VolumeAttributes[csiParamPool],
+							"staticVolume":        annotationValueTrue,
 						},
 						VolumeHandle: pv.Spec.CSI.VolumeAttributes["imageName"],
 					},
@@ -165,8 +165,8 @@ var _ = Describe("FinRestore Controller", func() {
 			Expect(jobPVC.UID).NotTo(BeEmpty())
 			Expect(jobPVC.Annotations).To(BeEmpty())
 			Expect(jobPVC.Labels).To(Equal(map[string]string{
-				"app.kubernetes.io/name":      labelAppNameValue,
-				"app.kubernetes.io/component": labelComponentRestoreJob,
+				labelKeyAppName:      labelAppNameValue,
+				labelKeyAppComponent: labelComponentRestoreJob,
 			}))
 			Expect(jobPVC.Spec).To(Equal(corev1.PersistentVolumeClaimSpec{
 				AccessModes:      []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
@@ -279,7 +279,7 @@ var _ = Describe("FinRestore Controller Reconcile Test", Ordered, func() {
 
 			By("creating a restorable FinBackup on a node that does not exist")
 			finbackup = CreateFinBackupStoredAndVerified(ctx, k8sClient, workNamespace,
-				utils.GetUniqueName("test-fin-backup-gone"), pvc, 1, "gone-node")
+				utils.GetUniqueName("test-fin-backup-gone"), pvc, 1, goneNodeName)
 
 			By("creating a FinRestore targeting the FinBackup")
 			finrestore = NewFinRestore(workNamespace, utils.GetUniqueName("test-restore-gone"), finbackup.Name,
@@ -292,7 +292,7 @@ var _ = Describe("FinRestore Controller Reconcile Test", Ordered, func() {
 				Spec: batchv1.JobSpec{
 					Template: corev1.PodTemplateSpec{
 						Spec: corev1.PodSpec{
-							NodeName:      "gone-node",
+							NodeName:      goneNodeName,
 							RestartPolicy: corev1.RestartPolicyNever,
 							Containers:    []corev1.Container{{Name: "restore", Image: podImage}},
 						},
@@ -321,7 +321,7 @@ var _ = Describe("FinRestore Controller Reconcile Test", Ordered, func() {
 			condition := meta.FindStatusCondition(got.Status.Conditions, finv1.RestoreConditionReadyToUse)
 			Expect(condition).NotTo(BeNil())
 			Expect(condition.Status).To(Equal(metav1.ConditionFalse))
-			Expect(condition.Reason).To(Equal("BackupUnavailable"))
+			Expect(condition.Reason).To(Equal(reasonBackupUnavailable))
 
 			By("checking that the FinRestore is bound to the FinBackup it saw")
 			Expect(got.Status.BackupUID).To(Equal(finbackup.UID))
@@ -490,7 +490,7 @@ var _ = Describe("FinRestore Controller Reconcile Test", Ordered, func() {
 			condition := meta.FindStatusCondition(got.Status.Conditions, finv1.RestoreConditionReadyToUse)
 			Expect(condition).NotTo(BeNil())
 			Expect(condition.Status).To(Equal(metav1.ConditionFalse))
-			Expect(condition.Reason).To(Equal("BackupUnavailable"))
+			Expect(condition.Reason).To(Equal(reasonBackupUnavailable))
 
 			By("checking that no restore job is created")
 			ExpectNoJob(ctx, k8sClient, restoreJobName(finrestore), cephNamespace)
@@ -923,7 +923,7 @@ var _ = Describe("FinRestore Controller Reconcile Test", Ordered, func() {
 			meta.SetStatusCondition(&finbackup.Status.Conditions, metav1.Condition{
 				Type:    finv1.BackupConditionMetadataCorrupted,
 				Status:  metav1.ConditionTrue,
-				Reason:  "MetadataCorrupted",
+				Reason:  reasonMetadataCorrupted,
 				Message: "fin.sqlite3 corruption detected",
 			})
 			Expect(k8sClient.Status().Update(ctx, finbackup)).Should(Succeed())
@@ -987,7 +987,7 @@ var _ = Describe("FinRestore Controller Reconcile Test", Ordered, func() {
 			meta.SetStatusCondition(&finbackup.Status.Conditions, metav1.Condition{
 				Type:   finv1.BackupConditionStoredToNode,
 				Status: metav1.ConditionTrue,
-				Reason: "BackupCompleted",
+				Reason: reasonBackupCompleted,
 			})
 			meta.SetStatusCondition(&finbackup.Status.Conditions, metav1.Condition{
 				Type:   finv1.BackupConditionVerified,
@@ -1047,7 +1047,7 @@ var _ = Describe("FinRestore Controller Reconcile Test", Ordered, func() {
 			meta.SetStatusCondition(&finbackup.Status.Conditions, metav1.Condition{
 				Type:   finv1.BackupConditionStoredToNode,
 				Status: metav1.ConditionTrue,
-				Reason: "BackupCompleted",
+				Reason: reasonBackupCompleted,
 			})
 			Expect(k8sClient.Status().Update(ctx, finbackup)).Should(Succeed())
 
@@ -1111,7 +1111,7 @@ var _ = Describe("FinRestore Controller Reconcile Test", Ordered, func() {
 			meta.SetStatusCondition(&finbackup.Status.Conditions, metav1.Condition{
 				Type:   finv1.BackupConditionStoredToNode,
 				Status: metav1.ConditionTrue,
-				Reason: "BackupCompleted",
+				Reason: reasonBackupCompleted,
 			})
 			meta.SetStatusCondition(&finbackup.Status.Conditions, metav1.Condition{
 				Type:   finv1.BackupConditionVerificationSkipped,
@@ -1205,7 +1205,7 @@ var _ = Describe("mapping a Node event to FinRestores", func() {
 
 	It("should enqueue the FinRestores that still have work to do", func(ctx SpecContext) {
 		requests := reconciler.enqueueUnfinishedFinRestores(ctx,
-			&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "gone-node"}})
+			&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: goneNodeName}})
 
 		Expect(requests).To(ContainElement(ctrl.Request{NamespacedName: client.ObjectKeyFromObject(unfinished)}))
 		Expect(requests).To(ContainElement(ctrl.Request{NamespacedName: client.ObjectKeyFromObject(readyDeleting)}))
@@ -1225,31 +1225,31 @@ func Test_restoreJobCanProceed(t *testing.T) {
 	}{
 		{
 			name:        "the node that holds the backup",
-			backupNode:  "node0",
+			backupNode:  node0Name,
 			recordedUID: liveNodeUID,
 			want:        true,
 		},
 		{
 			name:       "a backup whose node UID is not recorded yet",
-			backupNode: "node0",
+			backupNode: node0Name,
 			want:       true,
 		},
 		{
-			name:        "a node that no longer exists",
-			backupNode:  "gone-node",
+			name:        nodeGoneCaseName,
+			backupNode:  goneNodeName,
 			recordedUID: liveNodeUID,
 			want:        false,
 		},
 		{
 			name:        "a node recreated under the same name",
-			backupNode:  "node0",
-			recordedUID: "uid-replaced",
+			backupNode:  node0Name,
+			recordedUID: uidReplaced,
 			want:        false,
 		},
 		{
 			name:       "a FinBackup that is missing",
 			noBackup:   true,
-			backupNode: "node0",
+			backupNode: node0Name,
 			want:       false,
 		},
 	}
@@ -1258,7 +1258,7 @@ func Test_restoreJobCanProceed(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			restore := NewFinRestore(workNamespace, "restore", "backup", "pvc", userNamespace)
 			objects := []client.Object{
-				&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node0", UID: liveNodeUID}},
+				&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: node0Name, UID: liveNodeUID}},
 			}
 			if !tt.noBackup {
 				backup := NewFinBackup(workNamespace, "backup", "pvc", userNamespace, tt.backupNode)
@@ -1284,21 +1284,21 @@ func Test_reconcileDelete_whenTheJobCannotFinish(t *testing.T) {
 		recordedUID types.UID
 	}{
 		{
-			name:        "a node that no longer exists",
-			backupNode:  "gone-node",
+			name:        nodeGoneCaseName,
+			backupNode:  goneNodeName,
 			recordedUID: liveNodeUID,
 		},
 		{
 			name:        "a node recreated under the same name while the job was waited on",
-			backupNode:  "node0",
-			recordedUID: "uid-replaced",
+			backupNode:  node0Name,
+			recordedUID: uidReplaced,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			restore := NewFinRestore(workNamespace, "restore", "backup", "pvc", userNamespace)
-			restore.UID = "restore-uid"
+			restore.UID = restoreUID
 			restore.Finalizers = []string{FinRestoreFinalizerName}
 			restore.DeletionTimestamp = ptr.To(metav1.Now())
 
@@ -1312,7 +1312,7 @@ func Test_reconcileDelete_whenTheJobCannotFinish(t *testing.T) {
 			}
 			c := fake.NewClientBuilder().WithScheme(testScheme(t)).WithObjects(
 				restore, backup, job,
-				&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node0", UID: liveNodeUID}},
+				&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: node0Name, UID: liveNodeUID}},
 			).Build()
 			r := &FinRestoreReconciler{Client: c, cephClusterNamespace: cephNamespace}
 
@@ -1336,25 +1336,25 @@ func Test_abortRestoreOnGoneBackupNode(t *testing.T) {
 	}{
 		{
 			name:        "the node that holds the backup",
-			backupNode:  "node0",
+			backupNode:  node0Name,
 			recordedUID: liveNodeUID,
 			want:        false,
 		},
 		{
-			name:        "a node that no longer exists",
-			backupNode:  "gone-node",
+			name:        nodeGoneCaseName,
+			backupNode:  goneNodeName,
 			recordedUID: liveNodeUID,
 			want:        true,
 		},
 		{
 			name:        "a node recreated under the same name",
-			backupNode:  "node0",
-			recordedUID: "uid-replaced",
+			backupNode:  node0Name,
+			recordedUID: uidReplaced,
 			want:        true,
 		},
 		{
 			name:       "a backup whose node UID is not recorded yet",
-			backupNode: "node0",
+			backupNode: node0Name,
 			want:       false,
 		},
 	}
@@ -1364,10 +1364,10 @@ func Test_abortRestoreOnGoneBackupNode(t *testing.T) {
 			backup := NewFinBackup(workNamespace, "backup", "pvc", userNamespace, tt.backupNode)
 			backup.Status.NodeUID = tt.recordedUID
 			restore := &finv1.FinRestore{ObjectMeta: metav1.ObjectMeta{
-				Namespace: workNamespace, Name: "restore", UID: "restore-uid",
+				Namespace: workNamespace, Name: "restore", UID: restoreUID,
 			}}
 			c := fake.NewClientBuilder().WithScheme(testScheme(t)).
-				WithObjects(&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node0", UID: liveNodeUID}}).Build()
+				WithObjects(&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: node0Name, UID: liveNodeUID}}).Build()
 			r := &FinRestoreReconciler{Client: c, cephClusterNamespace: cephNamespace}
 
 			got, err := r.abortRestoreOnGoneBackupNode(context.Background(), restore, backup)
@@ -1389,14 +1389,14 @@ func Test_Reconcile_whenTheFinBackupIsMissing(t *testing.T) {
 			name:       "a FinRestore that has no job",
 			wantJob:    false,
 			wantStatus: metav1.ConditionFalse,
-			wantReason: "BackupUnavailable",
+			wantReason: reasonBackupUnavailable,
 		},
 		{
 			name:       "a job that is still running",
 			jobState:   func(*batchv1.Job) {},
 			wantJob:    false,
 			wantStatus: metav1.ConditionFalse,
-			wantReason: "BackupUnavailable",
+			wantReason: reasonBackupUnavailable,
 		},
 		{
 			name: "a job that failed",
@@ -1407,7 +1407,7 @@ func Test_Reconcile_whenTheFinBackupIsMissing(t *testing.T) {
 			},
 			wantJob:    false,
 			wantStatus: metav1.ConditionFalse,
-			wantReason: "BackupUnavailable",
+			wantReason: reasonBackupUnavailable,
 		},
 		{
 			name:       "a job that completed before the FinBackup went away",
@@ -1421,7 +1421,7 @@ func Test_Reconcile_whenTheFinBackupIsMissing(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			restore := NewFinRestore(workNamespace, "restore", "backup", "pvc", userNamespace)
-			restore.UID = "restore-uid"
+			restore.UID = restoreUID
 			objects := []client.Object{restore}
 			jobKey := client.ObjectKey{Namespace: cephNamespace, Name: restoreJobName(restore)}
 			if tt.jobState != nil {
@@ -1516,18 +1516,18 @@ func Test_Reconcile_whenTheFinBackupIsRecreated(t *testing.T) {
 		},
 		{
 			name:          "a FinBackup recreated after this restore first saw it",
-			recordedUID:   "uid-original",
-			wantReason:    "BackupUnavailable",
+			recordedUID:   uidOriginal,
+			wantReason:    reasonBackupUnavailable,
 			wantJob:       false,
-			wantBackupUID: "uid-original",
+			wantBackupUID: uidOriginal,
 		},
 		{
 			name:          "a recreated FinBackup whose PVC is gone",
-			recordedUID:   "uid-original",
+			recordedUID:   uidOriginal,
 			withoutPVC:    true,
-			wantReason:    "BackupUnavailable",
+			wantReason:    reasonBackupUnavailable,
 			wantJob:       false,
-			wantBackupUID: "uid-original",
+			wantBackupUID: uidOriginal,
 		},
 	}
 

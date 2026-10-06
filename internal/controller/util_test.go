@@ -35,6 +35,25 @@ const (
 	podImage       = "sample-image"
 	rbdPoolName    = "test-pool"
 	rbdImageName   = "test-image"
+
+	// StorageClass/PV volume attribute keys
+	csiParamClusterID     = "clusterID"
+	csiParamImageFeatures = "imageFeatures"
+	csiParamImageFormat   = "imageFormat"
+	csiParamPool          = "pool"
+
+	// Condition reasons
+	reasonMetadataCorrupted = "MetadataCorrupted"
+	reasonBackupCompleted   = "BackupCompleted"
+
+	goneNodeName     = "gone-node"
+	node0Name        = "node0"
+	node0UID         = "uid-0"
+	restoreUID       = "restore-uid"
+	uidOriginal      = "uid-original"
+	uidReplaced      = "uid-replaced"
+	nodeGoneCaseName = "a node that no longer exists"
+	testCronSchedule = "0 2 * * *"
 )
 
 // testScheme builds its own scheme rather than reusing the global one, which only the
@@ -96,11 +115,11 @@ func NewPVCAndPV(
 					Driver:       sc.Provisioner,
 					VolumeHandle: imageName,
 					VolumeAttributes: map[string]string{
-						"clusterID":     sc.Parameters["clusterID"],
-						"imageFeatures": sc.Parameters["imageFeatures"],
-						"imageFormat":   sc.Parameters["imageFormat"],
-						"imageName":     imageName,
-						"pool":          sc.Parameters["pool"],
+						csiParamClusterID:     sc.Parameters[csiParamClusterID],
+						csiParamImageFeatures: sc.Parameters[csiParamImageFeatures],
+						csiParamImageFormat:   sc.Parameters[csiParamImageFormat],
+						"imageName":           imageName,
+						csiParamPool:          sc.Parameters[csiParamPool],
 					},
 				},
 			},
@@ -286,10 +305,10 @@ func NewRBDStorageClass(prefix, clusterID, poolName string) *storagev1.StorageCl
 		},
 		Provisioner: fmt.Sprintf("%s.rbd.csi.ceph.com", clusterID),
 		Parameters: map[string]string{
-			"clusterID":     clusterID,
-			"imageFeatures": "layering",
-			"imageFormat":   "2",
-			"pool":          poolName,
+			csiParamClusterID:     clusterID,
+			csiParamImageFeatures: "layering",
+			csiParamImageFormat:   "2",
+			csiParamPool:          poolName,
 		},
 	}
 }
@@ -376,7 +395,7 @@ func CreateFinBackupStoredAndVerified(
 	meta.SetStatusCondition(&finbackup.Status.Conditions, metav1.Condition{
 		Type:   finv1.BackupConditionStoredToNode,
 		Status: metav1.ConditionTrue,
-		Reason: "BackupCompleted",
+		Reason: reasonBackupCompleted,
 	})
 	meta.SetStatusCondition(&finbackup.Status.Conditions, metav1.Condition{
 		Type:   finv1.BackupConditionVerified,
