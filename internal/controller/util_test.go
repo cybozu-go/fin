@@ -40,7 +40,9 @@ const (
 	csiParamClusterID     = "clusterID"
 	csiParamImageFeatures = "imageFeatures"
 	csiParamImageFormat   = "imageFormat"
+	csiParamImageName     = "imageName"
 	csiParamPool          = "pool"
+	csiParamStaticVolume  = "staticVolume"
 
 	// Condition reasons
 	reasonMetadataCorrupted = "MetadataCorrupted"
@@ -118,7 +120,7 @@ func NewPVCAndPV(
 						csiParamClusterID:     sc.Parameters[csiParamClusterID],
 						csiParamImageFeatures: sc.Parameters[csiParamImageFeatures],
 						csiParamImageFormat:   sc.Parameters[csiParamImageFormat],
-						"imageName":           imageName,
+						csiParamImageName:     imageName,
 						csiParamPool:          sc.Parameters[csiParamPool],
 					},
 				},
