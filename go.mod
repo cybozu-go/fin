@@ -1,6 +1,6 @@
 module github.com/cybozu-go/fin
 
-go 1.26.0
+go 1.25.7
 
 require (
 	github.com/cespare/xxhash/v2 v2.3.0
@@ -12,7 +12,7 @@ require (
 	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.12.1
 	go.uber.org/mock v0.6.0
-	golang.org/x/sys v0.48.0
+	golang.org/x/sys v0.47.0
 	k8s.io/api v0.35.4
 	k8s.io/apimachinery v0.35.4
 	k8s.io/client-go v0.35.4

@@ -27,3 +27,6 @@ updates:
     ignore:
       - dependency-name: "k8s.io/*"
       - dependency-name: "sigs.k8s.io/*"
+      # golang.org/x/sys v0.48.0 and later require Go 1.26.
+      - dependency-name: "golang.org/x/sys"
+        versions: [">= 0.48.0"]
