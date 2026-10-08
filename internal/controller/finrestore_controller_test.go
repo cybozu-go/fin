@@ -1235,7 +1235,7 @@ func Test_restoreJobCanProceed(t *testing.T) {
 			want:       true,
 		},
 		{
-			name:        nodeGoneCaseName,
+			name:        "a node that no longer exists", //nolint:goconst // test case names are intentionally literal
 			backupNode:  goneNodeName,
 			recordedUID: liveNodeUID,
 			want:        false,
@@ -1284,7 +1284,7 @@ func Test_reconcileDelete_whenTheJobCannotFinish(t *testing.T) {
 		recordedUID types.UID
 	}{
 		{
-			name:        nodeGoneCaseName,
+			name:        "a node that no longer exists",
 			backupNode:  goneNodeName,
 			recordedUID: liveNodeUID,
 		},
@@ -1341,7 +1341,7 @@ func Test_abortRestoreOnGoneBackupNode(t *testing.T) {
 			want:        false,
 		},
 		{
-			name:        nodeGoneCaseName,
+			name:        "a node that no longer exists",
 			backupNode:  goneNodeName,
 			recordedUID: liveNodeUID,
 			want:        true,

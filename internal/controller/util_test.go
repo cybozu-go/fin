@@ -54,7 +54,6 @@ const (
 	restoreUID       = "restore-uid"
 	uidOriginal      = "uid-original"
 	uidReplaced      = "uid-replaced"
-	nodeGoneCaseName = "a node that no longer exists"
 	testCronSchedule = "0 2 * * *"
 )
 
