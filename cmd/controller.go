@@ -89,9 +89,9 @@ func controllerMain(args []string) error {
 			"will use its value as .spec.schedule. This option is intended for testing purposes only.")
 	fs.Uint64Var(&maxBackupJobs, "max-backup-jobs", 8,
 		"The maximum number of backup jobs that can run simultaneously. If you set this to 0, there is no limit.")
-	fs.StringVar(&nodeSelectorTerms, "node-selector",
-		`[{"matchExpressions":[{"key":"csa.cybozu.io/reserved-for","operator":"In","values":["fin"]}]}]`,
-		"A JSON array of NodeSelectorTerms choosing the nodes a FinBackupConfig without spec.node can be assigned to.")
+	fs.StringVar(&nodeSelectorTerms, "node-selector", "",
+		"A JSON array of NodeSelectorTerms choosing the nodes a FinBackupConfig without spec.node can be assigned to, "+
+			`such as [{"matchExpressions":[{"key":"example.com/fin","operator":"Exists"}]}].`)
 	fs.StringVar(&prometheusURL, "prometheus-url", "",
 		"The URL of Prometheus to query the free space of nodes.")
 	fs.StringVar(&prometheusQuery, "prometheus-query", `node_filesystem_avail_bytes{mountpoint="/mnt/fin-volume"}`,
@@ -129,6 +129,9 @@ func controllerMain(args []string) error {
 	}
 	if diffChecksumChunkSize == 0 {
 		return fmt.Errorf("diff-checksum-chunk-size must be greater than 0")
+	}
+	if nodeSelectorTerms == "" {
+		return fmt.Errorf("node-selector must be provided")
 	}
 	nodeSelector, err := controller.ParseNodeSelectorTerms(nodeSelectorTerms)
 	if err != nil {

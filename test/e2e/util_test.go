@@ -993,6 +993,15 @@ func UpdateFinBackupConfigNode(ctx context.Context, c client.Client, fbc *finv1.
 	Expect(c.Update(ctx, updated)).NotTo(HaveOccurred())
 }
 
+func WaitForFinBackupConfigStatusNode(ctx context.Context, c client.Client, fbc *finv1.FinBackupConfig, node string, timeout time.Duration) {
+	GinkgoHelper()
+	Eventually(func(g Gomega) {
+		updated := &finv1.FinBackupConfig{}
+		g.Expect(c.Get(ctx, client.ObjectKeyFromObject(fbc), updated)).NotTo(HaveOccurred())
+		g.Expect(updated.Status.Node).To(Equal(node))
+	}, timeout, "1s").Should(Succeed())
+}
+
 func CopyFBCServiceAccount(ctx context.Context, client kubernetes.Interface, srcNS, dstNS string) {
 	GinkgoHelper()
 
