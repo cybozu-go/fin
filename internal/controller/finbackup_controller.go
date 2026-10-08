@@ -66,6 +66,7 @@ const (
 	envBackupTargetPVCName      = "BACKUP_TARGET_PVC_NAME"
 	envBackupTargetPVCNamespace = "BACKUP_TARGET_PVC_NAMESPACE"
 	envBackupTargetPVCUID       = "BACKUP_TARGET_PVC_UID"
+	envBackupSnapshotID         = "BACKUP_SNAPSHOT_ID"
 
 	maxOlderFinBackups  = 1
 	annotationValueTrue = "true"
@@ -1257,7 +1258,7 @@ func (r *FinBackupReconciler) createOrUpdateBackupJob(
 						Value: backup.GetAnnotations()[AnnotationBackupTargetRBDImage],
 					},
 					{
-						Name:  "BACKUP_SNAPSHOT_ID",
+						Name:  envBackupSnapshotID,
 						Value: strconv.Itoa(*backup.Status.SnapID),
 					},
 					{
@@ -1783,7 +1784,7 @@ func (r *FinBackupReconciler) createOrUpdateVerificationJob(
 						Value: string(backup.GetUID()),
 					},
 					{
-						Name:  "BACKUP_SNAPSHOT_ID",
+						Name:  envBackupSnapshotID,
 						Value: strconv.Itoa(*backup.Status.SnapID),
 					},
 					{
