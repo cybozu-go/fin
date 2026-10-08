@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"strings"
 	"time"
 
 	finv1 "github.com/cybozu-go/fin/api/v1"
@@ -138,6 +139,22 @@ func fullBackupTestSuite() {
 	//   - FinRestore1 is deleted successfully.
 	//   - FinRestore2 is created successfully (status will be verified).
 	It("should delete the FinRestore and create another one successfully", func(ctx SpecContext) {
+		DeferCleanup(func() {
+			if !CurrentSpecReport().Failed() {
+				return
+			}
+			// GinkgoWriter is printed only for failed specs.
+			for _, args := range [][]string{
+				{"get", "finrestore,pvc,pv,job,pod", "-A", "-o", "wide"},
+				{"describe", "job", "-n", rookNamespace, "-l", "app.kubernetes.io/component=restore-job"},
+				{"describe", "pod", "-n", rookNamespace, "-l", "batch.kubernetes.io/job-name"},
+				{"logs", "-n", rookNamespace, "-l", "batch.kubernetes.io/job-name", "--all-containers", "--prefix", "--tail=100"},
+			} {
+				stdout, stderr, err := kubectl(args...)
+				GinkgoWriter.Printf("\n$ kubectl %s\n%s%s(err: %v)\n", strings.Join(args, " "), stdout, stderr, err)
+			}
+		})
+
 		// Act
 		By("creating the first FinRestore targeting the FinBackup")
 		finrestores[1] = CreateRestore(ctx, ctrlClient,
