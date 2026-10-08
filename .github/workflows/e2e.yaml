@@ -30,8 +30,8 @@ jobs:
           - misc
           - finbackupconfig
         kubernetes-version:
-          - "1.35.9"
-          - "1.36.5"
+          - "1.35.8"
+          - "1.36.4"
     env:
       KUBERNETES_VERSION: ${{ matrix.kubernetes-version }}
     steps:

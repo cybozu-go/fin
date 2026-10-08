@@ -3,7 +3,7 @@ HELM_VERSION := 4.3.0
 # It is set by CI using the environment variable, use conditional assignment.
 # Use a Kubernetes version supported by the minikube version below.
 # The patch version may differ from the k8s patch version in go.mod.
-KUBERNETES_VERSION ?= 1.36.5
+KUBERNETES_VERSION ?= 1.36.4
 # https://github.com/kubernetes/minikube/releases
 MINIKUBE_VERSION := v1.39.0
 # https://github.com/rook/rook/releases
