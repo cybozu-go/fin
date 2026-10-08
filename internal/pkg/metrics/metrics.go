@@ -88,18 +88,35 @@ var (
 	registerOnce sync.Once
 )
 
+// SetFinBackupConfigInfo reports status.node, which is spec.node when set and otherwise
+// the node selected by the controller. The series of the FinBackupConfig with older
+// label values, such as a previously selected node, is replaced.
 func SetFinBackupConfigInfo(fbc *finv1.FinBackupConfig, cephNamespace string) {
 	if fbc == nil {
 		return
 	}
-	finbackupconfigInfo.WithLabelValues(cephNamespace, fbc.Spec.PVC, fbc.Spec.PVCNamespace, fbc.Namespace, fbc.Name, fbc.Spec.Node).Set(1)
+	DeleteFinBackupConfigInfo(fbc, cephNamespace)
+	finbackupconfigInfo.WithLabelValues(cephNamespace, fbc.Spec.PVC, fbc.Spec.PVCNamespace, fbc.Namespace, fbc.Name, fbc.Status.Node).Set(1)
 }
 
+// DeleteFinBackupConfigInfo deletes the series of the FinBackupConfig whatever its other
+// label values are, so a series with an outdated node does not remain.
 func DeleteFinBackupConfigInfo(fbc *finv1.FinBackupConfig, cephNamespace string) {
 	if fbc == nil {
 		return
 	}
-	finbackupconfigInfo.DeleteLabelValues(cephNamespace, fbc.Spec.PVC, fbc.Spec.PVCNamespace, fbc.Namespace, fbc.Name, fbc.Spec.Node)
+	finbackupconfigInfo.DeletePartialMatch(prometheus.Labels{
+		cephNSLabel: cephNamespace,
+		nsLabel:     fbc.Namespace,
+		fbcLabel:    fbc.Name,
+	})
+}
+
+// FinBackupConfigInfoMetricForTest exposes the metric only so that tests in other
+// packages can inspect it. Do not use it outside tests; update the metric through
+// SetFinBackupConfigInfo and DeleteFinBackupConfigInfo instead.
+func FinBackupConfigInfoMetricForTest() *prometheus.GaugeVec {
+	return finbackupconfigInfo
 }
 
 func SetBackupDurationSeconds(fb *finv1.FinBackup, untilCondition, cephNamespace string) {

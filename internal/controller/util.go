@@ -27,6 +27,10 @@ import (
 const (
 	// indexFinBackupNode lets a Node event be mapped back to the FinBackups pinned to it.
 	indexFinBackupNode = "spec.node"
+	// indexFinBackupConfigStatusNode lets a Node event be mapped back to the FinBackupConfigs
+	// whose selected node it is. An empty status.node is indexed too, so a Node creation can
+	// reach the FinBackupConfigs still waiting for a node.
+	indexFinBackupConfigStatusNode = "status.node"
 
 	maxJobBackoffLimit = 65535
 

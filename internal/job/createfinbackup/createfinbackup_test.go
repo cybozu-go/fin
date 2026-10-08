@@ -72,7 +72,10 @@ func Test_newFinBackupFromConfig(t *testing.T) {
 				Spec: finv1.FinBackupConfigSpec{
 					PVC:          "pvc1",
 					PVCNamespace: "pvcns",
-					Node:         "node1",
+				},
+				// The node selected by the controller, not spec.node, goes to the FinBackup.
+				Status: finv1.FinBackupConfigStatus{
+					Node: "node1",
 				},
 			},
 			jobName:      "jobname-zzzzzz01",
@@ -107,6 +110,11 @@ func TestCreateFinBackup_Perform(t *testing.T) {
 	fbc := &finv1.FinBackupConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "fbc-ok", Namespace: "ns"},
 		Spec:       finv1.FinBackupConfigSpec{PVC: "pvc", PVCNamespace: "pvcns", Node: "node"},
+		Status:     finv1.FinBackupConfigStatus{Node: "node"},
+	}
+	unassignedFBC := &finv1.FinBackupConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "fbc-unassigned", Namespace: "ns"},
+		Spec:       finv1.FinBackupConfigSpec{PVC: "pvc", PVCNamespace: "pvcns"},
 	}
 
 	makeJob := func(name, namespace string, timestamp time.Time) *batchv1.Job {
@@ -213,6 +221,20 @@ func TestCreateFinBackup_Perform(t *testing.T) {
 				JobNamespace:             "job-ns",
 			},
 			wantErr: false,
+		},
+		{
+			name: "unassigned-node",
+			existingObjects: []client.Object{
+				unassignedFBC,
+				makeJob("job-0006", "job-ns", now),
+			},
+			input: &input.CreateFinBackup{
+				FinBackupConfigName:      unassignedFBC.Name,
+				FinBackupConfigNamespace: unassignedFBC.Namespace,
+				JobName:                  "job-0006",
+				JobNamespace:             "job-ns",
+			},
+			wantErr: true,
 		},
 	}
 
