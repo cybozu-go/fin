@@ -67,28 +67,18 @@ Update the following version in Dockerfile, if necessary, too:
 
 #### Depending modules
 
-Read Kubernetes's `go.mod`(https://github.com/kubernetes/kubernetes/blob/<upgrading Kubernetes release version\>/go.mod), and update the `prometheus/*` modules. Here is the example to update `prometheus/client_golang`.
+Read Kubernetes's `go.mod` at https://github.com/kubernetes/kubernetes/blob/main/go.mod (replace `main` with the target release branch, such as `release-1.36`) and update the `prometheus/*` modules to the versions listed there. Here is the example to update `prometheus/client_golang`.
 
 ```
 $ VERSION=<upgrading prometheus-related libraries release version>
 $ go get github.com/prometheus/client_golang@v${VERSION}
 ```
 
-The following modules don't depend on other softwares, so use their latest versions:
+Update `k8s.io/utils` to the version in Kubernetes's `go.mod`.
 
 ```
-go get \
-    github.com/cespare/xxhash/v2@latest \
-    github.com/google/uuid@latest \
-    github.com/mattn/go-sqlite3@latest \
-    github.com/onsi/ginkgo/v2@latest \
-    github.com/onsi/gomega@latest \
-    github.com/spf13/cobra@latest \
-    github.com/stretchr/testify@latest \
-    go.uber.org/mock@latest \
-    golang.org/x/sys@latest \
-    k8s.io/utils@latest \
-    sigs.k8s.io/yaml@latest
+$ VERSION=<k8s.io/utils version in Kubernetes go.mod>
+$ go get k8s.io/utils@${VERSION}
 ```
 
 Then, please tidy up the dependencies.
