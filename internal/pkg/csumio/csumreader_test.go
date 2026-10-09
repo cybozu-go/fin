@@ -33,10 +33,10 @@ func TestReader_ChecksumMismatch_VerificationEnabled(t *testing.T) {
 		name string
 		data []byte
 	}{
-		{name: "exact_chunk", data: bytes.Repeat([]byte("a"), chunkSize)},          // exactly one chunk
-		{name: "partial_chunk", data: bytes.Repeat([]byte("a"), chunkSize-1)},      // less than one chunk
-		{name: "more_than_chunk", data: bytes.Repeat([]byte("a"), chunkSize+1)},    // more than one chunk
-		{name: "two_chunks_aligned", data: bytes.Repeat([]byte("a"), chunkSize*2)}, // exactly two chunks
+		{name: "exact_chunk", data: bytes.Repeat([]byte("a"), chunkSize)},          //nolint:goconst // exactly one chunk
+		{name: "partial_chunk", data: bytes.Repeat([]byte("a"), chunkSize-1)},      //nolint:goconst // less than one chunk
+		{name: "more_than_chunk", data: bytes.Repeat([]byte("a"), chunkSize+1)},    //nolint:goconst // more than one chunk
+		{name: "two_chunks_aligned", data: bytes.Repeat([]byte("a"), chunkSize*2)}, //nolint:goconst // exactly two chunks
 	}
 
 	for _, tc := range cases {

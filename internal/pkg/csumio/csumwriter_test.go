@@ -36,7 +36,7 @@ func TestWriter_Success(t *testing.T) {
 		{name: "chunk_aligned", data: bytes.Repeat([]byte("a"), chunkSize)},
 		{name: "non_aligned_one_less", data: bytes.Repeat([]byte("a"), chunkSize-1)},
 		{name: "non_aligned_one_more", data: bytes.Repeat([]byte("a"), chunkSize+1)},
-		{name: "two_chunks_aligned", data: bytes.Repeat([]byte("a"), chunkSize*2)},
+		{name: "two_chunks_aligned", data: bytes.Repeat([]byte("a"), chunkSize*2)}, //nolint:goconst // test case names are intentionally literal
 		{name: "small_writes_one_chunk", data: bytes.Repeat([]byte("a"), chunkSize), writeSize: 512},
 	}
 

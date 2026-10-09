@@ -19,6 +19,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+const (
+	testImageName = "test-image"
+	testSnapName  = "test-snap"
+)
+
 func TestDelete_RawOnlyCase_Success(t *testing.T) {
 	// CSATEST-1565
 	// Description:
@@ -44,10 +49,10 @@ func TestDelete_RawOnlyCase_Success(t *testing.T) {
 
 	metadata := &job.BackupMetadata{
 		PVCUID:       targetPVCUID,
-		RBDImageName: "test-image",
+		RBDImageName: testImageName,
 		Raw: &job.BackupMetadataEntry{
 			SnapID:    targetSnapshotID,
-			SnapName:  "test-snap",
+			SnapName:  testSnapName,
 			SnapSize:  1000,
 			PartSize:  512,
 			CreatedAt: time.Now(),
@@ -102,10 +107,10 @@ func TestDelete_NoExistsRawCase_Success(t *testing.T) {
 
 	metadata := &job.BackupMetadata{
 		PVCUID:       targetPVCUID,
-		RBDImageName: "test-image",
+		RBDImageName: testImageName,
 		Raw: &job.BackupMetadataEntry{
 			SnapID:    targetSnapshotID,
-			SnapName:  "test-snap",
+			SnapName:  testSnapName,
 			SnapSize:  1000,
 			PartSize:  512,
 			CreatedAt: time.Now(),
@@ -465,10 +470,10 @@ func TestDelete_TargetSnapIDGreaterThanRawSnapID_Error(t *testing.T) {
 
 	metadata := &job.BackupMetadata{
 		PVCUID:       targetPVCUID,
-		RBDImageName: "test-image",
+		RBDImageName: testImageName,
 		Raw: &job.BackupMetadataEntry{
 			SnapID:    rawSnapshotID,
-			SnapName:  "test-snap",
+			SnapName:  testSnapName,
 			SnapSize:  1000,
 			PartSize:  512,
 			CreatedAt: time.Now(),
@@ -530,10 +535,10 @@ func TestDelete_TargetSnapIDSmallerThanRawSnapID_NoAction(t *testing.T) {
 
 	metadata := &job.BackupMetadata{
 		PVCUID:       targetPVCUID,
-		RBDImageName: "test-image",
+		RBDImageName: testImageName,
 		Raw: &job.BackupMetadataEntry{
 			SnapID:    rawSnapshotID,
-			SnapName:  "test-snap",
+			SnapName:  testSnapName,
 			SnapSize:  1000,
 			PartSize:  512,
 			CreatedAt: time.Now(),
@@ -584,7 +589,7 @@ func TestDelete_InvalidPVCUID_Error(t *testing.T) {
 
 	metadata := &job.BackupMetadata{
 		PVCUID:       targetPVCUID,
-		RBDImageName: "test-image",
+		RBDImageName: testImageName,
 	}
 	require.NoError(t, job.SetBackupMetadata(finRepo, metadata))
 

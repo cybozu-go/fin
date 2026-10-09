@@ -158,7 +158,7 @@ func (r *FinBackupConfigReconciler) createOrUpdateCronJob(
 		container.Image = image
 		container.ImagePullPolicy = corev1.PullIfNotPresent
 		container.Command = []string{
-			"/manager",
+			managerCommand,
 			"create-finbackup-job",
 			"--fin-backup-config-name=" + fbc.GetName(),
 			"--fin-backup-config-namespace=" + fbc.GetNamespace(),

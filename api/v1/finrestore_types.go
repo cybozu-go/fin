@@ -3,6 +3,7 @@ package v1
 import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 )
 
@@ -81,5 +82,8 @@ func (fr *FinRestore) IsReady() bool {
 }
 
 func init() {
-	SchemeBuilder.Register(&FinRestore{}, &FinRestoreList{})
+	SchemeBuilder.Register(func(s *runtime.Scheme) error {
+		s.AddKnownTypes(SchemeGroupVersion, &FinRestore{}, &FinRestoreList{})
+		return nil
+	})
 }
