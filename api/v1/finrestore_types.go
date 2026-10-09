@@ -3,6 +3,7 @@ package v1
 import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 )
 
@@ -78,4 +79,11 @@ type FinRestoreList struct {
 
 func (fr *FinRestore) IsReady() bool {
 	return meta.IsStatusConditionTrue(fr.Status.Conditions, RestoreConditionReadyToUse)
+}
+
+func init() {
+	SchemeBuilder.Register(func(s *runtime.Scheme) error {
+		s.AddKnownTypes(SchemeGroupVersion, &FinRestore{}, &FinRestoreList{})
+		return nil
+	})
 }

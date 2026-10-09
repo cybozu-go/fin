@@ -3,6 +3,7 @@ package v1
 import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 )
 
@@ -125,4 +126,11 @@ func (fb *FinBackup) IsAutoDeleteCompleted() bool {
 func (fb *FinBackup) CanBeRestored(allowUnverified bool) bool {
 	return fb.IsStoredToNode() &&
 		(fb.IsVerifiedTrue() || (fb.IsVerificationSkipped() && allowUnverified))
+}
+
+func init() {
+	SchemeBuilder.Register(func(s *runtime.Scheme) error {
+		s.AddKnownTypes(SchemeGroupVersion, &FinBackup{}, &FinBackupList{})
+		return nil
+	})
 }
