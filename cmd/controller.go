@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"slices"
+	"time"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
@@ -25,6 +26,7 @@ import (
 	finv1 "github.com/cybozu-go/fin/api/v1"
 	"github.com/cybozu-go/fin/internal/controller"
 	"github.com/cybozu-go/fin/internal/infrastructure/ceph"
+	"github.com/cybozu-go/fin/internal/infrastructure/prometheus"
 	finmetrics "github.com/cybozu-go/fin/internal/pkg/metrics"
 	webhookv1 "github.com/cybozu-go/fin/internal/webhook/v1"
 	//+kubebuilder:scaffold:imports
@@ -55,6 +57,12 @@ func controllerMain(args []string) error {
 	var webhookKeyPath string
 	var overwriteFBCSchedule string
 	var maxBackupJobs uint64
+	var nodeSelectorTerms string
+	var prometheusURL string
+	var prometheusQuery string
+	var prometheusNodeLabel string
+	var prometheusCacheTTL time.Duration
+	nodeFreeSpaceMargin := resource.QuantityValue{Quantity: resource.MustParse("10Gi")}
 
 	fs := flag.NewFlagSet("", flag.ExitOnError)
 	fs.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "The address the metric endpoint binds to.")
@@ -81,6 +89,19 @@ func controllerMain(args []string) error {
 			"will use its value as .spec.schedule. This option is intended for testing purposes only.")
 	fs.Uint64Var(&maxBackupJobs, "max-backup-jobs", 8,
 		"The maximum number of backup jobs that can run simultaneously. If you set this to 0, there is no limit.")
+	fs.StringVar(&nodeSelectorTerms, "node-selector",
+		`[{"matchExpressions":[{"key":"csa.cybozu.io/reserved-for","operator":"In","values":["fin"]}]}]`,
+		"A JSON array of NodeSelectorTerms choosing the nodes a FinBackupConfig without spec.node can be assigned to.")
+	fs.StringVar(&prometheusURL, "prometheus-url", "",
+		"The URL of Prometheus to query the free space of nodes.")
+	fs.StringVar(&prometheusQuery, "prometheus-query", `node_filesystem_avail_bytes{mountpoint="/mnt/fin-volume"}`,
+		"The PromQL query returning the free bytes of the fin volume on each node.")
+	fs.StringVar(&prometheusNodeLabel, "prometheus-node-label", "address",
+		"The label of the query result that holds the node name.")
+	fs.DurationVar(&prometheusCacheTTL, "prometheus-cache-ttl", time.Minute,
+		"How long the free space of nodes queried from Prometheus is reused.")
+	fs.Var(&nodeFreeSpaceMargin, "node-free-space-margin",
+		"The free space a node must have beyond the PVC size to be assigned a FinBackupConfig, such as 10Gi.")
 	opts := zap.Options{
 		Development: true,
 	}
@@ -91,6 +112,7 @@ func controllerMain(args []string) error {
 	}
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
+	ctx := ctrl.SetupSignalHandler()
 
 	enableWebhook := os.Getenv("ENABLE_WEBHOOKS") != "false"
 	setupLog.Info("ENABLE_WEBHOOKS evaluated", "env", os.Getenv("ENABLE_WEBHOOKS"), "enabled", enableWebhook)
@@ -107,6 +129,21 @@ func controllerMain(args []string) error {
 	}
 	if diffChecksumChunkSize == 0 {
 		return fmt.Errorf("diff-checksum-chunk-size must be greater than 0")
+	}
+	nodeSelector, err := controller.ParseNodeSelectorTerms(nodeSelectorTerms)
+	if err != nil {
+		return fmt.Errorf("invalid node-selector: %w", err)
+	}
+	if nodeFreeSpaceMargin.Sign() < 0 {
+		return fmt.Errorf("node-free-space-margin must not be negative")
+	}
+	if prometheusURL == "" {
+		return fmt.Errorf("prometheus-url must be provided")
+	}
+	nodeFreeSpaceRepo, err := prometheus.NewNodeFreeSpaceRepository(
+		ctrl.LoggerInto(ctx, setupLog), prometheusURL, prometheusQuery, prometheusNodeLabel, prometheusCacheTTL)
+	if err != nil {
+		return fmt.Errorf("failed to initialize node free space repository: %w", err)
 	}
 	// if the enable-http2 flag is false (the default), http/2 should be disabled
 	// due to its vulnerabilities. More specifically, disabling http/2 will
@@ -220,6 +257,9 @@ func controllerMain(args []string) error {
 		os.Getenv("POD_NAMESPACE"),
 		os.Getenv("POD_IMAGE"),
 		os.Getenv("CREATE_FINBACKUP_JOB_SERVICE_ACCOUNT"),
+		nodeSelector,
+		nodeFreeSpaceRepo,
+		nodeFreeSpaceMargin.Quantity,
 	)
 	if err := finBackupConfigReconciler.SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("unable to create controller FinBackupConfig: %w", err)
@@ -247,7 +287,7 @@ func controllerMain(args []string) error {
 	}
 
 	setupLog.Info("starting manager")
-	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
+	if err := mgr.Start(ctx); err != nil {
 		return fmt.Errorf("problem running manager: %w", err)
 	}
 

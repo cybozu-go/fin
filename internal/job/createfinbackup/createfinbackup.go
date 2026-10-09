@@ -51,6 +51,11 @@ func (c *CreateFinBackup) Perform() error {
 	if err := c.client.Get(ctx, types.NamespacedName{Namespace: c.fbcNamespace, Name: c.fbcName}, &fbc); err != nil {
 		return fmt.Errorf("failed to get FinBackupConfig %s/%s: %w", c.fbcNamespace, c.fbcName, err)
 	}
+	// The controller clears status.node when no node can take the backup. Failing here
+	// lets the Job retry, and the missing FinBackups tell administrators to add a node.
+	if fbc.Status.Node == "" {
+		return fmt.Errorf("FinBackupConfig %s/%s has no node assigned in status.node", c.fbcNamespace, c.fbcName)
+	}
 
 	// Lookup the Job resource to find the cronjob-scheduled-timestamp annotation
 	jobCreatedAt, err := c.getJobCreationTimestamp(ctx)
@@ -123,7 +128,7 @@ func newFinBackupFromConfig(fbc *finv1.FinBackupConfig, jobName string, jobCreat
 		Spec: finv1.FinBackupSpec{
 			PVC:          fbc.Spec.PVC,
 			PVCNamespace: fbc.Spec.PVCNamespace,
-			Node:         fbc.Spec.Node,
+			Node:         fbc.Status.Node,
 		},
 	}
 }

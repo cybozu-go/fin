@@ -24,13 +24,21 @@ type FinBackupConfigSpec struct {
 	//+kubebuilder:validation:XValidation:message="spec.pvcNamespace is immutable",rule="self == oldSelf"
 	PVCNamespace string `json:"pvcNamespace"`
 
-	Node string `json:"node"`
+	// Node is the node the FinBackups of this config are taken on. It is
+	// spec.node when set, and otherwise a node selected by the controller.
+	// +optional
+	Node string `json:"node,omitempty"`
 }
 
 // FinBackupConfigStatus defines the observed state of FinBackupConfig
 type FinBackupConfigStatus struct {
 	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
+
+	// Node is the node the FinBackups of this config are taken on. It is
+	// spec.node when set, and otherwise a node selected by the controller.
+	// +optional
+	Node string `json:"node,omitempty"`
 }
 
 //+kubebuilder:object:root=true
