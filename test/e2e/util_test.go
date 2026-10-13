@@ -35,6 +35,7 @@ import (
 )
 
 const (
+	annotationValueTrue    = "true"
 	finDeploymentName      = "fin-controller-manager"
 	rookNamespace          = "rook-ceph"
 	rookStorageClass       = "rook-ceph-block"
