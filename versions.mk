@@ -1,17 +1,17 @@
 # https://github.com/helm/helm/releases
-HELM_VERSION := 4.2.0
+HELM_VERSION := 4.3.0
 # It is set by CI using the environment variable, use conditional assignment.
 # Use a Kubernetes version supported by the minikube version below.
 # The patch version may differ from the k8s patch version in go.mod.
 KUBERNETES_VERSION ?= 1.36.4
 # https://github.com/kubernetes/minikube/releases
-MINIKUBE_VERSION := v1.38.1
+MINIKUBE_VERSION := v1.39.0
 # https://github.com/rook/rook/releases
 ROOK_CHART_VERSION := v1.19.5
 # https://quay.io/repository/ceph/ceph
 CEPH_IMAGE_VERSION := v20.2.1
 # https://github.com/kubernetes-sigs/kustomize/releases
-KUSTOMIZE_VERSION := v5.8.1
+KUSTOMIZE_VERSION := v5.8.2
 # https://github.com/kubernetes-sigs/controller-tools/releases
 CONTROLLER_TOOLS_VERSION := v0.21.0
 # https://github.com/golangci/golangci-lint/releases
