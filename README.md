@@ -23,7 +23,7 @@ Currently, we are not accepting outside contributions to this repository.
 
 The following tools should be installed manually.
 
-- go: v1.25.0+
+- go: v1.26.0+
 
 ## License
 
