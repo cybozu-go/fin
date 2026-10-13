@@ -65,7 +65,7 @@ func deleteIncrementalBackupTestSuite() {
 		finbackup1 = CreateBackup(ctx, ctrlClient, rookNamespace, pvc, nodes[0])
 
 		finbackup2, err = NewFinBackup(rookNamespace, utils.GetUniqueName("test-finbackup-"), pvc, nodes[0])
-		finbackup2.Annotations = map[string]string{controller.AnnotationSkipVerify: "true"}
+		finbackup2.Annotations = map[string]string{controller.AnnotationSkipVerify: annotationValueTrue}
 		Expect(err).NotTo(HaveOccurred())
 		Expect(CreateFinBackup(ctx, ctrlClient, finbackup2)).NotTo(HaveOccurred())
 

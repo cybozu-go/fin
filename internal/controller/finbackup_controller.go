@@ -44,6 +44,8 @@ const (
 	labelComponentBackupJob   = "backup-job"
 	labelComponentCleanupJob  = "cleanup-job"
 	labelComponentDeletionJob = "deletion-job"
+	labelKeyAppName           = "app.kubernetes.io/name"
+	labelKeyAppComponent      = "app.kubernetes.io/component"
 
 	// Annotations
 	AnnotationBackupTargetRBDImage = "fin.cybozu.io/backup-target-rbd-image"
@@ -54,6 +56,17 @@ const (
 	AnnotationSkipVerify           = "fin.cybozu.io/skip-verify"
 	annotationSkipChecksumVerify   = "fin.cybozu.io/skip-checksum-verify"
 	AnnotationFullBackup           = "fin.cybozu.io/full-backup"
+
+	// Job container settings
+	managerCommand              = "/manager"
+	volumeNameCephConfig        = "ceph-config"
+	volumeNameFin               = "fin-volume"
+	envActionUID                = "ACTION_UID"
+	envTargetSnapshotID         = "TARGET_SNAPSHOT_ID"
+	envBackupTargetPVCName      = "BACKUP_TARGET_PVC_NAME"
+	envBackupTargetPVCNamespace = "BACKUP_TARGET_PVC_NAMESPACE"
+	envBackupTargetPVCUID       = "BACKUP_TARGET_PVC_UID"
+	envBackupSnapshotID         = "BACKUP_SNAPSHOT_ID"
 
 	maxOlderFinBackups  = 1
 	annotationValueTrue = "true"
@@ -394,8 +407,8 @@ func (r *FinBackupReconciler) canNewBackupJobBeCreated(ctx context.Context) (boo
 	if err := r.List(ctx, &jobList, &client.ListOptions{
 		Namespace: r.cephClusterNamespace,
 		LabelSelector: labels.SelectorFromSet(map[string]string{
-			"app.kubernetes.io/name":      labelAppNameValue,
-			"app.kubernetes.io/component": labelComponentBackupJob,
+			labelKeyAppName:      labelAppNameValue,
+			labelKeyAppComponent: labelComponentBackupJob,
 		}),
 	}); err != nil {
 		return false, fmt.Errorf("failed to list backup jobs: %w", err)
@@ -1082,8 +1095,8 @@ func (r *FinBackupReconciler) createOrUpdateChecksumVerifyConfigMap(
 		if labels == nil {
 			labels = map[string]string{}
 		}
-		labels["app.kubernetes.io/name"] = labelAppNameValue
-		labels["app.kubernetes.io/component"] = labelComponentBackupJob
+		labels[labelKeyAppName] = labelAppNameValue
+		labels[labelKeyAppComponent] = labelComponentBackupJob
 		cm.SetLabels(labels)
 
 		annotations := cm.GetAnnotations()
@@ -1137,8 +1150,8 @@ func (r *FinBackupReconciler) createOrUpdateBackupJob(
 		if labels == nil {
 			labels = map[string]string{}
 		}
-		labels["app.kubernetes.io/name"] = labelAppNameValue
-		labels["app.kubernetes.io/component"] = labelComponentBackupJob
+		labels[labelKeyAppName] = labelAppNameValue
+		labels[labelKeyAppComponent] = labelComponentBackupJob
 		job.SetLabels(labels)
 
 		annotations := job.GetAnnotations()
@@ -1216,7 +1229,7 @@ func (r *FinBackupReconciler) createOrUpdateBackupJob(
 					},
 					{
 						MountPath: "/etc/ceph",
-						Name:      "ceph-config",
+						Name:      volumeNameCephConfig,
 					},
 					{
 						MountPath: "/etc/rook",
@@ -1229,11 +1242,11 @@ func (r *FinBackupReconciler) createOrUpdateBackupJob(
 		job.Spec.Template.Spec.Containers = []corev1.Container{
 			{
 				Name:    "backup",
-				Command: []string{"/manager"},
+				Command: []string{managerCommand},
 				Args:    []string{"backup"},
 				Env: []corev1.EnvVar{
 					{
-						Name:  "ACTION_UID",
+						Name:  envActionUID,
 						Value: string(backup.GetUID()),
 					},
 					{
@@ -1245,7 +1258,7 @@ func (r *FinBackupReconciler) createOrUpdateBackupJob(
 						Value: backup.GetAnnotations()[AnnotationBackupTargetRBDImage],
 					},
 					{
-						Name:  "BACKUP_SNAPSHOT_ID",
+						Name:  envBackupSnapshotID,
 						Value: strconv.Itoa(*backup.Status.SnapID),
 					},
 					{
@@ -1253,15 +1266,15 @@ func (r *FinBackupReconciler) createOrUpdateBackupJob(
 						Value: diffFrom,
 					},
 					{
-						Name:  "BACKUP_TARGET_PVC_NAME",
+						Name:  envBackupTargetPVCName,
 						Value: backup.Spec.PVC,
 					},
 					{
-						Name:  "BACKUP_TARGET_PVC_NAMESPACE",
+						Name:  envBackupTargetPVCNamespace,
 						Value: backup.Spec.PVCNamespace,
 					},
 					{
-						Name:  "BACKUP_TARGET_PVC_UID",
+						Name:  envBackupTargetPVCUID,
 						Value: backupTargetPVCUID,
 					},
 					{
@@ -1297,11 +1310,11 @@ func (r *FinBackupReconciler) createOrUpdateBackupJob(
 				VolumeMounts: []corev1.VolumeMount{
 					{
 						MountPath: "/etc/ceph",
-						Name:      "ceph-config",
+						Name:      volumeNameCephConfig,
 					},
 					{
 						MountPath: nlv.VolumePath,
-						Name:      "fin-volume",
+						Name:      volumeNameFin,
 					},
 				},
 			},
@@ -1322,13 +1335,13 @@ func (r *FinBackupReconciler) createOrUpdateBackupJob(
 				},
 			},
 			{
-				Name: "ceph-config",
+				Name: volumeNameCephConfig,
 				VolumeSource: corev1.VolumeSource{
 					EmptyDir: &corev1.EmptyDirVolumeSource{},
 				},
 			},
 			{
-				Name: "fin-volume",
+				Name: volumeNameFin,
 				VolumeSource: corev1.VolumeSource{
 					PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
 						ClaimName: finVolumePVCName(backup),
@@ -1372,8 +1385,8 @@ func (r *FinBackupReconciler) createOrUpdateDeletionJob(ctx context.Context, bac
 		if labels == nil {
 			labels = map[string]string{}
 		}
-		labels["app.kubernetes.io/name"] = labelAppNameValue
-		labels["app.kubernetes.io/component"] = labelComponentDeletionJob
+		labels[labelKeyAppName] = labelAppNameValue
+		labels[labelKeyAppComponent] = labelComponentDeletionJob
 		job.SetLabels(labels)
 
 		annotations := job.GetAnnotations()
@@ -1419,27 +1432,27 @@ func (r *FinBackupReconciler) createOrUpdateDeletionJob(ctx context.Context, bac
 		job.Spec.Template.Spec.Containers = []corev1.Container{
 			{
 				Name:    "deletion",
-				Command: []string{"/manager"},
+				Command: []string{managerCommand},
 				Args:    []string{"deletion"},
 				Env: []corev1.EnvVar{
 					{
-						Name:  "ACTION_UID",
+						Name:  envActionUID,
 						Value: string(backup.GetUID()),
 					},
 					{
-						Name:  "TARGET_SNAPSHOT_ID",
+						Name:  envTargetSnapshotID,
 						Value: strconv.Itoa(*backup.Status.SnapID),
 					},
 					{
-						Name:  "BACKUP_TARGET_PVC_NAME",
+						Name:  envBackupTargetPVCName,
 						Value: backup.Spec.PVC,
 					},
 					{
-						Name:  "BACKUP_TARGET_PVC_NAMESPACE",
+						Name:  envBackupTargetPVCNamespace,
 						Value: backup.Spec.PVCNamespace,
 					},
 					{
-						Name:  "BACKUP_TARGET_PVC_UID",
+						Name:  envBackupTargetPVCUID,
 						Value: backup.GetLabels()[labelBackupTargetPVCUID],
 					},
 					{
@@ -1463,7 +1476,7 @@ func (r *FinBackupReconciler) createOrUpdateDeletionJob(ctx context.Context, bac
 				VolumeMounts: []corev1.VolumeMount{
 					{
 						MountPath: nlv.VolumePath,
-						Name:      "fin-volume",
+						Name:      volumeNameFin,
 					},
 				},
 			},
@@ -1471,7 +1484,7 @@ func (r *FinBackupReconciler) createOrUpdateDeletionJob(ctx context.Context, bac
 
 		job.Spec.Template.Spec.Volumes = []corev1.Volume{
 			{
-				Name: "fin-volume",
+				Name: volumeNameFin,
 				VolumeSource: corev1.VolumeSource{
 					PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
 						ClaimName: finVolumePVCName(backup),
@@ -1495,8 +1508,8 @@ func (r *FinBackupReconciler) createOrUpdateCleanupJob(ctx context.Context, back
 		if labels == nil {
 			labels = map[string]string{}
 		}
-		labels["app.kubernetes.io/name"] = labelAppNameValue
-		labels["app.kubernetes.io/component"] = labelComponentCleanupJob
+		labels[labelKeyAppName] = labelAppNameValue
+		labels[labelKeyAppComponent] = labelComponentCleanupJob
 		job.SetLabels(labels)
 
 		annotations := job.GetAnnotations()
@@ -1529,27 +1542,27 @@ func (r *FinBackupReconciler) createOrUpdateCleanupJob(ctx context.Context, back
 		job.Spec.Template.Spec.Containers = []corev1.Container{
 			{
 				Name:    "cleanup",
-				Command: []string{"/manager"},
+				Command: []string{managerCommand},
 				Args:    []string{"cleanup"},
 				Env: []corev1.EnvVar{
 					{
-						Name:  "ACTION_UID",
+						Name:  envActionUID,
 						Value: string(backup.GetUID()),
 					},
 					{
-						Name:  "TARGET_SNAPSHOT_ID",
+						Name:  envTargetSnapshotID,
 						Value: strconv.Itoa(*backup.Status.SnapID),
 					},
 					{
-						Name:  "BACKUP_TARGET_PVC_NAME",
+						Name:  envBackupTargetPVCName,
 						Value: backup.Spec.PVC,
 					},
 					{
-						Name:  "BACKUP_TARGET_PVC_NAMESPACE",
+						Name:  envBackupTargetPVCNamespace,
 						Value: backup.Spec.PVCNamespace,
 					},
 					{
-						Name:  "BACKUP_TARGET_PVC_UID",
+						Name:  envBackupTargetPVCUID,
 						Value: backup.GetLabels()[labelBackupTargetPVCUID],
 					},
 				},
@@ -1558,7 +1571,7 @@ func (r *FinBackupReconciler) createOrUpdateCleanupJob(ctx context.Context, back
 				VolumeMounts: []corev1.VolumeMount{
 					{
 						MountPath: nlv.VolumePath,
-						Name:      "fin-volume",
+						Name:      volumeNameFin,
 					},
 				},
 			},
@@ -1566,7 +1579,7 @@ func (r *FinBackupReconciler) createOrUpdateCleanupJob(ctx context.Context, back
 
 		job.Spec.Template.Spec.Volumes = []corev1.Volume{
 			{
-				Name: "fin-volume",
+				Name: volumeNameFin,
 				VolumeSource: corev1.VolumeSource{
 					PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
 						ClaimName: finVolumePVCName(backup),
@@ -1763,27 +1776,27 @@ func (r *FinBackupReconciler) createOrUpdateVerificationJob(
 		job.Spec.Template.Spec.Containers = []corev1.Container{
 			{
 				Name:    "verification",
-				Command: []string{"/manager"},
+				Command: []string{managerCommand},
 				Args:    []string{"verification"},
 				Env: []corev1.EnvVar{
 					{
-						Name:  "ACTION_UID",
+						Name:  envActionUID,
 						Value: string(backup.GetUID()),
 					},
 					{
-						Name:  "BACKUP_SNAPSHOT_ID",
+						Name:  envBackupSnapshotID,
 						Value: strconv.Itoa(*backup.Status.SnapID),
 					},
 					{
-						Name:  "BACKUP_TARGET_PVC_NAME",
+						Name:  envBackupTargetPVCName,
 						Value: backup.Spec.PVC,
 					},
 					{
-						Name:  "BACKUP_TARGET_PVC_NAMESPACE",
+						Name:  envBackupTargetPVCNamespace,
 						Value: backup.Spec.PVCNamespace,
 					},
 					{
-						Name:  "BACKUP_TARGET_PVC_UID",
+						Name:  envBackupTargetPVCUID,
 						Value: string(pvc.GetUID()),
 					},
 					{
@@ -1807,7 +1820,7 @@ func (r *FinBackupReconciler) createOrUpdateVerificationJob(
 				VolumeMounts: []corev1.VolumeMount{
 					{
 						MountPath: nlv.VolumePath,
-						Name:      "fin-volume",
+						Name:      volumeNameFin,
 					},
 				},
 			},
@@ -1815,7 +1828,7 @@ func (r *FinBackupReconciler) createOrUpdateVerificationJob(
 
 		job.Spec.Template.Spec.Volumes = []corev1.Volume{
 			{
-				Name: "fin-volume",
+				Name: volumeNameFin,
 				VolumeSource: corev1.VolumeSource{
 					PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
 						ClaimName: finVolumePVCName(backup),
