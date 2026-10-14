@@ -87,6 +87,12 @@ func finbackupconfigTestSuite() {
 			g.Expect(*cj.Spec.Suspend).To(Equal(true))
 		}, "60s", "1s").Should(Succeed())
 
+		By("verifying status.node follows spec.node, which is kept as is")
+		WaitForFinBackupConfigStatusNode(ctx, ctrlClient, fbc, nodes[0], 30*time.Second)
+		updated := &finv1.FinBackupConfig{}
+		Expect(ctrlClient.Get(ctx, client.ObjectKeyFromObject(fbc), updated)).NotTo(HaveOccurred())
+		Expect(updated.Spec.Node).To(Equal(nodes[0]))
+
 		// 2. Schedule backup via CronJob managed by FinBackupConfig
 		By("creating FB_a and waiting for Verified")
 		fb_a_jobName, err := CreateJobFromCronJob(ctx, cj)
@@ -94,6 +100,7 @@ func finbackupconfigTestSuite() {
 
 		fb_a := WaitForFinBackupVerifiedFromJobName(ctx, ctrlClient, fbc, fb_a_jobName, 20*time.Second)
 		finbackups = append(finbackups, fb_a)
+		Expect(fb_a.Spec.Node).To(Equal(nodes[0]))
 
 		By("creating FB_b and waiting for Verified")
 		fb_b_jobName, err := CreateJobFromCronJob(ctx, cj)
@@ -101,6 +108,7 @@ func finbackupconfigTestSuite() {
 
 		fb_b := WaitForFinBackupVerifiedFromJobName(ctx, ctrlClient, fbc, fb_b_jobName, 20*time.Second)
 		finbackups = append(finbackups, fb_b)
+		Expect(fb_b.Spec.Node).To(Equal(nodes[0]))
 
 		By("FB_a should be auto-deleted")
 		WaitForFinBackupNotFound(ctx, ctrlClient, fb_a, 20*time.Second)
@@ -128,6 +136,7 @@ func finbackupconfigTestSuite() {
 
 		fb_c := WaitForFinBackupVerifiedFromJobName(ctx, ctrlClient, fbc, fb_c_jobName, 20*time.Second)
 		finbackups = append(finbackups, fb_c)
+		Expect(fb_c.Spec.Node).To(Equal(nodes[0]))
 
 		By("FB_manual should be auto-deleted")
 		WaitForFinBackupNotFound(ctx, ctrlClient, fb_manual, 20*time.Second)
@@ -142,6 +151,7 @@ func finbackupconfigTestSuite() {
 
 		fb_d := WaitForFinBackupVerifiedFromJobName(ctx, ctrlClient, fbc, fb_d_jobName, 20*time.Second)
 		finbackups = append(finbackups, fb_d)
+		Expect(fb_d.Spec.Node).To(Equal(nodes[1]))
 
 		By("FB_c should be auto-deleted")
 		WaitForFinBackupNotFound(ctx, ctrlClient, fb_c, 30*time.Second)
@@ -155,6 +165,7 @@ func finbackupconfigTestSuite() {
 
 		fb_e := WaitForFinBackupVerifiedFromJobName(ctx, ctrlClient, fbc, fb_e_jobName, 20*time.Second)
 		finbackups = append(finbackups, fb_e)
+		Expect(fb_e.Spec.Node).To(Equal(nodes[0]))
 
 		By("FB_d should be auto-deleted")
 		WaitForFinBackupNotFound(ctx, ctrlClient, fb_d, 20*time.Second)

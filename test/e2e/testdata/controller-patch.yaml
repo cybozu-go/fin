@@ -1,0 +1,35 @@
+# JSON patch applied to fin-controller-manager for the e2e tests.
+# kubectl accepts it in YAML, which allows these comments.
+
+# Disable webhooks for e2e tests.
+- op: add
+  path: /spec/template/spec/containers/0/env/-
+  value:
+    name: ENABLE_WEBHOOKS
+    value: "false"
+
+- op: add
+  path: /spec/template/spec/containers/0/args/-
+  value: --raw-img-expansion-unit-size=10485760
+
+# Use the Prometheus set up by setup-prometheus. The fin volume is mounted on /fin in
+# minikube, and node-exporter of kube-prometheus puts the node name in the instance label.
+- op: add
+  path: /spec/template/spec/containers/0/args/-
+  value: --prometheus-url=http://prometheus-k8s.monitoring.svc:9090
+- op: add
+  path: /spec/template/spec/containers/0/args/-
+  value: --prometheus-query=node_filesystem_avail_bytes{mountpoint="/fin"}
+- op: add
+  path: /spec/template/spec/containers/0/args/-
+  value: --prometheus-node-label=instance
+
+# A short cache TTL lets the node selection tests see a change of free space soon.
+- op: add
+  path: /spec/template/spec/containers/0/args/-
+  value: --prometheus-cache-ttl=5s
+
+# The fin volume is only 1G in minikube, so the default margin would exclude every node.
+- op: add
+  path: /spec/template/spec/containers/0/args/-
+  value: --node-free-space-margin=50Mi

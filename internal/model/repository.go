@@ -1,6 +1,7 @@
 package model
 
 import (
+	"context"
 	"errors"
 	"io"
 	"strings"
@@ -201,4 +202,11 @@ type NodeLocalVolumeRepository interface {
 
 	// Copy raw image file to instant verify image file using reflink.
 	ReflinkRawImageToInstantVerifyImage() error
+}
+
+// NodeFreeSpaceRepository reports the free space of the fin volume on each node.
+type NodeFreeSpaceRepository interface {
+	// GetNodeFreeSpace returns the free bytes keyed by node name. A node whose
+	// free space is unknown is absent from the map.
+	GetNodeFreeSpace(ctx context.Context) (map[string]float64, error)
 }
