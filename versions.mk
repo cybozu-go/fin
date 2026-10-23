@@ -10,6 +10,8 @@ MINIKUBE_VERSION := v1.39.0
 ROOK_CHART_VERSION := v1.19.5
 # https://quay.io/repository/ceph/ceph
 CEPH_IMAGE_VERSION := v20.2.1
+# https://github.com/prometheus-operator/kube-prometheus/releases
+KUBE_PROMETHEUS_VERSION := 0.17.0
 # https://github.com/kubernetes-sigs/kustomize/releases
 KUSTOMIZE_VERSION := v5.8.2
 # https://github.com/kubernetes-sigs/controller-tools/releases

@@ -10,6 +10,7 @@ MINIKUBE_BIN := $(BINDIR)/minikube-$(MINIKUBE_VERSION)
 MINIKUBE := $(MINIKUBE_BIN) --profile=$(MINIKUBE_PROFILE_NAME)
 KUBECTL := $(BINDIR)/kubectl-$(KUBERNETES_VERSION)
 HELM := $(BINDIR)/helm-$(HELM_VERSION)
+KUBE_PROMETHEUS_DIR := kube-prometheus-$(KUBE_PROMETHEUS_VERSION)
 MINIKUBE_HOME ?= $(BINDIR)
 NS := rook-ceph
 LOOP_FILE := loop.img
@@ -29,12 +30,14 @@ test:
 	$(MAKE) image-tar-load
 	$(MAKE) launch-rook-ceph
 	$(MAKE) setup-fin-volume
+	$(MAKE) setup-prometheus
 	$(MAKE) setup-components
 	$(MAKE) do-test
 
 .PHONY: clean
 clean:
 	$(MAKE) delete-minikube
+	rm -rf kube-prometheus-*
 
 $(BINDIR):
 	mkdir -p $@
@@ -97,6 +100,30 @@ setup-fin-volume: $(MINIKUBE_BIN) $(KUBECTL)
 	done
 	$(KUBECTL) apply -f testdata/fin-volume.yaml
 
+$(KUBE_PROMETHEUS_DIR):
+	rm -rf $@.tmp
+	mkdir -p $@.tmp
+	$(CURL) https://github.com/prometheus-operator/kube-prometheus/archive/refs/tags/v$(KUBE_PROMETHEUS_VERSION).tar.gz \
+		| tar xfz - -C $@.tmp --strip-components=1 kube-prometheus-$(KUBE_PROMETHEUS_VERSION)/manifests
+	rm -f $@.tmp/manifests/*networkPolicy.yaml \
+		$@.tmp/manifests/alertmanager-* \
+		$@.tmp/manifests/blackboxExporter-* \
+		$@.tmp/manifests/grafana-* \
+		$@.tmp/manifests/kubeStateMetrics-* \
+		$@.tmp/manifests/prometheusAdapter-*
+	mv $@.tmp $@
+
+.PHONY: setup-prometheus
+setup-prometheus: $(KUBE_PROMETHEUS_DIR) $(KUBECTL)
+	# https://github.com/prometheus-operator/kube-prometheus/tree/v$(KUBE_PROMETHEUS_VERSION)#quickstart
+	$(KUBECTL) apply -f $(KUBE_PROMETHEUS_DIR)/manifests/setup --force-conflicts=true --server-side
+	until $(KUBECTL) get servicemonitors --all-namespaces; do sleep 1; done
+	$(KUBECTL) apply -f $(KUBE_PROMETHEUS_DIR)/manifests/
+	$(KUBECTL) -n monitoring patch prometheus k8s --type=merge -p '{"spec":{"replicas":1}}'
+	$(KUBECTL) -n monitoring rollout status daemonset/node-exporter --timeout=300s
+	until $(KUBECTL) -n monitoring get statefulset prometheus-k8s; do sleep 1; done
+	$(KUBECTL) -n monitoring rollout status statefulset/prometheus-k8s --timeout=300s
+
 .PHONY: wait-deploy-ready
 wait-deploy-ready: NS=
 wait-deploy-ready: DEPLOY=
@@ -147,9 +174,7 @@ image-tar-load:
 setup-components:
 	$(MAKE) -C ../.. install
 	$(MAKE) -C ../.. deploy
-	# Disable webhooks for e2e tests
-	$(KUBECTL) -n $(NS) set env deployment/fin-controller-manager ENABLE_WEBHOOKS=false
-	$(KUBECTL) patch deploy -n $(NS) fin-controller-manager --type='json' -p='[{"op": "add", "path": "/spec/template/spec/containers/0/args/-", "value":"--raw-img-expansion-unit-size=10485760"}]'
+	$(KUBECTL) patch deploy -n $(NS) fin-controller-manager --type='json' --patch-file=testdata/controller-patch.yaml
 	$(KUBECTL) wait -n $(NS) --timeout=60s --for=condition=available deployment/fin-controller-manager
 
 .PHONY: do-test

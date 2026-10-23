@@ -1,6 +1,7 @@
 package metrics
 
 import (
+	"slices"
 	"sync"
 
 	finv1 "github.com/cybozu-go/fin/api/v1"
@@ -88,18 +89,59 @@ var (
 	registerOnce sync.Once
 )
 
+// finbackupconfigInfoKey identifies the FinBackupConfig a finbackupconfig_info series is for.
+type finbackupconfigInfoKey struct {
+	cephNamespace, namespace, name string
+}
+
+var (
+	// finbackupconfigInfoLabels holds the label values each FinBackupConfig was last
+	// reported with, so that a series with outdated values can be deleted exactly,
+	// without scanning every series or leaving a moment without any series.
+	finbackupconfigInfoMu     sync.Mutex
+	finbackupconfigInfoLabels = map[finbackupconfigInfoKey][]string{}
+)
+
+// SetFinBackupConfigInfo reports status.node, which is spec.node when set and otherwise
+// the node selected by the controller. The series of the FinBackupConfig with older
+// label values, such as a previously selected node, is replaced.
 func SetFinBackupConfigInfo(fbc *finv1.FinBackupConfig, cephNamespace string) {
 	if fbc == nil {
 		return
 	}
-	finbackupconfigInfo.WithLabelValues(cephNamespace, fbc.Spec.PVC, fbc.Spec.PVCNamespace, fbc.Namespace, fbc.Name, fbc.Spec.Node).Set(1)
+	key := finbackupconfigInfoKey{cephNamespace, fbc.Namespace, fbc.Name}
+	labels := []string{cephNamespace, fbc.Spec.PVC, fbc.Spec.PVCNamespace, fbc.Namespace, fbc.Name, fbc.Status.Node}
+
+	finbackupconfigInfoMu.Lock()
+	defer finbackupconfigInfoMu.Unlock()
+	// The new series is set before the old one is deleted, so a scrape always sees one.
+	finbackupconfigInfo.WithLabelValues(labels...).Set(1)
+	if old, ok := finbackupconfigInfoLabels[key]; ok && !slices.Equal(old, labels) {
+		finbackupconfigInfo.DeleteLabelValues(old...)
+	}
+	finbackupconfigInfoLabels[key] = labels
 }
 
+// DeleteFinBackupConfigInfo deletes the series of the FinBackupConfig.
 func DeleteFinBackupConfigInfo(fbc *finv1.FinBackupConfig, cephNamespace string) {
 	if fbc == nil {
 		return
 	}
-	finbackupconfigInfo.DeleteLabelValues(cephNamespace, fbc.Spec.PVC, fbc.Spec.PVCNamespace, fbc.Namespace, fbc.Name, fbc.Spec.Node)
+	key := finbackupconfigInfoKey{cephNamespace, fbc.Namespace, fbc.Name}
+
+	finbackupconfigInfoMu.Lock()
+	defer finbackupconfigInfoMu.Unlock()
+	if old, ok := finbackupconfigInfoLabels[key]; ok {
+		finbackupconfigInfo.DeleteLabelValues(old...)
+		delete(finbackupconfigInfoLabels, key)
+	}
+}
+
+// FinBackupConfigInfoMetricForTest exposes the metric only so that tests in other
+// packages can inspect it. Do not use it outside tests; update the metric through
+// SetFinBackupConfigInfo and DeleteFinBackupConfigInfo instead.
+func FinBackupConfigInfoMetricForTest() *prometheus.GaugeVec {
+	return finbackupconfigInfo
 }
 
 func SetBackupDurationSeconds(fb *finv1.FinBackup, untilCondition, cephNamespace string) {
