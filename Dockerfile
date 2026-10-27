@@ -1,5 +1,5 @@
 # Build the manager binary
-FROM ghcr.io/cybozu/golang:1.26-jammy AS builder
+FROM ghcr.io/cybozu/golang:1.26-noble AS builder
 ARG TARGETOS
 ARG TARGETARCH
 ARG GOPROXY
@@ -32,9 +32,9 @@ RUN --mount=type=secret,id=netrc,target=/root/.netrc \
 #
 # We need to use the same Ubuntu version as the one used in the custom rbd command builder.
 # cf. https://github.com/cybozu-go/mantle/blob/main/ceph/Dockerfile#L1
-FROM ubuntu:22.04 AS custom-ceph
+FROM ubuntu:24.04 AS custom-ceph
 
-ARG EXPORT_DIFF_VERSION=20.2.1.0
+ARG EXPORT_DIFF_VERSION=20.2.1.1
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 ENV DEBIAN_FRONTEND=noninteractive
