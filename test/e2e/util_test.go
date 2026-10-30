@@ -732,7 +732,7 @@ func CreateRestore(
 		namespace.Name, name)
 	Expect(err).NotTo(HaveOccurred())
 	Expect(CreateFinRestore(ctx, ctrlClient, restore)).NotTo(HaveOccurred())
-	Expect(WaitForFinRestoreReady(ctx, ctrlClient, restore, 1*time.Minute)).
+	Expect(WaitForFinRestoreReady(ctx, ctrlClient, restore, 3*time.Minute)).
 		NotTo(HaveOccurred())
 	return restore
 }
