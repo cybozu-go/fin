@@ -1025,7 +1025,7 @@ func CopyFBCServiceAccount(ctx context.Context, client kubernetes.Interface, src
 func GetFinBackupNameFromJobName(ctx context.Context, c client.Client, fbcUID, jobName string) (string, error) {
 	finbackups := &finv1.FinBackupList{}
 	s := labels.SelectorFromSet(map[string]string{
-		controller.LabelFinBackupConfigUID: fbcUID,
+		finv1.LabelFinBackupConfigUID: fbcUID,
 	})
 	err := c.List(ctx, finbackups, &client.ListOptions{LabelSelector: s})
 	if err != nil {

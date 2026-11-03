@@ -8,19 +8,15 @@ import (
 	"time"
 
 	finv1 "github.com/cybozu-go/fin/api/v1"
-	"github.com/cybozu-go/fin/internal/controller"
+	"github.com/cybozu-go/fin/internal/finbackupbuilder"
 	"github.com/cybozu-go/fin/internal/job/input"
 	batchv1 "k8s.io/api/batch/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 const (
-	annotationFinBackupConfigName = "fin.cybozu.io/fbc-name"
-	annotationFinBackupConfigNS   = "fin.cybozu.io/fbc-namespace"
-
 	prefixLength = 229
 	suffixLength = 8
 )
@@ -63,7 +59,7 @@ func (c *CreateFinBackup) Perform() error {
 		return fmt.Errorf("failed to get job creation timestamp: %w", err)
 	}
 
-	fb := newFinBackupFromConfig(&fbc, c.jobName, jobCreatedAt)
+	fb := finbackupbuilder.Build(&fbc, constructFinBackupName(fbc.GetName(), c.jobName, jobCreatedAt))
 	if err := c.client.Create(ctx, fb); err != nil {
 		if k8serrors.IsAlreadyExists(err) {
 			slog.Info("FinBackup already exists, do nothing", "name", fb.Name, "namespace", fb.Namespace)
@@ -109,26 +105,4 @@ func constructFinBackupName(fbcName, jobName string, jobCreatedAt time.Time) str
 		jobName = jobName[len(jobName)-suffixLength:]
 	}
 	return strings.Join([]string{fbcName, ts, jobName}, "-")
-}
-
-func newFinBackupFromConfig(fbc *finv1.FinBackupConfig, jobName string, jobCreatedAt time.Time) *finv1.FinBackup {
-	fbName := constructFinBackupName(fbc.GetName(), jobName, jobCreatedAt)
-	return &finv1.FinBackup{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      fbName,
-			Namespace: fbc.Namespace,
-			Labels: map[string]string{
-				controller.LabelFinBackupConfigUID: string(fbc.UID),
-			},
-			Annotations: map[string]string{
-				annotationFinBackupConfigName: fbc.Name,
-				annotationFinBackupConfigNS:   fbc.Namespace,
-			},
-		},
-		Spec: finv1.FinBackupSpec{
-			PVC:          fbc.Spec.PVC,
-			PVCNamespace: fbc.Spec.PVCNamespace,
-			Node:         fbc.Status.Node,
-		},
-	}
 }
