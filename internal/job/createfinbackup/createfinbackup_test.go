@@ -9,7 +9,7 @@ import (
 	"time"
 
 	finv1 "github.com/cybozu-go/fin/api/v1"
-	"github.com/cybozu-go/fin/internal/controller"
+	"github.com/cybozu-go/fin/internal/finbackupbuilder"
 	"github.com/cybozu-go/fin/internal/job/input"
 	batchv1 "k8s.io/api/batch/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
@@ -24,6 +24,8 @@ const (
 	testNamespace    = "ns1"
 	testPVCNamespace = "pvcns"
 	testJobNamespace = "job-ns"
+	testNode         = "node"
+	testPVC          = "pvc"
 )
 
 func Test_constructFinBackupName(t *testing.T) {
@@ -59,53 +61,6 @@ func Test_constructFinBackupName(t *testing.T) {
 	}
 }
 
-func Test_newFinBackupFromConfig(t *testing.T) {
-	tests := []struct {
-		name         string
-		fbc          *finv1.FinBackupConfig
-		jobName      string
-		jobCreatedAt time.Time
-		want         *finv1.FinBackup
-	}{
-		{
-			name: "basic-fields-copied",
-			fbc: &finv1.FinBackupConfig{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "fbc1",
-					Namespace: testNamespace,
-					UID:       "uid-123",
-				},
-				Spec: finv1.FinBackupConfigSpec{
-					PVC:          "pvc1",
-					PVCNamespace: testPVCNamespace,
-				},
-				Status: finv1.FinBackupConfigStatus{
-					Node: "node1",
-				},
-			},
-			jobName:      "jobname-zzzzzz01",
-			jobCreatedAt: time.Date(2022, 6, 7, 8, 9, 10, 0, time.UTC),
-			want: &finv1.FinBackup{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:        "fbc1-20220607080910-zzzzzz01",
-					Namespace:   testNamespace,
-					Labels:      map[string]string{controller.LabelFinBackupConfigUID: "uid-123"},
-					Annotations: map[string]string{annotationFinBackupConfigName: "fbc1", annotationFinBackupConfigNS: testNamespace},
-				},
-				Spec: finv1.FinBackupSpec{PVC: "pvc1", PVCNamespace: testPVCNamespace, Node: "node1"},
-			},
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := newFinBackupFromConfig(tt.fbc, tt.jobName, tt.jobCreatedAt)
-			if !equality.Semantic.DeepEqual(got, tt.want) {
-				t.Fatalf("newFinBackupFromConfig() mismatch:\n got: %+v\n want: %+v", got, tt.want)
-			}
-		})
-	}
-}
-
 func TestCreateFinBackup_Perform(t *testing.T) {
 	if err := finv1.AddToScheme(scheme.Scheme); err != nil {
 		t.Fatalf("failed to add finv1 to scheme: %v", err)
@@ -114,12 +69,12 @@ func TestCreateFinBackup_Perform(t *testing.T) {
 	now := time.Date(2023, 1, 2, 3, 4, 5, 0, time.UTC)
 	fbc := &finv1.FinBackupConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "fbc-ok", Namespace: "ns"},
-		Spec:       finv1.FinBackupConfigSpec{PVC: "pvc", PVCNamespace: testPVCNamespace, Node: "node"},
-		Status:     finv1.FinBackupConfigStatus{Node: "node"},
+		Spec:       finv1.FinBackupConfigSpec{PVC: testPVC, PVCNamespace: testPVCNamespace, Node: testNode},
+		Status:     finv1.FinBackupConfigStatus{Node: testNode},
 	}
 	unassignedFBC := &finv1.FinBackupConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "fbc-unassigned", Namespace: "ns"},
-		Spec:       finv1.FinBackupConfigSpec{PVC: "pvc", PVCNamespace: testPVCNamespace},
+		Spec:       finv1.FinBackupConfigSpec{PVC: testPVC, PVCNamespace: testPVCNamespace},
 	}
 
 	makeJob := func(name, namespace string, timestamp time.Time) *batchv1.Job {
@@ -262,5 +217,51 @@ func TestCreateFinBackup_Perform(t *testing.T) {
 				t.Fatal("Perform() succeeded unexpectedly")
 			}
 		})
+	}
+}
+
+func TestCreateFinBackup_Perform_CreatedFinBackup(t *testing.T) {
+	if err := finv1.AddToScheme(scheme.Scheme); err != nil {
+		t.Fatalf("failed to add finv1 to scheme: %v", err)
+	}
+
+	now := time.Date(2023, 1, 2, 3, 4, 5, 0, time.UTC)
+	fbc := &finv1.FinBackupConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "fbc-ok", Namespace: "ns", UID: "uid-123"},
+		Spec:       finv1.FinBackupConfigSpec{PVC: testPVC, PVCNamespace: testPVCNamespace},
+		Status:     finv1.FinBackupConfigStatus{Node: testNode},
+	}
+	job := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "job-0001",
+			Namespace: testJobNamespace,
+			Annotations: map[string]string{
+				"batch.kubernetes.io/cronjob-scheduled-timestamp": now.Format(time.RFC3339),
+			},
+		},
+	}
+	c := fake.NewClientBuilder().WithScheme(scheme.Scheme).WithObjects(fbc, job).Build()
+
+	err := NewCreateFinBackup(&input.CreateFinBackup{
+		CtrlClient:               c,
+		FinBackupConfigName:      fbc.Name,
+		FinBackupConfigNamespace: fbc.Namespace,
+		JobName:                  job.Name,
+		JobNamespace:             job.Namespace,
+	}).Perform()
+	if err != nil {
+		t.Fatalf("Perform() failed: %v", err)
+	}
+
+	var got finv1.FinBackup
+	name := constructFinBackupName(fbc.Name, job.Name, now)
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: fbc.Namespace, Name: name}, &got); err != nil {
+		t.Fatalf("failed to get created FinBackup %s: %v", name, err)
+	}
+	want := finbackupbuilder.Build(fbc, name)
+	if !equality.Semantic.DeepEqual(got.Labels, want.Labels) ||
+		!equality.Semantic.DeepEqual(got.Annotations, want.Annotations) ||
+		!equality.Semantic.DeepEqual(got.Spec, want.Spec) {
+		t.Fatalf("created FinBackup mismatch:\n got: %+v\n want: %+v", got, *want)
 	}
 }
