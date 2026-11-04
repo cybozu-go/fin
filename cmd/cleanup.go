@@ -1,17 +1,12 @@
 package cmd
 
 import (
-	"errors"
 	"fmt"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"strconv"
-	"time"
 
-	"github.com/cybozu-go/fin/internal/infrastructure/db"
 	"github.com/cybozu-go/fin/internal/infrastructure/nlv"
-	"github.com/cybozu-go/fin/internal/job"
 	"github.com/cybozu-go/fin/internal/job/cleanup"
 	"github.com/cybozu-go/fin/internal/job/input"
 	"github.com/spf13/cobra"
@@ -43,17 +38,11 @@ func cleanupJobMain() error {
 	}
 
 	rootPath := filepath.Join(nlv.VolumePath, pvcNamespace, pvcName)
-	nlvRepo, err := nlv.NewNodeLocalVolumeRepository(rootPath)
+	vol, err := openVolume(rootPath)
 	if err != nil {
-		return fmt.Errorf("failed to create NodeLocalVolumeRepository: %w", err)
+		return err
 	}
-	defer func() { _ = nlvRepo.Close() }()
-
-	finRepo, err := db.New(nlvRepo.GetDBPath())
-	if err != nil {
-		return fmt.Errorf("failed to create repository: %w", err)
-	}
-	defer func() { _ = finRepo.Close() }()
+	defer vol.Close()
 
 	actionUID := os.Getenv("ACTION_UID")
 	if actionUID == "" {
@@ -69,22 +58,11 @@ func cleanupJobMain() error {
 	}
 
 	d := cleanup.NewCleanup(&input.Cleanup{
-		Repo:                finRepo,
-		NodeLocalVolumeRepo: nlvRepo,
+		Repo:                vol.finRepo,
+		NodeLocalVolumeRepo: vol.nlvRepo,
 		ActionUID:           actionUID,
 		TargetSnapshotID:    targetSnapshotID,
 		TargetPVCUID:        pvcUID,
 	})
-	for {
-		err = d.Perform()
-		if err == nil {
-			slog.Info("Cleanup job completed successfully")
-			return nil
-		}
-		if !errors.Is(err, job.ErrCantLock) {
-			return fmt.Errorf("failed to perform cleanup: %w", err)
-		}
-		slog.Warn("failed to acquire lock, will retry.")
-		time.Sleep(job.RetryInterval)
-	}
+	return performUntilLocked(d.Perform, "Cleanup job completed successfully", "failed to perform cleanup")
 }

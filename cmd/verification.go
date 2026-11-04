@@ -1,18 +1,13 @@
 package cmd
 
 import (
-	"errors"
 	"fmt"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"strconv"
-	"time"
 
 	"github.com/cybozu-go/fin/internal/infrastructure/ceph"
-	"github.com/cybozu-go/fin/internal/infrastructure/db"
 	"github.com/cybozu-go/fin/internal/infrastructure/nlv"
-	"github.com/cybozu-go/fin/internal/job"
 	"github.com/cybozu-go/fin/internal/job/input"
 	"github.com/cybozu-go/fin/internal/job/verification"
 	"github.com/spf13/cobra"
@@ -39,17 +34,11 @@ func verificationJobMain() error {
 		return fmt.Errorf("BACKUP_TARGET_PVC_NAMESPACE environment variable is not set")
 	}
 	rootPath := filepath.Join(nlv.VolumePath, pvcNamespace, pvcName)
-	nlvRepo, err := nlv.NewNodeLocalVolumeRepository(rootPath)
+	vol, err := openVolume(rootPath)
 	if err != nil {
-		return fmt.Errorf("failed to create NodeLocalVolumeRepository: %w", err)
+		return err
 	}
-	defer func() { _ = nlvRepo.Close() }()
-
-	finRepo, err := db.New(nlvRepo.GetDBPath())
-	if err != nil {
-		return fmt.Errorf("failed to create repository: %w", err)
-	}
-	defer func() { _ = finRepo.Close() }()
+	defer vol.Close()
 
 	rbdRepo := ceph.NewRBDRepository()
 
@@ -83,25 +72,14 @@ func verificationJobMain() error {
 	}
 
 	v := verification.NewVerification(&input.Verification{
-		Repo:                 finRepo,
+		Repo:                 vol.finRepo,
 		RBDRepo:              rbdRepo,
-		NLVRepo:              nlvRepo,
+		NLVRepo:              vol.nlvRepo,
 		ActionUID:            actionUID,
 		TargetSnapshotID:     backupSnapshotID,
 		TargetPVCUID:         pvcUID,
 		ExpansionUnitSize:    expansionUnitSize,
 		EnableChecksumVerify: enableChecksumVerify,
 	})
-	for {
-		err = v.Perform()
-		if err == nil {
-			slog.Info("verification job completed successfully")
-			return nil
-		}
-		if !errors.Is(err, job.ErrCantLock) {
-			return fmt.Errorf("failed to perform verification: %w", err)
-		}
-		slog.Warn("failed to acquire lock, will retry.")
-		time.Sleep(job.RetryInterval)
-	}
+	return performUntilLocked(v.Perform, "verification job completed successfully", "failed to perform verification")
 }

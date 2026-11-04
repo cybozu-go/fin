@@ -1,18 +1,13 @@
 package cmd
 
 import (
-	"errors"
 	"fmt"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"strconv"
-	"time"
 
 	"github.com/cybozu-go/fin/internal/infrastructure/ceph"
-	"github.com/cybozu-go/fin/internal/infrastructure/db"
 	"github.com/cybozu-go/fin/internal/infrastructure/nlv"
-	"github.com/cybozu-go/fin/internal/job"
 	"github.com/cybozu-go/fin/internal/job/backup"
 	"github.com/cybozu-go/fin/internal/job/input"
 	"github.com/spf13/cobra"
@@ -39,17 +34,11 @@ func backupJobMain() error {
 		return fmt.Errorf("BACKUP_TARGET_PVC_NAMESPACE environment variable is not set")
 	}
 	rootPath := filepath.Join(nlv.VolumePath, pvcNamespace, pvcName)
-	nlvRepo, err := nlv.NewNodeLocalVolumeRepository(rootPath)
+	vol, err := openVolume(rootPath)
 	if err != nil {
-		return fmt.Errorf("failed to create NodeLocalVolumeRepository: %w", err)
+		return err
 	}
-	defer func() { _ = nlvRepo.Close() }()
-
-	finRepo, err := db.New(nlvRepo.GetDBPath())
-	if err != nil {
-		return fmt.Errorf("failed to create repository: %w", err)
-	}
-	defer func() { _ = finRepo.Close() }()
+	defer vol.Close()
 
 	clientSet, err := getClientSet()
 	if err != nil {
@@ -126,10 +115,10 @@ func backupJobMain() error {
 	}
 
 	b := backup.NewBackup(&input.Backup{
-		Repo:                      finRepo,
+		Repo:                      vol.finRepo,
 		K8sClient:                 clientSet,
 		RBDRepo:                   rbdRepo,
-		NodeLocalVolumeRepo:       nlvRepo,
+		NodeLocalVolumeRepo:       vol.nlvRepo,
 		ActionUID:                 actionUID,
 		TargetRBDPoolName:         rbdPool,
 		TargetRBDImageName:        rbdImageName,
@@ -144,16 +133,5 @@ func backupJobMain() error {
 		DiffChecksumChunkSize:     diffChecksumChunkSize,
 		EnableChecksumVerify:      enableChecksumVerify,
 	})
-	for {
-		err = b.Perform()
-		if err == nil {
-			slog.Info("Backup job completed successfully")
-			return nil
-		}
-		if !errors.Is(err, job.ErrCantLock) {
-			return fmt.Errorf("failed to perform backup: %w", err)
-		}
-		slog.Warn("failed to acquire lock, will retry.")
-		time.Sleep(job.RetryInterval)
-	}
+	return performUntilLocked(b.Perform, "Backup job completed successfully", "failed to perform backup")
 }
