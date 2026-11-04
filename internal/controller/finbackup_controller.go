@@ -1168,207 +1168,217 @@ func (r *FinBackupReconciler) createOrUpdateBackupJob(
 			return nil
 		}
 
-		job.Spec.BackoffLimit = ptr.To(int32(maxJobBackoffLimit))
-
-		job.Spec.Template.Spec.NodeName = backup.Spec.Node
-
-		job.Spec.Template.Spec.SecurityContext = &corev1.PodSecurityContext{
-			FSGroup:      ptr.To(int64(10000)),
-			RunAsGroup:   ptr.To(int64(10000)),
-			RunAsNonRoot: ptr.To(true),
-			RunAsUser:    ptr.To(int64(10000)),
-		}
-
-		job.Spec.Template.Spec.ServiceAccountName = "fin-backup-job"
-
-		job.Spec.Template.Spec.RestartPolicy = corev1.RestartPolicyNever
-
-		job.Spec.PodFailurePolicy = &batchv1.PodFailurePolicy{
-			Rules: []batchv1.PodFailurePolicyRule{
-				{
-					Action: batchv1.PodFailurePolicyActionFailJob,
-					OnExitCodes: &batchv1.PodFailurePolicyOnExitCodesRequirement{
-						ContainerName: ptr.To("backup"),
-						Operator:      batchv1.PodFailurePolicyOnExitCodesOpIn,
-						Values:        []int32{2, 4},
-					},
-				},
-			},
-		}
-
-		// Prepare Ceph config/keyring before running backup.
-		job.Spec.Template.Spec.InitContainers = []corev1.Container{
-			{
-				Name:    "toolbox",
-				Command: []string{"/bin/bash", "-c", embeddedToolboxScript},
-				Env: []corev1.EnvVar{
-					{
-						Name: "ROOK_CEPH_USERNAME",
-						ValueFrom: &corev1.EnvVarSource{
-							SecretKeyRef: &corev1.SecretKeySelector{
-								Key: "ceph-username",
-								LocalObjectReference: corev1.LocalObjectReference{
-									Name: "rook-ceph-mon",
-								},
-							},
-						},
-					},
-				},
-				Image:           r.podImage,
-				ImagePullPolicy: corev1.PullIfNotPresent,
-				SecurityContext: &corev1.SecurityContext{
-					RunAsGroup:   ptr.To(int64(2016)),
-					RunAsNonRoot: ptr.To(true),
-					RunAsUser:    ptr.To(int64(2016)),
-				},
-				VolumeMounts: []corev1.VolumeMount{
-					{
-						MountPath: "/var/lib/rook-ceph-mon",
-						Name:      "ceph-admin-secret",
-						ReadOnly:  true,
-					},
-					{
-						MountPath: "/etc/ceph",
-						Name:      volumeNameCephConfig,
-					},
-					{
-						MountPath: "/etc/rook",
-						Name:      "mon-endpoint-volume",
-					},
-				},
-			},
-		}
-
-		job.Spec.Template.Spec.Containers = []corev1.Container{
-			{
-				Name:    "backup",
-				Command: []string{managerCommand},
-				Args:    []string{"backup"},
-				Env: []corev1.EnvVar{
-					{
-						Name:  envActionUID,
-						Value: string(backup.GetUID()),
-					},
-					{
-						Name:  "RBD_POOL",
-						Value: backup.GetAnnotations()[annotationRBDPool],
-					},
-					{
-						Name:  "RBD_IMAGE_NAME",
-						Value: backup.GetAnnotations()[AnnotationBackupTargetRBDImage],
-					},
-					{
-						Name:  envBackupSnapshotID,
-						Value: strconv.Itoa(*backup.Status.SnapID),
-					},
-					{
-						Name:  "SOURCE_CANDIDATE_SNAPSHOT_ID",
-						Value: diffFrom,
-					},
-					{
-						Name:  envBackupTargetPVCName,
-						Value: backup.Spec.PVC,
-					},
-					{
-						Name:  envBackupTargetPVCNamespace,
-						Value: backup.Spec.PVCNamespace,
-					},
-					{
-						Name:  envBackupTargetPVCUID,
-						Value: backupTargetPVCUID,
-					},
-					{
-						Name:  "MAX_PART_SIZE",
-						Value: strconv.FormatInt(maxPartSize.Value(), 10),
-					},
-					{
-						Name:  EnvRawImgExpansionUnitSize,
-						Value: strconv.FormatUint(r.rawImgExpansionUnitSize, 10),
-					},
-					{
-						Name:  EnvRawChecksumChunkSize,
-						Value: strconv.FormatUint(r.rawChecksumChunkSize, 10),
-					},
-					{
-						Name:  EnvDiffChecksumChunkSize,
-						Value: strconv.FormatUint(r.diffChecksumChunkSize, 10),
-					},
-					{
-						Name: EnvEnableChecksumVerify,
-						ValueFrom: &corev1.EnvVarSource{
-							ConfigMapKeyRef: &corev1.ConfigMapKeySelector{
-								LocalObjectReference: corev1.LocalObjectReference{
-									Name: checksumVerifyConfigMapName(backup),
-								},
-								Key: EnvEnableChecksumVerify,
-							},
-						},
-					},
-				},
-				Image:           r.podImage,
-				ImagePullPolicy: corev1.PullIfNotPresent,
-				VolumeMounts: []corev1.VolumeMount{
-					{
-						MountPath: "/etc/ceph",
-						Name:      volumeNameCephConfig,
-					},
-					{
-						MountPath: nlv.VolumePath,
-						Name:      volumeNameFin,
-					},
-				},
-			},
-		}
-
-		job.Spec.Template.Spec.Volumes = []corev1.Volume{
-			{
-				Name: "ceph-admin-secret",
-				VolumeSource: corev1.VolumeSource{
-					Secret: &corev1.SecretVolumeSource{
-						SecretName: "rook-ceph-mon",
-						Optional:   ptr.To(false),
-						Items: []corev1.KeyToPath{{
-							Key:  "ceph-secret",
-							Path: "secret.keyring",
-						}},
-					},
-				},
-			},
-			{
-				Name: volumeNameCephConfig,
-				VolumeSource: corev1.VolumeSource{
-					EmptyDir: &corev1.EmptyDirVolumeSource{},
-				},
-			},
-			{
-				Name: volumeNameFin,
-				VolumeSource: corev1.VolumeSource{
-					PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-						ClaimName: finVolumePVCName(backup),
-					},
-				},
-			},
-			{
-				Name: "mon-endpoint-volume",
-				VolumeSource: corev1.VolumeSource{
-					ConfigMap: &corev1.ConfigMapVolumeSource{
-						Items: []corev1.KeyToPath{
-							{
-								Key:  "data",
-								Path: "mon-endpoints",
-							},
-						},
-						LocalObjectReference: corev1.LocalObjectReference{
-							Name: "rook-ceph-mon-endpoints",
-						},
-					},
-				},
-			},
-		}
+		r.setBackupJobSpec(&job, backup, diffFrom, backupTargetPVCUID, maxPartSize)
 
 		return nil
 	})
 	return err
+}
+
+// setBackupJobSpec fills the immutable fields of the Backup Job. The caller
+// decides whether to call it, since an existing Job's spec must not be touched,
+// and no stage decision is made here.
+func (r *FinBackupReconciler) setBackupJobSpec(
+	job *batchv1.Job, backup *finv1.FinBackup, diffFrom string,
+	backupTargetPVCUID string, maxPartSize *resource.Quantity,
+) {
+	job.Spec.BackoffLimit = ptr.To(int32(maxJobBackoffLimit))
+
+	job.Spec.Template.Spec.NodeName = backup.Spec.Node
+
+	job.Spec.Template.Spec.SecurityContext = &corev1.PodSecurityContext{
+		FSGroup:      ptr.To(int64(10000)),
+		RunAsGroup:   ptr.To(int64(10000)),
+		RunAsNonRoot: ptr.To(true),
+		RunAsUser:    ptr.To(int64(10000)),
+	}
+
+	job.Spec.Template.Spec.ServiceAccountName = "fin-backup-job"
+
+	job.Spec.Template.Spec.RestartPolicy = corev1.RestartPolicyNever
+
+	job.Spec.PodFailurePolicy = &batchv1.PodFailurePolicy{
+		Rules: []batchv1.PodFailurePolicyRule{
+			{
+				Action: batchv1.PodFailurePolicyActionFailJob,
+				OnExitCodes: &batchv1.PodFailurePolicyOnExitCodesRequirement{
+					ContainerName: ptr.To("backup"),
+					Operator:      batchv1.PodFailurePolicyOnExitCodesOpIn,
+					Values:        []int32{2, 4},
+				},
+			},
+		},
+	}
+
+	// Prepare Ceph config/keyring before running backup.
+	job.Spec.Template.Spec.InitContainers = []corev1.Container{
+		{
+			Name:    "toolbox",
+			Command: []string{"/bin/bash", "-c", embeddedToolboxScript},
+			Env: []corev1.EnvVar{
+				{
+					Name: "ROOK_CEPH_USERNAME",
+					ValueFrom: &corev1.EnvVarSource{
+						SecretKeyRef: &corev1.SecretKeySelector{
+							Key: "ceph-username",
+							LocalObjectReference: corev1.LocalObjectReference{
+								Name: "rook-ceph-mon",
+							},
+						},
+					},
+				},
+			},
+			Image:           r.podImage,
+			ImagePullPolicy: corev1.PullIfNotPresent,
+			SecurityContext: &corev1.SecurityContext{
+				RunAsGroup:   ptr.To(int64(2016)),
+				RunAsNonRoot: ptr.To(true),
+				RunAsUser:    ptr.To(int64(2016)),
+			},
+			VolumeMounts: []corev1.VolumeMount{
+				{
+					MountPath: "/var/lib/rook-ceph-mon",
+					Name:      "ceph-admin-secret",
+					ReadOnly:  true,
+				},
+				{
+					MountPath: "/etc/ceph",
+					Name:      volumeNameCephConfig,
+				},
+				{
+					MountPath: "/etc/rook",
+					Name:      "mon-endpoint-volume",
+				},
+			},
+		},
+	}
+
+	job.Spec.Template.Spec.Containers = []corev1.Container{
+		{
+			Name:    "backup",
+			Command: []string{managerCommand},
+			Args:    []string{"backup"},
+			Env: []corev1.EnvVar{
+				{
+					Name:  envActionUID,
+					Value: string(backup.GetUID()),
+				},
+				{
+					Name:  "RBD_POOL",
+					Value: backup.GetAnnotations()[annotationRBDPool],
+				},
+				{
+					Name:  "RBD_IMAGE_NAME",
+					Value: backup.GetAnnotations()[AnnotationBackupTargetRBDImage],
+				},
+				{
+					Name:  envBackupSnapshotID,
+					Value: strconv.Itoa(*backup.Status.SnapID),
+				},
+				{
+					Name:  "SOURCE_CANDIDATE_SNAPSHOT_ID",
+					Value: diffFrom,
+				},
+				{
+					Name:  envBackupTargetPVCName,
+					Value: backup.Spec.PVC,
+				},
+				{
+					Name:  envBackupTargetPVCNamespace,
+					Value: backup.Spec.PVCNamespace,
+				},
+				{
+					Name:  envBackupTargetPVCUID,
+					Value: backupTargetPVCUID,
+				},
+				{
+					Name:  "MAX_PART_SIZE",
+					Value: strconv.FormatInt(maxPartSize.Value(), 10),
+				},
+				{
+					Name:  EnvRawImgExpansionUnitSize,
+					Value: strconv.FormatUint(r.rawImgExpansionUnitSize, 10),
+				},
+				{
+					Name:  EnvRawChecksumChunkSize,
+					Value: strconv.FormatUint(r.rawChecksumChunkSize, 10),
+				},
+				{
+					Name:  EnvDiffChecksumChunkSize,
+					Value: strconv.FormatUint(r.diffChecksumChunkSize, 10),
+				},
+				{
+					Name: EnvEnableChecksumVerify,
+					ValueFrom: &corev1.EnvVarSource{
+						ConfigMapKeyRef: &corev1.ConfigMapKeySelector{
+							LocalObjectReference: corev1.LocalObjectReference{
+								Name: checksumVerifyConfigMapName(backup),
+							},
+							Key: EnvEnableChecksumVerify,
+						},
+					},
+				},
+			},
+			Image:           r.podImage,
+			ImagePullPolicy: corev1.PullIfNotPresent,
+			VolumeMounts: []corev1.VolumeMount{
+				{
+					MountPath: "/etc/ceph",
+					Name:      volumeNameCephConfig,
+				},
+				{
+					MountPath: nlv.VolumePath,
+					Name:      volumeNameFin,
+				},
+			},
+		},
+	}
+
+	job.Spec.Template.Spec.Volumes = []corev1.Volume{
+		{
+			Name: "ceph-admin-secret",
+			VolumeSource: corev1.VolumeSource{
+				Secret: &corev1.SecretVolumeSource{
+					SecretName: "rook-ceph-mon",
+					Optional:   ptr.To(false),
+					Items: []corev1.KeyToPath{{
+						Key:  "ceph-secret",
+						Path: "secret.keyring",
+					}},
+				},
+			},
+		},
+		{
+			Name: volumeNameCephConfig,
+			VolumeSource: corev1.VolumeSource{
+				EmptyDir: &corev1.EmptyDirVolumeSource{},
+			},
+		},
+		{
+			Name: volumeNameFin,
+			VolumeSource: corev1.VolumeSource{
+				PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+					ClaimName: finVolumePVCName(backup),
+				},
+			},
+		},
+		{
+			Name: "mon-endpoint-volume",
+			VolumeSource: corev1.VolumeSource{
+				ConfigMap: &corev1.ConfigMapVolumeSource{
+					Items: []corev1.KeyToPath{
+						{
+							Key:  "data",
+							Path: "mon-endpoints",
+						},
+					},
+					LocalObjectReference: corev1.LocalObjectReference{
+						Name: "rook-ceph-mon-endpoints",
+					},
+				},
+			},
+		},
+	}
 }
 
 //nolint:dupl
