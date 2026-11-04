@@ -71,6 +71,9 @@ func setup(t *testing.T, input *setupInput) *setupOutput {
 
 	// Take a fake snapshot for incremental backup
 	incrSnapSize := fullSnapshotSize * 2
+	if input.incrementalSnapshotSize != 0 {
+		incrSnapSize = input.incrementalSnapshotSize
+	}
 	incrlSnap, incrData, err := rbdRepo.CreateSnapshotWithRandomData(utils.GetUniqueName("snap-"), incrSnapSize)
 	require.NoError(t, err)
 
@@ -225,14 +228,19 @@ func TestIncrementalBackup_Success(t *testing.T) {
 	require.NoError(t, err)
 
 	// Assert
-	testutil.AssertActionPrivateDataIsEmpty(t, finRepo, cfg.fullBackupInput.ActionUID)
-	numDiffParts := int(math.Ceil(float64(cfg.fullSnapshot.Size) / float64(cfg.fullBackupInput.MaxPartSize)))
+	testutil.AssertActionPrivateDataIsEmpty(t, finRepo, cfg.incrementalBackupInput.ActionUID)
+	maxPartSize := cfg.incrementalBackupInput.MaxPartSize
+	numDiffParts := int(math.Ceil(float64(cfg.incrementalSnapshot.Size) / float64(maxPartSize)))
+	require.Greater(t, numDiffParts, int(math.Ceil(float64(cfg.fullSnapshot.Size)/float64(maxPartSize))),
+		"the incremental snapshot must be larger than the full one so that the part count differs")
 
 	for i := range numDiffParts {
 		diffFilePath := nlvRepo.GetDiffPartPath(cfg.incrementalBackupInput.TargetSnapshotID, i)
 		require.FileExists(t, diffFilePath, "diff part file should be created")
-		// TODO: Check the contents of each diff part
+		assertDiffPartContents(t, diffFilePath, i, numDiffParts, maxPartSize,
+			cfg.fullSnapshot.Name, cfg.incrementalSnapshot.Name, cfg.fullData, cfg.incrementalData)
 	}
+	assert.NoFileExists(t, nlvRepo.GetDiffPartPath(cfg.incrementalBackupInput.TargetSnapshotID, numDiffParts))
 
 	ensureBackupMetadataCorrect(t, finRepo, &job.BackupMetadata{
 		PVCUID:       cfg.fullBackupInput.TargetPVCUID,
@@ -340,6 +348,24 @@ func Test_FullBackup_Success_Resume(t *testing.T) {
 					require.NoError(t, err)
 				}
 
+				// Parts below nextPatchPart were already applied and removed before the interruption.
+				partCount := int(snapshotSize / maxPartSize)
+				for i := 0; i < tc.nextPatchPart; i++ {
+					from, to := job.CalcSnapshotNamesWithOffset("", cfg.fullSnapshot.Name, i, partCount, maxPartSize)
+					err = cfg.rbdRepo.ApplyDiffToRawImage(
+						cfg.nlvRepo.GetRawImagePath(),
+						cfg.nlvRepo.GetDiffPartPath(cfg.fullBackupInput.TargetSnapshotID, i),
+						from, to,
+						cfg.fullBackupInput.ExpansionUnitSize,
+						cfg.fullBackupInput.RawChecksumChunkSize,
+						cfg.fullBackupInput.DiffChecksumChunkSize,
+						cfg.fullBackupInput.EnableChecksumVerify,
+					)
+					require.NoError(t, err)
+					err = cfg.nlvRepo.RemoveDiffPartFile(cfg.fullBackupInput.TargetSnapshotID, i)
+					require.NoError(t, err)
+				}
+
 				// Set up fin.sqlite3 for the test
 				err = cfg.finRepo.StartOrRestartAction(cfg.fullBackupInput.ActionUID, model.Backup)
 				require.NoError(t, err)
@@ -370,9 +396,7 @@ func Test_FullBackup_Success_Resume(t *testing.T) {
 
 				// Assert
 				testutil.AssertActionPrivateDataIsEmpty(t, cfg.finRepo, cfg.fullBackupInput.ActionUID)
-				fullData, err := os.ReadFile(cfg.nlvRepo.GetRawImagePath())
-				require.NoError(t, err)
-				require.Equal(t, int(cfg.incrementalBackupInput.ExpansionUnitSize), len(fullData))
+				assertRawImageContents(t, cfg.nlvRepo.GetRawImagePath(), cfg.fullData)
 
 				ensureBackupMetadataCorrect(t, cfg.finRepo, &job.BackupMetadata{
 					PVCUID:       cfg.fullBackupInput.TargetPVCUID,
@@ -452,15 +476,18 @@ func Test_IncrementalBackup_Success_Resume(t *testing.T) {
 
 	// Assert
 	testutil.AssertActionPrivateDataIsEmpty(t, cfg.finRepo, cfg.incrementalBackupInput.ActionUID)
-	numDiffParts := int(math.Ceil(float64(snapshotSize) / float64(maxPartSize)))
+	require.Equal(t, snapshotSize, cfg.incrementalSnapshot.Size)
+	numDiffParts := int(math.Ceil(float64(cfg.incrementalSnapshot.Size) / float64(maxPartSize)))
 	for i := range numDiffParts {
+		diffFilePath := cfg.nlvRepo.GetDiffPartPath(cfg.incrementalBackupInput.TargetSnapshotID, i)
 		if i < nextStorePart { // Skipped diff parts should not exist
-			diffFilePath := cfg.nlvRepo.GetDiffPartPath(cfg.incrementalBackupInput.TargetSnapshotID, i)
 			_, err := os.Stat(diffFilePath)
 			assert.True(t, errors.Is(err, os.ErrNotExist))
 			continue
 		}
-		// TODO: Check the contents of each diff part
+		require.FileExists(t, diffFilePath)
+		assertDiffPartContents(t, diffFilePath, i, numDiffParts, maxPartSize,
+			cfg.fullSnapshot.Name, cfg.incrementalSnapshot.Name, cfg.fullData, cfg.incrementalData)
 	}
 
 	ensureBackupMetadataCorrect(t, cfg.finRepo, &job.BackupMetadata{
@@ -510,11 +537,8 @@ func Test_FullBackup_Success_DifferentNode(t *testing.T) {
 	require.NoError(t, err)
 
 	// Assert
-	testutil.AssertActionPrivateDataIsEmpty(t, cfg.finRepo, cfg.fullBackupInput.ActionUID)
-	fullData, err := os.ReadFile(cfg.nlvRepo.GetRawImagePath())
-	require.NoError(t, err)
-	require.Equal(t, len(cfg.incrementalData), len(fullData))
-	// TODO: Check the contents of each diff part
+	testutil.AssertActionPrivateDataIsEmpty(t, cfg.finRepo, cfg.incrementalBackupInput.ActionUID)
+	assertRawImageContents(t, cfg.nlvRepo.GetRawImagePath(), cfg.incrementalData)
 
 	ensureBackupMetadataCorrect(t, cfg.finRepo, &job.BackupMetadata{
 		PVCUID:       cfg.incrementalBackupInput.TargetPVCUID,
