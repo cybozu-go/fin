@@ -1,19 +1,14 @@
 package cmd
 
 import (
-	"errors"
 	"fmt"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"strconv"
-	"time"
 
 	"github.com/cybozu-go/fin/internal/infrastructure/ceph"
-	"github.com/cybozu-go/fin/internal/infrastructure/db"
 	"github.com/cybozu-go/fin/internal/infrastructure/nlv"
 	rvol "github.com/cybozu-go/fin/internal/infrastructure/restore"
-	"github.com/cybozu-go/fin/internal/job"
 	"github.com/cybozu-go/fin/internal/job/input"
 	"github.com/cybozu-go/fin/internal/job/restore"
 	"github.com/spf13/cobra"
@@ -40,21 +35,15 @@ func restoreJobMain() error {
 		return fmt.Errorf("BACKUP_TARGET_PVC_NAMESPACE environment variable is not set")
 	}
 	rootPath := filepath.Join(nlv.VolumePath, pvcNamespace, pvcName)
-	nlvRepo, err := nlv.NewNodeLocalVolumeRepository(rootPath)
-	if err != nil {
-		return fmt.Errorf("failed to create NodeLocalVolumeRepository: %w", err)
-	}
-	defer func() { _ = nlvRepo.Close() }()
 	pvcUID := os.Getenv("BACKUP_TARGET_PVC_UID")
 	if pvcUID == "" {
 		return fmt.Errorf("BACKUP_TARGET_PVC_UID environment variable is not set")
 	}
-
-	finRepo, err := db.New(nlvRepo.GetDBPath())
+	vol, err := openVolume(rootPath)
 	if err != nil {
-		return fmt.Errorf("failed to create repository: %w", err)
+		return err
 	}
-	defer func() { _ = finRepo.Close() }()
+	defer vol.Close()
 	restoreVol := rvol.NewRestoreVolume(rvol.VolumePath)
 
 	rbdRepo := ceph.NewRBDRepository()
@@ -88,9 +77,9 @@ func restoreJobMain() error {
 	}
 
 	r := restore.NewRestore(&input.Restore{
-		Repo:                 finRepo,
+		Repo:                 vol.finRepo,
 		RBDRepo:              rbdRepo,
-		NodeLocalVolumeRepo:  nlvRepo,
+		NodeLocalVolumeRepo:  vol.nlvRepo,
 		ActionUID:            actionUID,
 		TargetSnapshotID:     targetSnapshotID,
 		TargetPVCUID:         pvcUID,
@@ -99,16 +88,5 @@ func restoreJobMain() error {
 		RestoreVol:           restoreVol,
 	})
 
-	for {
-		err = r.Perform()
-		if err == nil {
-			slog.Info("restore job completed successfully")
-			return nil
-		}
-		if !errors.Is(err, job.ErrCantLock) {
-			return fmt.Errorf("failed to perform restore: %w", err)
-		}
-		slog.Warn("failed to acquire lock, will retry.")
-		time.Sleep(job.RetryInterval)
-	}
+	return performUntilLocked(r.Perform, "restore job completed successfully", "failed to perform restore")
 }
