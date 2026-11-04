@@ -353,7 +353,7 @@ func (r *FinRestoreReconciler) createOrUpdateRestoreJob(
 
 		job.Spec.BackoffLimit = ptr.To(int32(maxJobBackoffLimit))
 
-		job.Spec.Template.Spec.NodeName = backup.Spec.Node
+		pinJobToBackupNode(&job, backup)
 
 		job.Spec.Template.Spec.SecurityContext = &corev1.PodSecurityContext{
 			RunAsUser:  ptr.To(int64(0)),
@@ -428,14 +428,7 @@ func (r *FinRestoreReconciler) createOrUpdateRestoreJob(
 		}
 
 		job.Spec.Template.Spec.Volumes = []corev1.Volume{
-			{
-				Name: volumeNameFin,
-				VolumeSource: corev1.VolumeSource{
-					PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-						ClaimName: finVolumePVCName(backup),
-					},
-				},
-			},
+			finVolume(backup),
 			{
 				Name: "restore-job-volume",
 				VolumeSource: corev1.VolumeSource{

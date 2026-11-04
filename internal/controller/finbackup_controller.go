@@ -1184,7 +1184,7 @@ func (r *FinBackupReconciler) setBackupJobSpec(
 ) {
 	job.Spec.BackoffLimit = ptr.To(int32(maxJobBackoffLimit))
 
-	job.Spec.Template.Spec.NodeName = backup.Spec.Node
+	pinJobToBackupNode(job, backup)
 
 	job.Spec.Template.Spec.SecurityContext = &corev1.PodSecurityContext{
 		FSGroup:      ptr.To(int64(10000)),
@@ -1354,14 +1354,7 @@ func (r *FinBackupReconciler) setBackupJobSpec(
 				EmptyDir: &corev1.EmptyDirVolumeSource{},
 			},
 		},
-		{
-			Name: volumeNameFin,
-			VolumeSource: corev1.VolumeSource{
-				PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-					ClaimName: finVolumePVCName(backup),
-				},
-			},
-		},
+		finVolume(backup),
 		{
 			Name: "mon-endpoint-volume",
 			VolumeSource: corev1.VolumeSource{
@@ -1415,7 +1408,7 @@ func (r *FinBackupReconciler) createOrUpdateDeletionJob(ctx context.Context, bac
 
 		job.Spec.BackoffLimit = ptr.To(int32(maxJobBackoffLimit))
 
-		job.Spec.Template.Spec.NodeName = backup.Spec.Node
+		pinJobToBackupNode(&job, backup)
 
 		job.Spec.Template.Spec.SecurityContext = &corev1.PodSecurityContext{
 			FSGroup:      ptr.To(int64(10000)),
@@ -1493,14 +1486,7 @@ func (r *FinBackupReconciler) createOrUpdateDeletionJob(ctx context.Context, bac
 		}
 
 		job.Spec.Template.Spec.Volumes = []corev1.Volume{
-			{
-				Name: volumeNameFin,
-				VolumeSource: corev1.VolumeSource{
-					PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-						ClaimName: finVolumePVCName(backup),
-					},
-				},
-			},
+			finVolume(backup),
 		}
 
 		return nil
@@ -1538,7 +1524,7 @@ func (r *FinBackupReconciler) createOrUpdateCleanupJob(ctx context.Context, back
 
 		job.Spec.BackoffLimit = ptr.To(int32(maxJobBackoffLimit))
 
-		job.Spec.Template.Spec.NodeName = backup.Spec.Node
+		pinJobToBackupNode(&job, backup)
 
 		job.Spec.Template.Spec.SecurityContext = &corev1.PodSecurityContext{
 			FSGroup:      ptr.To(int64(10000)),
@@ -1588,14 +1574,7 @@ func (r *FinBackupReconciler) createOrUpdateCleanupJob(ctx context.Context, back
 		}
 
 		job.Spec.Template.Spec.Volumes = []corev1.Volume{
-			{
-				Name: volumeNameFin,
-				VolumeSource: corev1.VolumeSource{
-					PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-						ClaimName: finVolumePVCName(backup),
-					},
-				},
-			},
+			finVolume(backup),
 		}
 
 		job.Spec.PodFailurePolicy = &batchv1.PodFailurePolicy{
@@ -1757,7 +1736,7 @@ func (r *FinBackupReconciler) createOrUpdateVerificationJob(
 
 		job.Spec.BackoffLimit = ptr.To(int32(maxJobBackoffLimit))
 
-		job.Spec.Template.Spec.NodeName = backup.Spec.Node
+		pinJobToBackupNode(&job, backup)
 
 		job.Spec.Template.Spec.SecurityContext = &corev1.PodSecurityContext{
 			FSGroup:      ptr.To(int64(10000)),
@@ -1837,14 +1816,7 @@ func (r *FinBackupReconciler) createOrUpdateVerificationJob(
 		}
 
 		job.Spec.Template.Spec.Volumes = []corev1.Volume{
-			{
-				Name: volumeNameFin,
-				VolumeSource: corev1.VolumeSource{
-					PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-						ClaimName: finVolumePVCName(backup),
-					},
-				},
-			},
+			finVolume(backup),
 		}
 
 		return nil

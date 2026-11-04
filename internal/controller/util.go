@@ -183,6 +183,26 @@ func finVolumePVCName(backup *finv1.FinBackup) string {
 	return "fin-" + backup.Spec.Node
 }
 
+// finVolume is the node-local volume that holds the backup data. It is
+// resolved from the same Spec.Node as pinJobToBackupNode, so a Job that mounts
+// it must also be pinned to that node.
+func finVolume(backup *finv1.FinBackup) corev1.Volume {
+	return corev1.Volume{
+		Name: volumeNameFin,
+		VolumeSource: corev1.VolumeSource{
+			PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+				ClaimName: finVolumePVCName(backup),
+			},
+		},
+	}
+}
+
+// pinJobToBackupNode runs the Job on the node whose local volume holds the
+// backup. It is not a scheduling preference: another node has no such volume.
+func pinJobToBackupNode(job *batchv1.Job, backup *finv1.FinBackup) {
+	job.Spec.Template.Spec.NodeName = backup.Spec.Node
+}
+
 // findSnapshot searches for a snapshot with the given name by using the
 // provided RBDSnapshotListRepository. It returns model.ErrNotFound when not found.
 func findSnapshot(
