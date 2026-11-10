@@ -17,6 +17,7 @@ import (
 
 	finv1 "github.com/cybozu-go/fin/api/v1"
 	"github.com/cybozu-go/fin/internal/controller"
+	"github.com/cybozu-go/fin/internal/finbackupbuilder"
 	"github.com/cybozu-go/fin/internal/model"
 	"github.com/cybozu-go/fin/test/utils"
 	. "github.com/onsi/ginkgo/v2"
@@ -1025,7 +1026,7 @@ func CopyFBCServiceAccount(ctx context.Context, client kubernetes.Interface, src
 func GetFinBackupNameFromJobName(ctx context.Context, c client.Client, fbcUID, jobName string) (string, error) {
 	finbackups := &finv1.FinBackupList{}
 	s := labels.SelectorFromSet(map[string]string{
-		controller.LabelFinBackupConfigUID: fbcUID,
+		finbackupbuilder.LabelFinBackupConfigUID: fbcUID,
 	})
 	err := c.List(ctx, finbackups, &client.ListOptions{LabelSelector: s})
 	if err != nil {

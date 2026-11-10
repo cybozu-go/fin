@@ -39,7 +39,6 @@ const (
 
 	// Labels
 	labelBackupTargetPVCUID   = "fin.cybozu.io/backup-target-pvc-uid"
-	LabelFinBackupConfigUID   = "fin.cybozu.io/fbc-uid"
 	labelAppNameValue         = "fin"
 	labelComponentBackupJob   = "backup-job"
 	labelComponentCleanupJob  = "cleanup-job"
