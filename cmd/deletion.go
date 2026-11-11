@@ -39,11 +39,6 @@ func deletionJobMain() error {
 	}
 
 	rootPath := filepath.Join(nlv.VolumePath, pvcNamespace, pvcName)
-	vol, err := openVolume(rootPath)
-	if err != nil {
-		return err
-	}
-	defer vol.Close()
 	rbdRepo := ceph.NewRBDRepository()
 
 	actionUID := os.Getenv("ACTION_UID")
@@ -69,15 +64,17 @@ func deletionJobMain() error {
 		return err
 	}
 
-	d := deletion.NewDeletion(&input.Deletion{
-		Repo:                 vol.finRepo,
-		RBDRepo:              rbdRepo,
-		NodeLocalVolumeRepo:  vol.nlvRepo,
-		ActionUID:            actionUID,
-		TargetSnapshotID:     targetSnapshotID,
-		TargetPVCUID:         pvcUID,
-		ExpansionUnitSize:    expansionUnitSize,
-		EnableChecksumVerify: enableChecksumVerify,
-	})
-	return performUntilLocked(d.Perform, "Deletion job completed successfully", "failed to perform deletion")
+	return runWithVolume(rootPath, func(vol *volume) error {
+		d := deletion.NewDeletion(&input.Deletion{
+			Repo:                 vol.finRepo,
+			RBDRepo:              rbdRepo,
+			NodeLocalVolumeRepo:  vol.nlvRepo,
+			ActionUID:            actionUID,
+			TargetSnapshotID:     targetSnapshotID,
+			TargetPVCUID:         pvcUID,
+			ExpansionUnitSize:    expansionUnitSize,
+			EnableChecksumVerify: enableChecksumVerify,
+		})
+		return d.Perform()
+	}, "Deletion job completed successfully", "failed to perform deletion")
 }

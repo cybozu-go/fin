@@ -38,11 +38,6 @@ func cleanupJobMain() error {
 	}
 
 	rootPath := filepath.Join(nlv.VolumePath, pvcNamespace, pvcName)
-	vol, err := openVolume(rootPath)
-	if err != nil {
-		return err
-	}
-	defer vol.Close()
 
 	actionUID := os.Getenv("ACTION_UID")
 	if actionUID == "" {
@@ -57,12 +52,14 @@ func cleanupJobMain() error {
 		return fmt.Errorf("invalid TARGET_SNAPSHOT_ID: %w", err)
 	}
 
-	d := cleanup.NewCleanup(&input.Cleanup{
-		Repo:                vol.finRepo,
-		NodeLocalVolumeRepo: vol.nlvRepo,
-		ActionUID:           actionUID,
-		TargetSnapshotID:    targetSnapshotID,
-		TargetPVCUID:        pvcUID,
-	})
-	return performUntilLocked(d.Perform, "Cleanup job completed successfully", "failed to perform cleanup")
+	return runWithVolume(rootPath, func(vol *volume) error {
+		d := cleanup.NewCleanup(&input.Cleanup{
+			Repo:                vol.finRepo,
+			NodeLocalVolumeRepo: vol.nlvRepo,
+			ActionUID:           actionUID,
+			TargetSnapshotID:    targetSnapshotID,
+			TargetPVCUID:        pvcUID,
+		})
+		return d.Perform()
+	}, "Cleanup job completed successfully", "failed to perform cleanup")
 }

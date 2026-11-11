@@ -39,11 +39,6 @@ func restoreJobMain() error {
 	if pvcUID == "" {
 		return fmt.Errorf("BACKUP_TARGET_PVC_UID environment variable is not set")
 	}
-	vol, err := openVolume(rootPath)
-	if err != nil {
-		return err
-	}
-	defer vol.Close()
 	restoreVol := rvol.NewRestoreVolume(rvol.VolumePath)
 
 	rbdRepo := ceph.NewRBDRepository()
@@ -76,17 +71,19 @@ func restoreJobMain() error {
 		return err
 	}
 
-	r := restore.NewRestore(&input.Restore{
-		Repo:                 vol.finRepo,
-		RBDRepo:              rbdRepo,
-		NodeLocalVolumeRepo:  vol.nlvRepo,
-		ActionUID:            actionUID,
-		TargetSnapshotID:     targetSnapshotID,
-		TargetPVCUID:         pvcUID,
-		RawImageChunkSize:    rawImageChunkSize,
-		EnableChecksumVerify: enableChecksumVerify,
-		RestoreVol:           restoreVol,
-	})
+	return runWithVolume(rootPath, func(vol *volume) error {
+		r := restore.NewRestore(&input.Restore{
+			Repo:                 vol.finRepo,
+			RBDRepo:              rbdRepo,
+			NodeLocalVolumeRepo:  vol.nlvRepo,
+			ActionUID:            actionUID,
+			TargetSnapshotID:     targetSnapshotID,
+			TargetPVCUID:         pvcUID,
+			RawImageChunkSize:    rawImageChunkSize,
+			EnableChecksumVerify: enableChecksumVerify,
+			RestoreVol:           restoreVol,
+		})
 
-	return performUntilLocked(r.Perform, "restore job completed successfully", "failed to perform restore")
+		return r.Perform()
+	}, "restore job completed successfully", "failed to perform restore")
 }

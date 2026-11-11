@@ -34,11 +34,6 @@ func verificationJobMain() error {
 		return fmt.Errorf("BACKUP_TARGET_PVC_NAMESPACE environment variable is not set")
 	}
 	rootPath := filepath.Join(nlv.VolumePath, pvcNamespace, pvcName)
-	vol, err := openVolume(rootPath)
-	if err != nil {
-		return err
-	}
-	defer vol.Close()
 
 	rbdRepo := ceph.NewRBDRepository()
 
@@ -71,15 +66,17 @@ func verificationJobMain() error {
 		return err
 	}
 
-	v := verification.NewVerification(&input.Verification{
-		Repo:                 vol.finRepo,
-		RBDRepo:              rbdRepo,
-		NLVRepo:              vol.nlvRepo,
-		ActionUID:            actionUID,
-		TargetSnapshotID:     backupSnapshotID,
-		TargetPVCUID:         pvcUID,
-		ExpansionUnitSize:    expansionUnitSize,
-		EnableChecksumVerify: enableChecksumVerify,
-	})
-	return performUntilLocked(v.Perform, "verification job completed successfully", "failed to perform verification")
+	return runWithVolume(rootPath, func(vol *volume) error {
+		v := verification.NewVerification(&input.Verification{
+			Repo:                 vol.finRepo,
+			RBDRepo:              rbdRepo,
+			NLVRepo:              vol.nlvRepo,
+			ActionUID:            actionUID,
+			TargetSnapshotID:     backupSnapshotID,
+			TargetPVCUID:         pvcUID,
+			ExpansionUnitSize:    expansionUnitSize,
+			EnableChecksumVerify: enableChecksumVerify,
+		})
+		return v.Perform()
+	}, "verification job completed successfully", "failed to perform verification")
 }

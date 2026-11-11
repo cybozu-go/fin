@@ -34,11 +34,6 @@ func backupJobMain() error {
 		return fmt.Errorf("BACKUP_TARGET_PVC_NAMESPACE environment variable is not set")
 	}
 	rootPath := filepath.Join(nlv.VolumePath, pvcNamespace, pvcName)
-	vol, err := openVolume(rootPath)
-	if err != nil {
-		return err
-	}
-	defer vol.Close()
 
 	clientSet, err := getClientSet()
 	if err != nil {
@@ -114,24 +109,26 @@ func backupJobMain() error {
 		return err
 	}
 
-	b := backup.NewBackup(&input.Backup{
-		Repo:                      vol.finRepo,
-		K8sClient:                 clientSet,
-		RBDRepo:                   rbdRepo,
-		NodeLocalVolumeRepo:       vol.nlvRepo,
-		ActionUID:                 actionUID,
-		TargetRBDPoolName:         rbdPool,
-		TargetRBDImageName:        rbdImageName,
-		TargetSnapshotID:          backupSnapshotID,
-		SourceCandidateSnapshotID: sourceCandidateSnapshotID,
-		TargetPVCName:             pvcName,
-		TargetPVCNamespace:        pvcNamespace,
-		TargetPVCUID:              pvcUID,
-		MaxPartSize:               maxPartSize,
-		ExpansionUnitSize:         expansionUnitSize,
-		RawChecksumChunkSize:      rawChecksumChunkSize,
-		DiffChecksumChunkSize:     diffChecksumChunkSize,
-		EnableChecksumVerify:      enableChecksumVerify,
-	})
-	return performUntilLocked(b.Perform, "Backup job completed successfully", "failed to perform backup")
+	return runWithVolume(rootPath, func(vol *volume) error {
+		b := backup.NewBackup(&input.Backup{
+			Repo:                      vol.finRepo,
+			K8sClient:                 clientSet,
+			RBDRepo:                   rbdRepo,
+			NodeLocalVolumeRepo:       vol.nlvRepo,
+			ActionUID:                 actionUID,
+			TargetRBDPoolName:         rbdPool,
+			TargetRBDImageName:        rbdImageName,
+			TargetSnapshotID:          backupSnapshotID,
+			SourceCandidateSnapshotID: sourceCandidateSnapshotID,
+			TargetPVCName:             pvcName,
+			TargetPVCNamespace:        pvcNamespace,
+			TargetPVCUID:              pvcUID,
+			MaxPartSize:               maxPartSize,
+			ExpansionUnitSize:         expansionUnitSize,
+			RawChecksumChunkSize:      rawChecksumChunkSize,
+			DiffChecksumChunkSize:     diffChecksumChunkSize,
+			EnableChecksumVerify:      enableChecksumVerify,
+		})
+		return b.Perform()
+	}, "Backup job completed successfully", "failed to perform backup")
 }
