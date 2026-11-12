@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"testing"
@@ -904,4 +905,89 @@ func Test_loopApplyDiff_RemovesDiffPartFiles(t *testing.T) {
 
 	// Verify privateData.NextPatchPart is updated correctly
 	assert.Equal(t, numParts, privateData.NextPatchPart)
+}
+
+// recordingNLVRepo fails storing failAtPart once, and records the stored parts
+// and the nextStorePart persisted when each StorePart call starts.
+type recordingNLVRepo struct {
+	model.NodeLocalVolumeRepository
+	finRepo            model.FinRepository
+	actionUID          string
+	failAtPart         *int
+	stored             []int
+	persistedNextStore []int
+}
+
+func (s *recordingNLVRepo) StorePart(snapshotID, partIndex int, stream io.ReadCloser, checksumChunkSize uint64) error {
+	privateData, err := getBackupPrivateData(s.finRepo, s.actionUID)
+	if err != nil {
+		_ = stream.Close()
+		return err
+	}
+	s.persistedNextStore = append(s.persistedNextStore, privateData.NextStorePart)
+	if s.failAtPart != nil && *s.failAtPart == partIndex {
+		_ = stream.Close()
+		return errors.New("injected store failure")
+	}
+	if err := s.NodeLocalVolumeRepository.StorePart(snapshotID, partIndex, stream, checksumChunkSize); err != nil {
+		return err
+	}
+	s.stored = append(s.stored, partIndex)
+	return nil
+}
+
+func Test_FullBackup_StorePartFailure_ResumesFromCheckpoint(t *testing.T) {
+	// Description:
+	//   A full backup whose part 1 fails to be stored resumes from part 1.
+	//
+	// Arrange:
+	//   - Set max part num to 3.
+	//   - Make storing part 1 fail on the first run.
+	//
+	// Act:
+	//   Run the backup twice with the same action UID.
+	//
+	// Assert:
+	//   - nextStorePart is persisted before each part is stored.
+	//   - The second run stores only parts 1 and 2 and the raw image is correct.
+
+	// Arrange
+	snapshotSize, maxPartSize := uint64(3072), uint64(1024)
+	cfg := setup(t, &setupInput{
+		fullSnapshotSize:        snapshotSize,
+		incrementalSnapshotSize: snapshotSize,
+		maxPartSize:             maxPartSize,
+	})
+	store := &recordingNLVRepo{
+		NodeLocalVolumeRepository: cfg.nlvRepo,
+		finRepo:                   cfg.finRepo,
+		actionUID:                 cfg.fullBackupInput.ActionUID,
+		failAtPart:                ptr.To(1),
+	}
+	cfg.fullBackupInput.NodeLocalVolumeRepo = store
+
+	// Act
+	err := NewBackup(cfg.fullBackupInput).Perform()
+
+	// Assert
+	require.Error(t, err)
+	assert.Equal(t, []int{0}, store.stored)
+	assert.Equal(t, []int{0, 1}, store.persistedNextStore)
+	privateData, err := getBackupPrivateData(cfg.finRepo, cfg.fullBackupInput.ActionUID)
+	require.NoError(t, err)
+	assert.Equal(t, 1, privateData.NextStorePart)
+	assert.Equal(t, 0, privateData.NextPatchPart)
+
+	// Act
+	store.failAtPart = nil
+	store.stored = nil
+	store.persistedNextStore = nil
+	err = NewBackup(cfg.fullBackupInput).Perform()
+
+	// Assert
+	require.NoError(t, err)
+	assert.Equal(t, []int{1, 2}, store.stored)
+	assert.Equal(t, []int{1, 2}, store.persistedNextStore)
+	testutil.AssertActionPrivateDataIsEmpty(t, cfg.finRepo, cfg.fullBackupInput.ActionUID)
+	assertRawImageContents(t, cfg.nlvRepo.GetRawImagePath(), cfg.fullData, int(cfg.fullBackupInput.ExpansionUnitSize))
 }
