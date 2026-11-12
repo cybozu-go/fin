@@ -166,6 +166,18 @@ var _ = Describe("FinBackupConfig Controller under Manager", Ordered, func() {
 			g.Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(fbc), &updated)).To(Succeed())
 			g.Expect(updated.Status.LatestBackupRef).To(Equal(&finv1.FinBackupReference{Name: fb.Name, UID: fb.UID}))
 		}, "5s", "100ms").Should(Succeed())
+
+		By("passing a status update of the FinBackup that changes the summary")
+		*fb = withConditions(withSnapshot(*fb), map[string]metav1.ConditionStatus{
+			finv1.BackupConditionStoredToNode: metav1.ConditionTrue,
+			finv1.BackupConditionVerified:     metav1.ConditionTrue,
+		})
+		Expect(k8sClient.Status().Update(ctx, fb)).To(Succeed())
+		Eventually(func(g Gomega) {
+			var updated finv1.FinBackupConfig
+			g.Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(fbc), &updated)).To(Succeed())
+			g.Expect(updated.Status.LastSuccessfulBackupRef).To(Equal(&finv1.FinBackupReference{Name: fb.Name, UID: fb.UID}))
+		}, "5s", "100ms").Should(Succeed())
 	})
 })
 

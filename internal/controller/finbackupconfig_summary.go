@@ -13,8 +13,10 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 )
 
 func (r *FinBackupConfigReconciler) updateBackupSummary(ctx context.Context, fbc *finv1.FinBackupConfig) error {
@@ -168,6 +170,47 @@ func latestBackupSucceededCondition(latest *finv1.FinBackup) metav1.Condition {
 func finBackupFailedOrUnverified(fb *finv1.FinBackup) bool {
 	return fb.IsVerifiedFalse() || fb.IsChecksumMismatched() || fb.IsMetadataCorrupted() ||
 		fb.IsVerificationSkipped()
+}
+
+var summaryConditionTypes = []string{
+	finv1.BackupConditionStoredToNode,
+	finv1.BackupConditionVerified,
+	finv1.BackupConditionVerificationSkipped,
+	finv1.BackupConditionChecksumMismatched,
+	finv1.BackupConditionMetadataCorrupted,
+}
+
+// Without this, every status write of a FinBackup, such as AutoDeleteCompleted or a new
+// condition message, would aggregate again. The name, UID and creation time never change.
+func finBackupSummaryInputChanged(e event.UpdateEvent) bool {
+	old, oldOK := e.ObjectOld.(*finv1.FinBackup)
+	current, currentOK := e.ObjectNew.(*finv1.FinBackup)
+	if !oldOK || !currentOK || old == nil || current == nil {
+		return true
+	}
+	if old.Labels[finbackupbuilder.LabelFinBackupConfigUID] != current.Labels[finbackupbuilder.LabelFinBackupConfigUID] ||
+		old.Annotations[finbackupbuilder.AnnotationFinBackupConfigName] !=
+			current.Annotations[finbackupbuilder.AnnotationFinBackupConfigName] ||
+		old.Annotations[finbackupbuilder.AnnotationFinBackupConfigNamespace] !=
+			current.Annotations[finbackupbuilder.AnnotationFinBackupConfigNamespace] ||
+		old.DeletionTimestamp.IsZero() != current.DeletionTimestamp.IsZero() ||
+		!old.Status.CreatedAt.Equal(&current.Status.CreatedAt) ||
+		!ptr.Equal(old.Status.SnapID, current.Status.SnapID) {
+		return true
+	}
+	for _, conditionType := range summaryConditionTypes {
+		if conditionStatus(old, conditionType) != conditionStatus(current, conditionType) {
+			return true
+		}
+	}
+	return false
+}
+
+func conditionStatus(fb *finv1.FinBackup, conditionType string) metav1.ConditionStatus {
+	if condition := meta.FindStatusCondition(fb.Status.Conditions, conditionType); condition != nil {
+		return condition.Status
+	}
+	return ""
 }
 
 // Only the annotations are read, so that a FinBackup event costs no API request.
