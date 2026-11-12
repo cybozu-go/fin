@@ -69,6 +69,7 @@ func setup(t *testing.T, input *setupInput) *setupOutput {
 	fullBackupInput.K8sClient = k8sClient
 	fullBackupInput.RBDRepo = rbdRepo
 	fullBackupInput.NodeLocalVolumeRepo = nlvRepo
+	fullBackupInput.DiffPartStore = nlvRepo
 
 	// Take a fake snapshot for incremental backup
 	incrSnapSize := fullSnapshotSize * 2
@@ -85,6 +86,7 @@ func setup(t *testing.T, input *setupInput) *setupOutput {
 	incrementalBackupInput.K8sClient = k8sClient
 	incrementalBackupInput.RBDRepo = rbdRepo
 	incrementalBackupInput.NodeLocalVolumeRepo = nlvRepo
+	incrementalBackupInput.DiffPartStore = nlvRepo
 
 	// Take a second fake snapshot for second incremental backup
 	incrSnapSize2 := fullSnapshotSize * 3
@@ -98,6 +100,7 @@ func setup(t *testing.T, input *setupInput) *setupOutput {
 	incrementalBackupInput2.K8sClient = k8sClient
 	incrementalBackupInput2.RBDRepo = rbdRepo
 	incrementalBackupInput2.NodeLocalVolumeRepo = nlvRepo
+	incrementalBackupInput2.DiffPartStore = nlvRepo
 
 	return &setupOutput{
 		fullBackupInput:         fullBackupInput,

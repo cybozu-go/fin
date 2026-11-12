@@ -307,6 +307,7 @@ func TestDelete_Retry_RawAndDiffCase_Success(t *testing.T) {
 	fullBackupInput.K8sClient = k8sClient
 	fullBackupInput.RBDRepo = rbdRepo
 	fullBackupInput.NodeLocalVolumeRepo = nlvRepo
+	fullBackupInput.DiffPartStore = nlvRepo
 	err = backup.NewBackup(fullBackupInput).Perform()
 	require.NoError(t, err)
 	incrBackupInput := testutil.NewBackupInput(k8sClient, volumeInfo, targetSnap.ID, &prevSnap.ID, partSize)
@@ -314,6 +315,7 @@ func TestDelete_Retry_RawAndDiffCase_Success(t *testing.T) {
 	incrBackupInput.K8sClient = k8sClient
 	incrBackupInput.RBDRepo = rbdRepo
 	incrBackupInput.NodeLocalVolumeRepo = nlvRepo
+	incrBackupInput.DiffPartStore = nlvRepo
 	err = backup.NewBackup(incrBackupInput).Perform()
 	require.NoError(t, err)
 

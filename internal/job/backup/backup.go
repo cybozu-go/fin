@@ -8,7 +8,7 @@ import (
 	"math"
 	"slices"
 
-	"github.com/cybozu-go/fin/internal/infrastructure/nlv"
+	"github.com/cybozu-go/fin/internal/diffexport"
 	"github.com/cybozu-go/fin/internal/job"
 	"github.com/cybozu-go/fin/internal/job/input"
 	"github.com/cybozu-go/fin/internal/model"
@@ -27,6 +27,7 @@ type Backup struct {
 	k8sClient                 kubernetes.Interface
 	rbdRepo                   model.RBDRepository
 	nodeLocalVolumeRepo       model.NodeLocalVolumeRepository
+	diffPartStore             diffexport.PartStore
 	actionUID                 string
 	targetRBDPool             string
 	targetRBDImageName        string
@@ -48,6 +49,7 @@ func NewBackup(in *input.Backup) *Backup {
 		k8sClient:                 in.K8sClient,
 		rbdRepo:                   in.RBDRepo,
 		nodeLocalVolumeRepo:       in.NodeLocalVolumeRepo,
+		diffPartStore:             in.DiffPartStore,
 		actionUID:                 in.ActionUID,
 		targetRBDPool:             in.TargetRBDPoolName,
 		targetRBDImageName:        in.TargetRBDImageName,
@@ -255,37 +257,23 @@ func (b *Backup) loopExportDiff(
 	targetSnapshot *model.RBDSnapshot,
 	sourceSnapshotName *string,
 ) error {
-	partCount := int(math.Ceil(float64(targetSnapshot.Size) / float64(b.maxPartSize)))
-	for i := privateData.NextStorePart; i < partCount; i++ {
-		diffPartPath := b.nodeLocalVolumeRepo.GetDiffPartPath(b.targetSnapshotID, i)
-		diffChecksumPath := b.nodeLocalVolumeRepo.GetDiffChecksumPath(b.targetSnapshotID, i)
-		stream, err := b.rbdRepo.ExportDiff(&model.ExportDiffInput{
-			PoolName:       b.targetRBDPool,
-			ReadOffset:     b.maxPartSize * uint64(i),
-			ReadLength:     b.maxPartSize,
-			FromSnap:       sourceSnapshotName,
-			MidSnapPrefix:  targetSnapshot.Name,
-			ImageName:      b.targetRBDImageName,
-			TargetSnapName: targetSnapshot.Name,
-		})
-		if err != nil {
-			return fmt.Errorf("failed to export diff: %w", err)
-		}
-
-		if err := nlv.WriteDiffPartAndCloseStream(stream, diffPartPath, diffChecksumPath, b.diffChecksumChunkSize); err != nil {
-			return fmt.Errorf("failed to write diff part: %w", err)
-		}
-
-		if err := fileio.SyncData(diffPartPath); err != nil {
-			return fmt.Errorf("failed to sync %q: %w", diffPartPath, err)
-		}
-
-		privateData.NextStorePart = i + 1
+	target := &diffexport.Target{
+		PoolName:           b.targetRBDPool,
+		ImageName:          b.targetRBDImageName,
+		SnapshotID:         b.targetSnapshotID,
+		SnapshotName:       targetSnapshot.Name,
+		SnapshotSize:       targetSnapshot.Size,
+		SourceSnapshotName: sourceSnapshotName,
+		MaxPartSize:        b.maxPartSize,
+		ChecksumChunkSize:  b.diffChecksumChunkSize,
+	}
+	return diffexport.Store(b.rbdRepo, b.diffPartStore, target, privateData.NextStorePart, func(next int) error {
+		privateData.NextStorePart = next
 		if err := setBackupPrivateData(b.repo, b.actionUID, privateData); err != nil {
 			return fmt.Errorf("failed to set nextStorePart to %d: %w", privateData.NextStorePart, err)
 		}
-	}
-	return nil
+		return nil
+	})
 }
 
 func (b *Backup) validateChecksumChunkSizeConsistency() error {
