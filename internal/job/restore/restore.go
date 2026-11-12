@@ -9,6 +9,7 @@ import (
 	"github.com/cybozu-go/fin/internal/job"
 	"github.com/cybozu-go/fin/internal/job/input"
 	"github.com/cybozu-go/fin/internal/model"
+	"github.com/cybozu-go/fin/internal/pkg/fileio"
 )
 
 type Restore struct {
@@ -152,7 +153,7 @@ func (r *Restore) loopCopyChunk(privateData *restorePrivateData, rawImageSize ui
 			return fmt.Errorf("failed to copy chunk %d: %w", i, err)
 		}
 
-		if err := job.SyncData(restoreVolPath); err != nil {
+		if err := fileio.SyncData(restoreVolPath); err != nil {
 			return fmt.Errorf("failed to sync %q: %w", restoreVolPath, err)
 		}
 
@@ -209,7 +210,7 @@ func (r *Restore) loopApplyDiff(
 			return fmt.Errorf("failed to apply diff part %d: %w", i, err)
 		}
 
-		if err := job.SyncData(restoreVolPath); err != nil {
+		if err := fileio.SyncData(restoreVolPath); err != nil {
 			return fmt.Errorf("failed to sync %q: %w", restoreVolPath, err)
 		}
 
