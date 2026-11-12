@@ -137,6 +137,35 @@ var _ = Describe("FinBackupConfig Controller under Manager", Ordered, func() {
 			g.Expect(k8serrors.IsNotFound(err)).To(BeTrue())
 		}, "5s", "1s").Should(Succeed())
 	})
+
+	It("should update status.latestBackupRef on a FinBackup event", func(ctx SpecContext) {
+		// Arrange
+		fbc := &finv1.FinBackupConfig{
+			ObjectMeta: metav1.ObjectMeta{Name: "test-fbc-summary", Namespace: fbcNS.Name},
+			Spec: finv1.FinBackupConfigSpec{
+				PVCNamespace: pvc.Namespace,
+				PVC:          pvc.Name,
+				Schedule:     testCronSchedule,
+			},
+		}
+		Expect(k8sClient.Create(ctx, fbc)).To(Succeed())
+		Eventually(func(g Gomega) {
+			var updated finv1.FinBackupConfig
+			g.Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(fbc), &updated)).To(Succeed())
+			g.Expect(updated.Finalizers).To(ContainElement(finBackupConfigFinalizerName))
+		}, "5s", "100ms").Should(Succeed())
+
+		// Act
+		fb := createFinBackupOf(ctx, fbc, "fb")
+
+		// Assert
+		// Far shorter than the unassigned-node retry interval, so only the event can trigger it.
+		Eventually(func(g Gomega) {
+			var updated finv1.FinBackupConfig
+			g.Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(fbc), &updated)).To(Succeed())
+			g.Expect(updated.Status.LatestBackupRef).To(Equal(&finv1.FinBackupReference{Name: fb.Name, UID: fb.UID}))
+		}, "5s", "100ms").Should(Succeed())
+	})
 })
 
 var _ = Describe("FinBackupConfig Controller", func() {
