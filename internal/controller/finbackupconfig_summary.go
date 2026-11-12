@@ -27,6 +27,8 @@ func (r *FinBackupConfigReconciler) updateBackupSummary(ctx context.Context, fbc
 	newStatus := fbc.Status.DeepCopy()
 	newStatus.LatestBackupRef, newStatus.LatestBackupSnapshotTime = refAndSnapshotTime(latestFinBackup(related))
 	newStatus.PendingBackups = countPendingFinBackups(related)
+	newStatus.LastSuccessfulBackupRef, newStatus.LastSuccessfulBackupSnapshotTime = refAndSnapshotTime(
+		lastSuccessfulFinBackup(related))
 	if equality.Semantic.DeepEqual(&fbc.Status, newStatus) {
 		return nil
 	}
@@ -59,14 +61,32 @@ func latestFinBackup(fbs []*finv1.FinBackup) *finv1.FinBackup {
 	if len(fbs) == 0 {
 		return nil
 	}
-	latest := slices.MaxFunc(fbs, func(a, b *finv1.FinBackup) int {
-		return cmp.Or(
-			a.CreationTimestamp.Compare(b.CreationTimestamp.Time),
-			cmp.Compare(a.Name, b.Name),
-			cmp.Compare(a.UID, b.UID),
-		)
+	return slices.MaxFunc(fbs, compareCreation)
+}
+
+// The snapshot time decides rather than the creation, so that an older FinBackup
+// succeeding late does not hide a newer snapshot.
+func lastSuccessfulFinBackup(fbs []*finv1.FinBackup) *finv1.FinBackup {
+	var succeeded []*finv1.FinBackup
+	for _, fb := range fbs {
+		if finBackupSucceeded(fb) {
+			succeeded = append(succeeded, fb)
+		}
+	}
+	if len(succeeded) == 0 {
+		return nil
+	}
+	return slices.MaxFunc(succeeded, func(a, b *finv1.FinBackup) int {
+		return cmp.Or(a.Status.CreatedAt.Compare(b.Status.CreatedAt.Time), compareCreation(a, b))
 	})
-	return latest
+}
+
+func compareCreation(a, b *finv1.FinBackup) int {
+	return cmp.Or(
+		a.CreationTimestamp.Compare(b.CreationTimestamp.Time),
+		cmp.Compare(a.Name, b.Name),
+		cmp.Compare(a.UID, b.UID),
+	)
 }
 
 func refAndSnapshotTime(fb *finv1.FinBackup) (*finv1.FinBackupReference, *metav1.Time) {

@@ -68,6 +68,27 @@ spec:
           status:
             description: FinBackupConfigStatus defines the observed state of FinBackupConfig
             properties:
+              lastSuccessfulBackupRef:
+                description: |-
+                  LastSuccessfulBackupRef refers to the verified FinBackup with the latest
+                  snapshot. It falls back to an older one when this one is deleted or corrupted.
+                properties:
+                  name:
+                    type: string
+                  uid:
+                    description: UID tells a FinBackup recreated with the same name
+                      apart.
+                    type: string
+                required:
+                - name
+                - uid
+                type: object
+              lastSuccessfulBackupSnapshotTime:
+                description: |-
+                  LastSuccessfulBackupSnapshotTime is the point in time lastSuccessfulBackupRef
+                  restores to, not the time the backup completed.
+                format: date-time
+                type: string
               latestBackupRef:
                 description: |-
                   LatestBackupRef refers to the FinBackup with the latest creationTimestamp.
