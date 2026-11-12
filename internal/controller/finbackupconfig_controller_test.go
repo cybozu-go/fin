@@ -18,6 +18,7 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -585,6 +586,49 @@ var _ = Describe("FinBackupConfig backup summary", func() {
 		status = reconcileStatus(ctx, fbc)
 		Expect(status.LastSuccessfulBackupRef).To(BeNil())
 		Expect(status.LastSuccessfulBackupSnapshotTime).To(BeNil())
+	})
+
+	It("should report whether the latest FinBackup succeeded as a condition", func(ctx SpecContext) {
+		// Arrange
+		fbc := &finv1.FinBackupConfig{
+			ObjectMeta: metav1.ObjectMeta{Name: testFBCName, Namespace: fbcNamespace},
+			Spec: finv1.FinBackupConfigSpec{
+				PVCNamespace: pvc.Namespace,
+				PVC:          pvc.Name,
+				Schedule:     testCronSchedule,
+			},
+		}
+		Expect(k8sClient.Create(ctx, fbc)).To(Succeed())
+		reconcileCondition := func() metav1.Condition {
+			GinkgoHelper()
+			status := reconcileStatus(ctx, fbc)
+			condition := meta.FindStatusCondition(status.Conditions, finv1.FinBackupConfigConditionLatestBackupSucceeded)
+			Expect(condition).NotTo(BeNil())
+			return *condition
+		}
+
+		By("reporting Unknown with NoBackups before any FinBackup is created")
+		condition := reconcileCondition()
+		Expect(condition.Status).To(Equal(metav1.ConditionUnknown))
+		Expect(condition.Reason).To(Equal("NoBackups"))
+		noBackupsSince := condition.LastTransitionTime
+
+		By("keeping lastTransitionTime while the condition stays Unknown")
+		fb := createFinBackupOf(ctx, fbc, "fb")
+		condition = reconcileCondition()
+		Expect(condition.Status).To(Equal(metav1.ConditionUnknown))
+		Expect(condition.Reason).To(Equal("SnapshotPending"))
+		Expect(condition.LastTransitionTime.Time).To(BeTemporally("==", noBackupsSince.Time))
+
+		By("reporting True once the latest FinBackup is stored and verified")
+		*fb = withConditions(withSnapshot(*fb), map[string]metav1.ConditionStatus{
+			finv1.BackupConditionStoredToNode: metav1.ConditionTrue,
+			finv1.BackupConditionVerified:     metav1.ConditionTrue,
+		})
+		Expect(k8sClient.Status().Update(ctx, fb)).To(Succeed())
+		condition = reconcileCondition()
+		Expect(condition.Status).To(Equal(metav1.ConditionTrue))
+		Expect(condition.Reason).To(Equal("BackupSucceeded"))
 	})
 })
 

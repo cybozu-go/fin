@@ -65,7 +65,17 @@ type FinBackupConfigStatus struct {
 	// restores to, not the time the backup completed.
 	// +optional
 	LastSuccessfulBackupSnapshotTime *metav1.Time `json:"lastSuccessfulBackupSnapshotTime,omitempty"`
+
+	// +listType=map
+	// +listMapKey=type
+	// +optional
+	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
+
+// FinBackupConfigConditionLatestBackupSucceeded tells whether the FinBackup of
+// latestBackupRef succeeded. False is not always a failure: the reason tells a
+// failure, a FinBackup in progress, and a skipped verification apart.
+const FinBackupConfigConditionLatestBackupSucceeded = "LatestBackupSucceeded"
 
 // FinBackupReference refers to a FinBackup in the same namespace.
 type FinBackupReference struct {
