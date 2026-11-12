@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"testing"
 	"time"
 
 	finv1 "github.com/cybozu-go/fin/api/v1"
@@ -14,6 +15,7 @@ import (
 	. "github.com/onsi/gomega"
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
+	"github.com/stretchr/testify/require"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
@@ -24,6 +26,7 @@ import (
 	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	ctrlfake "sigs.k8s.io/controller-runtime/pkg/client/fake"
 	configv1 "sigs.k8s.io/controller-runtime/pkg/config"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 )
@@ -44,6 +47,7 @@ func newTestFinBackupConfigReconciler(overwriteFBCSchedule string) *FinBackupCon
 		selector,
 		fake.NewNodeFreeSpaceRepository(map[string]float64{"test-node": 1 << 30}),
 		resource.MustParse("1Mi"),
+		nil,
 	)
 }
 
@@ -476,7 +480,7 @@ var _ = Describe("FinBackupConfig node selection", func() {
 		freeSpaceRepo = fake.NewNodeFreeSpaceRepository(nil)
 		reconciler = NewFinBackupConfigReconciler(
 			k8sClient, scheme.Scheme, "", cephClusterID, "test:latest", "test-sa", selector, freeSpaceRepo,
-			resource.MustParse("1Gi"))
+			resource.MustParse("1Gi"), nil)
 	})
 
 	It("should spread FinBackupConfigs over the top quarter of the nodes by free space", func(ctx SpecContext) {
@@ -936,7 +940,7 @@ var _ = Describe("FinBackupConfig node selection under Manager", Ordered, func()
 		freeSpaceRepo = fake.NewNodeFreeSpaceRepository(nil)
 		reconciler := NewFinBackupConfigReconciler(
 			mgr.GetClient(), scheme.Scheme, "", cephClusterID, "test:latest", "test-sa", selector, freeSpaceRepo,
-			resource.MustParse("1Gi"))
+			resource.MustParse("1Gi"), nil)
 		Expect(reconciler.SetupWithManager(mgr)).To(Succeed())
 
 		mgrCtx, cancel := context.WithCancel(context.Background())
@@ -1024,3 +1028,47 @@ var _ = Describe("FinBackupConfig node selection under Manager", Ordered, func()
 		}),
 	)
 })
+
+func Test_createOrUpdateCronJob_noJobPodLabels(t *testing.T) {
+	ctx := context.Background()
+	fbc := &finv1.FinBackupConfig{
+		ObjectMeta: metav1.ObjectMeta{Namespace: workNamespace, Name: "fbc-no-labels", UID: "fbc-no-labels-uid"},
+		Spec:       finv1.FinBackupConfigSpec{Schedule: "0 0 * * *"},
+	}
+	c := ctrlfake.NewClientBuilder().WithScheme(testScheme(t)).WithObjects(fbc).Build()
+	r := &FinBackupConfigReconciler{Client: c, Scheme: testScheme(t)}
+
+	require.NoError(t, r.createOrUpdateCronJob(ctx, fbc, workNamespace, "test-sa", "test:latest"))
+
+	var cronJob batchv1.CronJob
+	require.NoError(t, c.Get(ctx,
+		client.ObjectKey{Namespace: workNamespace, Name: "fbc-" + string(fbc.UID)}, &cronJob))
+	require.Empty(t, cronJob.Spec.JobTemplate.Spec.Template.Labels)
+}
+
+func Test_createOrUpdateCronJob_jobPodLabels(t *testing.T) {
+	ctx := context.Background()
+	podLabels := map[string]string{testPodLabelKey: testPodLabelValue}
+	fbc := &finv1.FinBackupConfig{
+		ObjectMeta: metav1.ObjectMeta{Namespace: workNamespace, Name: "fbc-labels", UID: "fbc-labels-uid"},
+		Spec:       finv1.FinBackupConfigSpec{Schedule: "0 0 * * *"},
+	}
+
+	c := ctrlfake.NewClientBuilder().WithScheme(testScheme(t)).WithObjects(fbc).Build()
+	r := &FinBackupConfigReconciler{Client: c, Scheme: testScheme(t), jobPodLabels: podLabels}
+	key := client.ObjectKey{Namespace: workNamespace, Name: "fbc-" + string(fbc.UID)}
+
+	require.NoError(t, r.createOrUpdateCronJob(ctx, fbc, workNamespace, "test-sa", "test:latest"))
+	var cronJob batchv1.CronJob
+	require.NoError(t, c.Get(ctx, key, &cronJob))
+	require.Equal(t, podLabels, cronJob.Spec.JobTemplate.Spec.Template.Labels)
+
+	// The labels set by others are kept, and the labels removed from the flag are not removed.
+	cronJob.Spec.JobTemplate.Spec.Template.Labels = map[string]string{"set-by-others": "x", "old": "y"}
+	require.NoError(t, c.Update(ctx, &cronJob))
+	require.NoError(t, r.createOrUpdateCronJob(ctx, fbc, workNamespace, "test-sa", "test:latest"))
+	require.NoError(t, c.Get(ctx, key, &cronJob))
+	require.Equal(t,
+		map[string]string{"set-by-others": "x", "old": "y", testPodLabelKey: testPodLabelValue},
+		cronJob.Spec.JobTemplate.Spec.Template.Labels)
+}

@@ -13,6 +13,7 @@ import (
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
 	"k8s.io/apimachinery/pkg/api/resource"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -75,6 +76,7 @@ func controllerMain(args []string) error {
 	var prometheusQuery string
 	var prometheusNodeLabel string
 	var prometheusCacheTTL time.Duration
+	var jobPodLabelsStr string
 	nodeFreeSpaceMargin := resource.QuantityValue{Quantity: resource.MustParse("10Gi")}
 
 	fs := flag.NewFlagSet("", flag.ExitOnError)
@@ -115,6 +117,9 @@ func controllerMain(args []string) error {
 		"How long the free space of nodes queried from Prometheus is reused.")
 	fs.Var(&nodeFreeSpaceMargin, "node-free-space-margin",
 		"The free space a node must have beyond the PVC size to be assigned a FinBackupConfig, such as 10Gi.")
+	fs.StringVar(&jobPodLabelsStr, "job-pod-labels", "",
+		"Labels added to the Pods of all the Jobs and CronJobs that this controller creates, "+
+			"specified as k1=v1,k2=v2. If this is empty, no labels are added.")
 	opts := zap.Options{
 		Development: true,
 	}
@@ -145,6 +150,10 @@ func controllerMain(args []string) error {
 	}
 	if nodeSelectorTerms == "" {
 		return fmt.Errorf("node-selector must be provided")
+	}
+	jobPodLabels, err := labels.ConvertSelectorToLabelsMap(jobPodLabelsStr)
+	if err != nil {
+		return fmt.Errorf("invalid job-pod-labels: %w", err)
 	}
 	nodeSelector, err := controller.ParseNodeSelectorTerms(nodeSelectorTerms)
 	if err != nil {
@@ -246,6 +255,7 @@ func controllerMain(args []string) error {
 		rawChecksumChunkSize,
 		diffChecksumChunkSize,
 		maxBackupJobs,
+		jobPodLabels,
 	)
 	if err = finBackupReconciler.SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("unable to create controller FinBackup: %w", err)
@@ -261,6 +271,7 @@ func controllerMain(args []string) error {
 		os.Getenv("POD_NAMESPACE"),
 		os.Getenv("POD_IMAGE"),
 		&rawImageChunkSize,
+		jobPodLabels,
 	)
 	if err = finRestoreReconciler.SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("unable to create controller FinRestore: %w", err)
@@ -276,6 +287,7 @@ func controllerMain(args []string) error {
 		nodeSelector,
 		nodeFreeSpaceRepo,
 		nodeFreeSpaceMargin.Quantity,
+		jobPodLabels,
 	)
 	if err := finBackupConfigReconciler.SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("unable to create controller FinBackupConfig: %w", err)
