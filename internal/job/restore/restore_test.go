@@ -105,6 +105,7 @@ func setup(t *testing.T, config *setupInput) *setupOutput {
 		backupInput.K8sClient = k8sClient
 		backupInput.RBDRepo = rbdRepo
 		backupInput.NodeLocalVolumeRepo = nlvRepo
+		backupInput.DiffPartStore = nlvRepo
 		backupInput.RawChecksumChunkSize = config.chunkSize
 
 		bk := backup.NewBackup(backupInput)

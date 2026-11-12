@@ -98,6 +98,7 @@ func setup(t *testing.T, input *setupInput) *setupOutput {
 	fullBackupInput.K8sClient = k8sClient
 	fullBackupInput.RBDRepo = rbdRepo
 	fullBackupInput.NodeLocalVolumeRepo = nlvRepo
+	fullBackupInput.DiffPartStore = nlvRepo
 
 	incrementalSnapshot, incrementalVolume, err := rbdRepo.CreateSnapshotWithRandomData(
 		utils.GetUniqueName("snap-"), 4096*2)
@@ -109,6 +110,7 @@ func setup(t *testing.T, input *setupInput) *setupOutput {
 	incrementalBackupInput.K8sClient = k8sClient
 	incrementalBackupInput.RBDRepo = rbdRepo
 	incrementalBackupInput.NodeLocalVolumeRepo = nlvRepo
+	incrementalBackupInput.DiffPartStore = nlvRepo
 
 	return &setupOutput{
 		fullBackupInput:        fullBackupInput,

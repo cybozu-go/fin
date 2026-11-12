@@ -1,6 +1,7 @@
 package input
 
 import (
+	"github.com/cybozu-go/fin/internal/diffexport"
 	"github.com/cybozu-go/fin/internal/model"
 	"k8s.io/client-go/kubernetes"
 )
@@ -10,6 +11,7 @@ type Backup struct {
 	K8sClient                 kubernetes.Interface
 	RBDRepo                   model.RBDRepository
 	NodeLocalVolumeRepo       model.NodeLocalVolumeRepository
+	DiffPartStore             diffexport.PartStore
 	ActionUID                 string
 	TargetRBDPoolName         string
 	TargetRBDImageName        string

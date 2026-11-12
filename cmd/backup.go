@@ -130,6 +130,7 @@ func backupJobMain() error {
 		K8sClient:                 clientSet,
 		RBDRepo:                   rbdRepo,
 		NodeLocalVolumeRepo:       nlvRepo,
+		DiffPartStore:             nlvRepo,
 		ActionUID:                 actionUID,
 		TargetRBDPoolName:         rbdPool,
 		TargetRBDImageName:        rbdImageName,

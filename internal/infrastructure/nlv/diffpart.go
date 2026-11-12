@@ -7,7 +7,24 @@ import (
 	"os"
 
 	"github.com/cybozu-go/fin/internal/pkg/csumio"
+	"github.com/cybozu-go/fin/internal/pkg/fileio"
 )
+
+// StorePart writes stream as a diff part with its checksum file and syncs the
+// part data. It always closes stream.
+func (r *NodeLocalVolumeRepository) StorePart(snapshotID, partIndex int, stream io.ReadCloser, checksumChunkSize uint64) error {
+	partPath := r.GetDiffPartPath(snapshotID, partIndex)
+	checksumPath := r.GetDiffChecksumPath(snapshotID, partIndex)
+	if err := WriteDiffPartAndCloseStream(stream, partPath, checksumPath, checksumChunkSize); err != nil {
+		return fmt.Errorf("failed to write diff part: %w", err)
+	}
+
+	if err := fileio.SyncData(partPath); err != nil {
+		return fmt.Errorf("failed to sync %q: %w", partPath, err)
+	}
+
+	return nil
+}
 
 func WriteDiffPartAndCloseStream(stream io.ReadCloser, outputPath, checksumPath string, chunkSize uint64) (err error) {
 	defer func() {
