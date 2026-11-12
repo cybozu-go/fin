@@ -91,6 +91,7 @@ func NewFinBackupConfigReconciler(
 //+kubebuilder:rbac:groups=fin.cybozu.io,resources=finbackupconfigs/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=fin.cybozu.io,resources=finbackupconfigs/finalizers,verbs=update
 //+kubebuilder:rbac:groups=batch,resources=cronjobs,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=fin.cybozu.io,resources=finbackups,verbs=get;list;watch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -101,7 +102,7 @@ func NewFinBackupConfigReconciler(
 //
 // For more details, check Reconcile and its Result here:
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.16.3/pkg/reconcile
-func (r *FinBackupConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+func (r *FinBackupConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (result ctrl.Result, reterr error) {
 	logger := log.FromContext(ctx)
 
 	var fbc finv1.FinBackupConfig
@@ -139,6 +140,13 @@ func (r *FinBackupConfigReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 			return ctrl.Result{}, fmt.Errorf("failed to add finalizer to FinBackupConfig: %w", err)
 		}
 	}
+
+	// Existing FinBackups still progress, so aggregate even when scheduling fails.
+	defer func() {
+		if err := r.updateStatus(ctx, &fbc); err != nil {
+			result, reterr = ctrl.Result{}, errors.Join(reterr, err)
+		}
+	}()
 
 	// The metric is set even when no node can be selected yet, reporting an empty node.
 	err = r.maintainStatusNode(ctx, &fbc, &pvc)
