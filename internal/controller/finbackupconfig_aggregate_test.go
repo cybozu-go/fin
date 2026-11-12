@@ -11,6 +11,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	fakeclient "sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
@@ -157,4 +158,16 @@ func Test_updateStatus(t *testing.T) {
 	require.NoError(t, c.Get(t.Context(), client.ObjectKeyFromObject(fbc), &current))
 	require.NoError(t, r.updateStatus(t.Context(), &current))
 	require.Equal(t, 1, statusUpdates, "the status should not be written when the aggregate does not change")
+}
+
+func Test_enqueueFinBackupConfigOfFinBackup(t *testing.T) {
+	fbc := newAggregateTestFinBackupConfig()
+	fb := newAggregateTestFinBackup(fbc, "fb", time.Now())
+	require.Equal(t,
+		[]ctrl.Request{{NamespacedName: types.NamespacedName{Namespace: "ns", Name: testFBCName}}},
+		enqueueFinBackupConfigOfFinBackup(t.Context(), fb))
+
+	fb.Annotations = nil
+	require.Empty(t, enqueueFinBackupConfigOfFinBackup(t.Context(), fb),
+		"a FinBackup not built from a config should not be mapped")
 }

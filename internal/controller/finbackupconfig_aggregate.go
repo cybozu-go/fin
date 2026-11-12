@@ -12,6 +12,8 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
+	"k8s.io/apimachinery/pkg/types"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -117,4 +119,16 @@ func finBackupSummary(fb *finv1.FinBackup) *finv1.FinBackupSummary {
 		summary.SnapshotTime = fb.Status.CreatedAt.DeepCopy()
 	}
 	return summary
+}
+
+// enqueueFinBackupConfigOfFinBackup returns a request for the FinBackupConfig named by
+// the annotation of fb, or nil when fb does not have it. FinBackups have no owner
+// reference and their label holds only the UID, so the name comes from the annotation.
+// The namespace is that of fb, where its FinBackupConfig creates it.
+func enqueueFinBackupConfigOfFinBackup(_ context.Context, fb client.Object) []ctrl.Request {
+	name := fb.GetAnnotations()[finbackupbuilder.AnnotationFinBackupConfigName]
+	if name == "" {
+		return nil
+	}
+	return []ctrl.Request{{NamespacedName: types.NamespacedName{Namespace: fb.GetNamespace(), Name: name}}}
 }

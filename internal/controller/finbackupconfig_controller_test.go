@@ -92,6 +92,8 @@ var _ = Describe("FinBackupConfig Controller under Manager", Ordered, func() {
 
 		mgr, err := ctrl.NewManager(cfg, ctrl.Options{Scheme: scheme.Scheme})
 		Expect(err).ToNot(HaveOccurred())
+		// Reads go through the cache as in production.
+		reconciler.Client = mgr.GetClient()
 		err = reconciler.SetupWithManager(mgr)
 		Expect(err).ToNot(HaveOccurred())
 
@@ -102,6 +104,11 @@ var _ = Describe("FinBackupConfig Controller under Manager", Ordered, func() {
 			err := mgr.Start(ctx)
 			Expect(err).ToNot(HaveOccurred(), "failed to run controller")
 		}()
+		// Without the FinBackup watch, the first reconcile would start this informer and
+		// wait long enough to list a FinBackup created after the reconcile began, which
+		// would hide the missing watch.
+		_, err = mgr.GetCache().GetInformer(ctx, &finv1.FinBackup{})
+		Expect(err).NotTo(HaveOccurred())
 	})
 
 	AfterAll(func(ctx SpecContext) {
@@ -140,6 +147,46 @@ var _ = Describe("FinBackupConfig Controller under Manager", Ordered, func() {
 			err := k8sClient.Get(ctx, client.ObjectKeyFromObject(fbc), &finv1.FinBackupConfig{})
 			g.Expect(k8serrors.IsNotFound(err)).To(BeTrue())
 		}, "5s", "1s").Should(Succeed())
+	})
+
+	It("should update status.latestBackup on a FinBackup event", func(ctx SpecContext) {
+		// Arrange
+		fbc := &finv1.FinBackupConfig{
+			ObjectMeta: metav1.ObjectMeta{Name: "test-fbc-aggregate", Namespace: fbcNS.Name},
+			Spec: finv1.FinBackupConfigSpec{
+				PVCNamespace: pvc.Namespace,
+				PVC:          pvc.Name,
+				Schedule:     testCronSchedule,
+			},
+		}
+		Expect(k8sClient.Create(ctx, fbc)).To(Succeed())
+		// A reconcile still running, or triggered by the writes of an earlier one, would
+		// aggregate a FinBackup created meanwhile even without the FinBackup watch. The
+		// CronJob keeps the check from passing before the first reconcile writes anything.
+		var lastResourceVersion string
+		Eventually(func(g Gomega) {
+			var updated finv1.FinBackupConfig
+			g.Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(fbc), &updated)).To(Succeed())
+			resourceVersion := updated.ResourceVersion
+			defer func() { lastResourceVersion = resourceVersion }()
+			g.Expect(k8sClient.Get(ctx, types.NamespacedName{Namespace: fbc.Namespace, Name: "fbc-" + string(updated.UID)},
+				&batchv1.CronJob{})).To(Succeed())
+			g.Expect(resourceVersion).To(Equal(lastResourceVersion))
+		}, "5s", "500ms").Should(Succeed())
+
+		// Act
+		fb := createFinBackupOf(ctx, fbc, "fb")
+
+		// Assert
+		// Far shorter than the unassigned-node retry interval, so the periodic retry cannot
+		// be what triggers it.
+		Eventually(func(g Gomega) {
+			var updated finv1.FinBackupConfig
+			g.Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(fbc), &updated)).To(Succeed())
+			g.Expect(updated.Status.LatestBackup).To(Equal(&finv1.FinBackupSummary{
+				Ref: finv1.FinBackupReference{Name: fb.Name, UID: fb.UID},
+			}))
+		}, "5s", "100ms").Should(Succeed())
 	})
 })
 
