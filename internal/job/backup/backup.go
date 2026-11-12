@@ -8,6 +8,7 @@ import (
 	"math"
 	"slices"
 
+	"github.com/cybozu-go/fin/internal/diffexport"
 	"github.com/cybozu-go/fin/internal/job"
 	"github.com/cybozu-go/fin/internal/job/input"
 	"github.com/cybozu-go/fin/internal/model"
@@ -254,31 +255,23 @@ func (b *Backup) loopExportDiff(
 	targetSnapshot *model.RBDSnapshot,
 	sourceSnapshotName *string,
 ) error {
-	partCount := int(math.Ceil(float64(targetSnapshot.Size) / float64(b.maxPartSize)))
-	for i := privateData.NextStorePart; i < partCount; i++ {
-		stream, err := b.rbdRepo.ExportDiff(&model.ExportDiffInput{
-			PoolName:       b.targetRBDPool,
-			ReadOffset:     b.maxPartSize * uint64(i),
-			ReadLength:     b.maxPartSize,
-			FromSnap:       sourceSnapshotName,
-			MidSnapPrefix:  targetSnapshot.Name,
-			ImageName:      b.targetRBDImageName,
-			TargetSnapName: targetSnapshot.Name,
-		})
-		if err != nil {
-			return fmt.Errorf("failed to export diff: %w", err)
-		}
-
-		if err := b.nodeLocalVolumeRepo.StorePart(b.targetSnapshotID, i, stream, b.diffChecksumChunkSize); err != nil {
-			return err
-		}
-
-		privateData.NextStorePart = i + 1
+	target := &diffexport.Target{
+		PoolName:           b.targetRBDPool,
+		ImageName:          b.targetRBDImageName,
+		SnapshotID:         b.targetSnapshotID,
+		SnapshotName:       targetSnapshot.Name,
+		SnapshotSize:       targetSnapshot.Size,
+		SourceSnapshotName: sourceSnapshotName,
+		MaxPartSize:        b.maxPartSize,
+		ChecksumChunkSize:  b.diffChecksumChunkSize,
+	}
+	return diffexport.Store(b.rbdRepo, b.nodeLocalVolumeRepo, target, privateData.NextStorePart, func(next int) error {
+		privateData.NextStorePart = next
 		if err := setBackupPrivateData(b.repo, b.actionUID, privateData); err != nil {
 			return fmt.Errorf("failed to set nextStorePart to %d: %w", privateData.NextStorePart, err)
 		}
-	}
-	return nil
+		return nil
+	})
 }
 
 func (b *Backup) validateChecksumChunkSizeConsistency() error {
