@@ -68,6 +68,25 @@ spec:
           status:
             description: FinBackupConfigStatus defines the observed state of FinBackupConfig
             properties:
+              latestBackupRef:
+                description: |-
+                  LatestBackupRef refers to the FinBackup with the latest creationTimestamp.
+                  Ties within the same second are broken by the name, not the creation order.
+                properties:
+                  name:
+                    type: string
+                  uid:
+                    description: UID tells a FinBackup recreated with the same name
+                      apart.
+                    type: string
+                required:
+                - name
+                - uid
+                type: object
+              latestBackupSnapshotTime:
+                description: LatestBackupSnapshotTime is the snapshot time of latestBackupRef.
+                format: date-time
+                type: string
               node:
                 description: |-
                   Node is the node the FinBackups of this config are taken on. It is
