@@ -3045,3 +3045,87 @@ func Test_Reconcile_goneNodeOwnership(t *testing.T) {
 		})
 	}
 }
+
+func Test_createOrUpdateJobs_jobPodLabels(t *testing.T) {
+	podLabels := map[string]string{testPodLabelKey: testPodLabelValue}
+	maxPartSize := resource.MustParse("1Gi")
+	pvc := &corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{Namespace: userNamespace, Name: "pvc-labels", UID: "pvc-labels-uid"},
+	}
+
+	tests := []struct {
+		name    string
+		jobName func(backup *finv1.FinBackup) string
+		create  func(ctx context.Context, r *FinBackupReconciler, backup *finv1.FinBackup) error
+	}{
+		{
+			name:    "backup Job",
+			jobName: backupJobName,
+			create: func(ctx context.Context, r *FinBackupReconciler, backup *finv1.FinBackup) error {
+				return r.createOrUpdateBackupJob(ctx, backup, "", string(pvc.GetUID()), &maxPartSize)
+			},
+		},
+		{
+			name:    "verification Job",
+			jobName: verificationJobName,
+			create: func(ctx context.Context, r *FinBackupReconciler, backup *finv1.FinBackup) error {
+				return r.createOrUpdateVerificationJob(ctx, backup, pvc)
+			},
+		},
+		{
+			name:    "deletion Job",
+			jobName: deletionJobName,
+			create: func(ctx context.Context, r *FinBackupReconciler, backup *finv1.FinBackup) error {
+				return r.createOrUpdateDeletionJob(ctx, backup)
+			},
+		},
+		{
+			name:    "cleanup Job",
+			jobName: cleanupJobName,
+			create: func(ctx context.Context, r *FinBackupReconciler, backup *finv1.FinBackup) error {
+				return r.createOrUpdateCleanupJob(ctx, backup)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name+" gets the labels if they are specified", func(t *testing.T) {
+			ctx := context.Background()
+			backup, c := newBackupForJobPodLabels(t)
+			r := &FinBackupReconciler{
+				Client: c, Scheme: testScheme(t), cephClusterNamespace: cephNamespace, jobPodLabels: podLabels,
+			}
+
+			require.NoError(t, tt.create(ctx, r, backup))
+
+			var job batchv1.Job
+			require.NoError(t, c.Get(ctx,
+				types.NamespacedName{Namespace: cephNamespace, Name: tt.jobName(backup)}, &job))
+			require.Equal(t, podLabels, job.Spec.Template.Labels)
+		})
+
+		t.Run(tt.name+" gets no labels if they are not specified", func(t *testing.T) {
+			ctx := context.Background()
+			backup, c := newBackupForJobPodLabels(t)
+			r := &FinBackupReconciler{Client: c, Scheme: testScheme(t), cephClusterNamespace: cephNamespace}
+
+			require.NoError(t, tt.create(ctx, r, backup))
+
+			var job batchv1.Job
+			require.NoError(t, c.Get(ctx,
+				types.NamespacedName{Namespace: cephNamespace, Name: tt.jobName(backup)}, &job))
+			require.NotContains(t, job.Spec.Template.Labels, testPodLabelKey)
+		})
+	}
+}
+
+// newBackupForJobPodLabels returns a FinBackup that has the fields the Job builders dereference
+// and a fake client that has it.
+func newBackupForJobPodLabels(t *testing.T) (*finv1.FinBackup, client.Client) {
+	t.Helper()
+
+	backup := NewFinBackup(workNamespace, "fb-labels", "pvc-labels", userNamespace, node0Name)
+	backup.UID = "fb-labels-uid"
+	backup.Status.SnapID = ptr.To(1)
+	return backup, ctrlfake.NewClientBuilder().WithScheme(testScheme(t)).WithObjects(backup).Build()
+}

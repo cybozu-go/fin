@@ -93,6 +93,8 @@ type FinBackupReconciler struct {
 	rawChecksumChunkSize    uint64
 	diffChecksumChunkSize   uint64
 	maxBackupJobs           uint64
+	// jobPodLabels are the labels added to the Pods of the Jobs created by this reconciler.
+	jobPodLabels map[string]string
 }
 
 func NewFinBackupReconciler(
@@ -107,6 +109,7 @@ func NewFinBackupReconciler(
 	rawChecksumChunkSize,
 	diffChecksumChunkSize uint64,
 	maxBackupJobs uint64,
+	jobPodLabels map[string]string,
 ) *FinBackupReconciler {
 	return &FinBackupReconciler{
 		Client:                  client,
@@ -120,6 +123,7 @@ func NewFinBackupReconciler(
 		rawChecksumChunkSize:    rawChecksumChunkSize,
 		diffChecksumChunkSize:   diffChecksumChunkSize,
 		maxBackupJobs:           maxBackupJobs,
+		jobPodLabels:            jobPodLabels,
 	}
 }
 
@@ -1166,6 +1170,7 @@ func (r *FinBackupReconciler) createOrUpdateBackupJob(
 		if !job.CreationTimestamp.IsZero() {
 			return nil
 		}
+		setJobPodLabels(&job, r.jobPodLabels)
 
 		job.Spec.BackoffLimit = ptr.To(int32(maxJobBackoffLimit))
 
@@ -1401,6 +1406,7 @@ func (r *FinBackupReconciler) createOrUpdateDeletionJob(ctx context.Context, bac
 		if !job.CreationTimestamp.IsZero() {
 			return nil
 		}
+		setJobPodLabels(&job, r.jobPodLabels)
 
 		job.Spec.BackoffLimit = ptr.To(int32(maxJobBackoffLimit))
 
@@ -1524,6 +1530,7 @@ func (r *FinBackupReconciler) createOrUpdateCleanupJob(ctx context.Context, back
 		if !job.CreationTimestamp.IsZero() {
 			return nil
 		}
+		setJobPodLabels(&job, r.jobPodLabels)
 
 		job.Spec.BackoffLimit = ptr.To(int32(maxJobBackoffLimit))
 
@@ -1743,6 +1750,7 @@ func (r *FinBackupReconciler) createOrUpdateVerificationJob(
 		if !job.CreationTimestamp.IsZero() {
 			return nil
 		}
+		setJobPodLabels(&job, r.jobPodLabels)
 
 		job.Spec.BackoffLimit = ptr.To(int32(maxJobBackoffLimit))
 

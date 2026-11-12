@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"crypto/tls"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -44,6 +45,19 @@ func init() {
 	//+kubebuilder:scaffold:scheme
 }
 
+// parseStringMap parses a JSON object whose values are strings, such as labels,
+// specified by the flag flagName. It returns nil if value is empty.
+func parseStringMap(flagName, value string) (map[string]string, error) {
+	if value == "" {
+		return nil, nil
+	}
+	m := map[string]string{}
+	if err := json.Unmarshal([]byte(value), &m); err != nil {
+		return nil, fmt.Errorf("failed to parse %s: %w", flagName, err)
+	}
+	return m, nil
+}
+
 func validatePrometheusFlags(url, query, nodeLabel string) error {
 	if url == "" {
 		return fmt.Errorf("prometheus-url must be provided")
@@ -75,6 +89,7 @@ func controllerMain(args []string) error {
 	var prometheusQuery string
 	var prometheusNodeLabel string
 	var prometheusCacheTTL time.Duration
+	var jobPodLabelsJSON string
 	nodeFreeSpaceMargin := resource.QuantityValue{Quantity: resource.MustParse("10Gi")}
 
 	fs := flag.NewFlagSet("", flag.ExitOnError)
@@ -115,6 +130,9 @@ func controllerMain(args []string) error {
 		"How long the free space of nodes queried from Prometheus is reused.")
 	fs.Var(&nodeFreeSpaceMargin, "node-free-space-margin",
 		"The free space a node must have beyond the PVC size to be assigned a FinBackupConfig, such as 10Gi.")
+	fs.StringVar(&jobPodLabelsJSON, "job-pod-labels", "",
+		"Labels added to the Pods of all the Jobs and CronJobs that this controller creates, "+
+			"specified as a JSON object. If this is empty, no labels are added.")
 	opts := zap.Options{
 		Development: true,
 	}
@@ -145,6 +163,10 @@ func controllerMain(args []string) error {
 	}
 	if nodeSelectorTerms == "" {
 		return fmt.Errorf("node-selector must be provided")
+	}
+	jobPodLabels, err := parseStringMap("job-pod-labels", jobPodLabelsJSON)
+	if err != nil {
+		return err
 	}
 	nodeSelector, err := controller.ParseNodeSelectorTerms(nodeSelectorTerms)
 	if err != nil {
@@ -246,6 +268,7 @@ func controllerMain(args []string) error {
 		rawChecksumChunkSize,
 		diffChecksumChunkSize,
 		maxBackupJobs,
+		jobPodLabels,
 	)
 	if err = finBackupReconciler.SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("unable to create controller FinBackup: %w", err)
@@ -261,6 +284,7 @@ func controllerMain(args []string) error {
 		os.Getenv("POD_NAMESPACE"),
 		os.Getenv("POD_IMAGE"),
 		&rawImageChunkSize,
+		jobPodLabels,
 	)
 	if err = finRestoreReconciler.SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("unable to create controller FinRestore: %w", err)
@@ -276,6 +300,7 @@ func controllerMain(args []string) error {
 		nodeSelector,
 		nodeFreeSpaceRepo,
 		nodeFreeSpaceMargin.Quantity,
+		jobPodLabels,
 	)
 	if err := finBackupConfigReconciler.SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("unable to create controller FinBackupConfig: %w", err)

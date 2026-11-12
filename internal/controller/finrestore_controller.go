@@ -51,6 +51,8 @@ type FinRestoreReconciler struct {
 	cephClusterNamespace string
 	podImage             string
 	rawImageChunkSize    *resource.Quantity
+	// jobPodLabels are the labels added to the Pods of the Jobs created by this reconciler.
+	jobPodLabels map[string]string
 }
 
 func NewFinRestoreReconciler(
@@ -59,6 +61,7 @@ func NewFinRestoreReconciler(
 	namespace string,
 	podImage string,
 	rawImageChunkSize *resource.Quantity,
+	jobPodLabels map[string]string,
 ) *FinRestoreReconciler {
 	return &FinRestoreReconciler{
 		Client:               client,
@@ -66,6 +69,7 @@ func NewFinRestoreReconciler(
 		cephClusterNamespace: namespace,
 		podImage:             podImage,
 		rawImageChunkSize:    rawImageChunkSize,
+		jobPodLabels:         jobPodLabels,
 	}
 }
 
@@ -350,6 +354,7 @@ func (r *FinRestoreReconciler) createOrUpdateRestoreJob(
 		if !job.CreationTimestamp.IsZero() {
 			return nil
 		}
+		setJobPodLabels(&job, r.jobPodLabels)
 
 		job.Spec.BackoffLimit = ptr.To(int32(maxJobBackoffLimit))
 

@@ -406,3 +406,29 @@ func CreateFinBackupStoredAndVerified(
 	Expect(c.Status().Update(ctx, finbackup)).Should(Succeed())
 	return finbackup
 }
+
+const (
+	// The label used to test the labels of the Pods of the Jobs.
+	testPodLabelKey   = "example.com/test-label"
+	testPodLabelValue = "test-value"
+)
+
+func Test_setJobPodLabels(t *testing.T) {
+	podLabels := map[string]string{testPodLabelKey: testPodLabelValue}
+
+	t.Run("sets the labels", func(t *testing.T) {
+		var job batchv1.Job
+		setJobPodLabels(&job, podLabels)
+		require.Equal(t, podLabels, job.Spec.Template.Labels)
+
+		// The Job must not share the map with the reconciler.
+		job.Spec.Template.Labels["other"] = "x"
+		require.NotContains(t, podLabels, "other")
+	})
+
+	t.Run("does nothing if no labels are given", func(t *testing.T) {
+		var job batchv1.Job
+		setJobPodLabels(&job, nil)
+		require.Nil(t, job.Spec.Template.Labels)
+	})
+}
