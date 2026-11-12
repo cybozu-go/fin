@@ -44,6 +44,19 @@ func init() {
 	//+kubebuilder:scaffold:scheme
 }
 
+func validatePrometheusFlags(url, query, nodeLabel string) error {
+	if url == "" {
+		return fmt.Errorf("prometheus-url must be provided")
+	}
+	if query == "" {
+		return fmt.Errorf("prometheus-query must be provided")
+	}
+	if nodeLabel == "" {
+		return fmt.Errorf("prometheus-node-label must be provided")
+	}
+	return nil
+}
+
 func controllerMain(args []string) error {
 	var metricsAddr string
 	var enableLeaderElection bool
@@ -140,14 +153,8 @@ func controllerMain(args []string) error {
 	if nodeFreeSpaceMargin.Sign() < 0 {
 		return fmt.Errorf("node-free-space-margin must not be negative")
 	}
-	if prometheusURL == "" {
-		return fmt.Errorf("prometheus-url must be provided")
-	}
-	if prometheusQuery == "" {
-		return fmt.Errorf("prometheus-query must be provided")
-	}
-	if prometheusNodeLabel == "" {
-		return fmt.Errorf("prometheus-node-label must be provided")
+	if err := validatePrometheusFlags(prometheusURL, prometheusQuery, prometheusNodeLabel); err != nil {
+		return err
 	}
 	nodeFreeSpaceRepo, err := prometheus.NewNodeFreeSpaceRepository(
 		ctrl.LoggerInto(ctx, setupLog), prometheusURL, prometheusQuery, prometheusNodeLabel, prometheusCacheTTL)
