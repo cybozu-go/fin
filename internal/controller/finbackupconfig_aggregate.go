@@ -10,6 +10,8 @@ import (
 	"github.com/cybozu-go/fin/internal/finbackupbuilder"
 
 	"k8s.io/apimachinery/pkg/api/equality"
+	"k8s.io/apimachinery/pkg/types"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -49,11 +51,15 @@ func calculateFinBackupConfigStatus(fbc *finv1.FinBackupConfig, fbs []finv1.FinB
 
 // relatedFinBackups returns the FinBackups in fbs that were created for fbc and are not
 // being deleted.
+// The annotations are checked as well as the label, since FinBackup events are mapped
+// by the annotations.
 func relatedFinBackups(fbc *finv1.FinBackupConfig, fbs []finv1.FinBackup) []*finv1.FinBackup {
 	var related []*finv1.FinBackup
 	for i := range fbs {
 		fb := &fbs[i]
 		if fb.Labels[finbackupbuilder.LabelFinBackupConfigUID] != string(fbc.UID) ||
+			fb.Annotations[finbackupbuilder.AnnotationFinBackupConfigName] != fbc.Name ||
+			fb.Annotations[finbackupbuilder.AnnotationFinBackupConfigNamespace] != fbc.Namespace ||
 			!fb.DeletionTimestamp.IsZero() {
 			continue
 		}
@@ -90,4 +96,16 @@ func finBackupSummary(fb *finv1.FinBackup) *finv1.FinBackupSummary {
 		summary.SnapshotTime = fb.Status.CreatedAt.DeepCopy()
 	}
 	return summary
+}
+
+// enqueueFinBackupConfigOfFinBackup returns a request for the FinBackupConfig named by
+// the annotations of fb, or nil when fb does not have them. Only the annotations are
+// read, so that a FinBackup event costs no API request.
+func enqueueFinBackupConfigOfFinBackup(_ context.Context, fb client.Object) []ctrl.Request {
+	name := fb.GetAnnotations()[finbackupbuilder.AnnotationFinBackupConfigName]
+	namespace := fb.GetAnnotations()[finbackupbuilder.AnnotationFinBackupConfigNamespace]
+	if name == "" || namespace == "" {
+		return nil
+	}
+	return []ctrl.Request{{NamespacedName: types.NamespacedName{Namespace: namespace, Name: name}}}
 }
