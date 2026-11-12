@@ -13,7 +13,7 @@ import (
 func (r *NodeLocalVolumeRepository) StorePart(snapshotID, partIndex int, stream io.ReadCloser, checksumChunkSize uint64) error {
 	partPath := r.GetDiffPartPath(snapshotID, partIndex)
 	checksumPath := r.GetDiffChecksumPath(snapshotID, partIndex)
-	if err := WriteDiffPartAndCloseStream(stream, partPath, checksumPath, checksumChunkSize); err != nil {
+	if err := writeDiffPartAndCloseStream(stream, partPath, checksumPath, checksumChunkSize); err != nil {
 		return fmt.Errorf("failed to write diff part: %w", err)
 	}
 
@@ -24,7 +24,7 @@ func (r *NodeLocalVolumeRepository) StorePart(snapshotID, partIndex int, stream 
 	return nil
 }
 
-func WriteDiffPartAndCloseStream(stream io.ReadCloser, outputPath, checksumPath string, chunkSize uint64) (err error) {
+func writeDiffPartAndCloseStream(stream io.ReadCloser, outputPath, checksumPath string, chunkSize uint64) (err error) {
 	defer func() {
 		if cerr := stream.Close(); cerr != nil && err == nil {
 			err = fmt.Errorf("failed to close diff stream: %w", cerr)

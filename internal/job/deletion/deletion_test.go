@@ -8,7 +8,6 @@ import (
 
 	"github.com/cybozu-go/fin/internal/infrastructure/ceph"
 	"github.com/cybozu-go/fin/internal/infrastructure/fake"
-	"github.com/cybozu-go/fin/internal/infrastructure/nlv"
 	"github.com/cybozu-go/fin/internal/job"
 	"github.com/cybozu-go/fin/internal/job/backup"
 	"github.com/cybozu-go/fin/internal/job/input"
@@ -223,12 +222,7 @@ func TestDelete_RawAndDiffCase_Success(t *testing.T) {
 			TargetSnapName: targetSnap.Name,
 		})
 		require.NoError(t, err)
-		err = nlv.WriteDiffPartAndCloseStream(
-			stream,
-			nlvRepo.GetDiffPartPath(targetSnapshotID, i),
-			nlvRepo.GetDiffChecksumPath(targetSnapshotID, i),
-			testutil.DiffChecksumChunkSize,
-		)
+		err = nlvRepo.StorePart(targetSnapshotID, i, stream, testutil.DiffChecksumChunkSize)
 		require.NoError(t, err)
 	}
 	deletionJob := NewDeletion(&input.Deletion{
@@ -723,12 +717,7 @@ func TestDelete_RawAndDiffCase_Error_ChecksumMismatch(t *testing.T) {
 		TargetSnapName: targetSnap.Name,
 	})
 	require.NoError(t, err)
-	err = nlv.WriteDiffPartAndCloseStream(
-		stream,
-		nlvRepo.GetDiffPartPath(targetSnapshotID, 0),
-		nlvRepo.GetDiffChecksumPath(targetSnapshotID, 0),
-		testutil.DiffChecksumChunkSize,
-	)
+	err = nlvRepo.StorePart(targetSnapshotID, 0, stream, testutil.DiffChecksumChunkSize)
 	require.NoError(t, err)
 
 	// Corrupt the diff file

@@ -297,16 +297,32 @@ func testRBDRepository2_exportDiff(t *testing.T, rbdRepo *RBDRepository2, volume
 		},
 	}
 
-	outputFiles := []string{
-		filepath.Join(workDir, "snap1-all.bin"),
-		filepath.Join(workDir, "snap2-offset-0.bin"),
-		filepath.Join(workDir, "snap2-offset-3072.bin"),
-		filepath.Join(workDir, "snap3-from2-offset-0.bin"),
-		filepath.Join(workDir, "snap3-from2-offset-3072.bin"),
-		filepath.Join(workDir, "snap3-from2-offset-6144.bin"),
-		filepath.Join(workDir, "snap3-from1-all.bin"),
+	const (
+		diffSnap1All             = "snap1-all.bin"
+		diffSnap2Offset0         = "snap2-offset-0.bin"
+		diffSnap2Offset3072      = "snap2-offset-3072.bin"
+		diffSnap3From2Offset0    = "snap3-from2-offset-0.bin"
+		diffSnap3From2Offset3072 = "snap3-from2-offset-3072.bin"
+		diffSnap3From2Offset6144 = "snap3-from2-offset-6144.bin"
+		diffSnap3From1All        = "snap3-from1-all.bin"
+	)
+	diffNames := []string{
+		diffSnap1All,
+		diffSnap2Offset0,
+		diffSnap2Offset3072,
+		diffSnap3From2Offset0,
+		diffSnap3From2Offset3072,
+		diffSnap3From2Offset6144,
+		diffSnap3From1All,
 	}
 
+	nlvRepo, err := nlv.NewNodeLocalVolumeRepository(filepath.Join(workDir, "nlv"))
+	require.NoError(t, err)
+	defer func() { _ = nlvRepo.Close() }()
+	const diffSnapshotID = 0
+	require.NoError(t, nlvRepo.MakeDiffDir(diffSnapshotID))
+
+	diffPaths := make(map[string]string, len(diffNames))
 	for i, e := range exportDiffs {
 		e.PoolName = poolName
 		e.ImageName = imageName
@@ -314,13 +330,9 @@ func testRBDRepository2_exportDiff(t *testing.T, rbdRepo *RBDRepository2, volume
 		stream, err := rbdRepo.ExportDiff(e)
 		require.NoError(t, err, "failed to export diff for snapshot %s", e.TargetSnapName)
 
-		err = nlv.WriteDiffPartAndCloseStream(
-			stream,
-			outputFiles[i],
-			nlv.ChecksumFilePath(outputFiles[i]),
-			diffChecksumChunkSize,
-		)
-		require.NoError(t, err, "failed to write diff part for snapshot %s", e.TargetSnapName)
+		err = nlvRepo.StorePart(diffSnapshotID, i, stream, diffChecksumChunkSize)
+		require.NoError(t, err, "failed to store diff part for snapshot %s", e.TargetSnapName)
+		diffPaths[diffNames[i]] = nlvRepo.GetDiffPartPath(diffSnapshotID, i)
 	}
 
 	type diffInfo struct {
@@ -337,7 +349,7 @@ func testRBDRepository2_exportDiff(t *testing.T, rbdRepo *RBDRepository2, volume
 			name: "full backup by one diff file",
 			diffsToApply: []diffInfo{
 				{
-					file:         "snap1-all.bin",
+					file:         diffSnap1All,
 					fromSnapName: "",
 					toSnapName:   volumes[0].snapName,
 				},
@@ -348,12 +360,12 @@ func testRBDRepository2_exportDiff(t *testing.T, rbdRepo *RBDRepository2, volume
 			name: "full backup by multiple diff files",
 			diffsToApply: []diffInfo{
 				{
-					file:         "snap2-offset-0.bin",
+					file:         diffSnap2Offset0,
 					fromSnapName: "",
 					toSnapName:   fmt.Sprintf("%s-offset-%d", midSnapName, 3*1024),
 				},
 				{
-					file:         "snap2-offset-3072.bin",
+					file:         diffSnap2Offset3072,
 					fromSnapName: fmt.Sprintf("%s-offset-%d", midSnapName, 3*1024),
 					toSnapName:   volumes[1].snapName,
 				},
@@ -364,27 +376,27 @@ func testRBDRepository2_exportDiff(t *testing.T, rbdRepo *RBDRepository2, volume
 			name: "incremental backup with expanded volume",
 			diffsToApply: []diffInfo{
 				{
-					file:         "snap2-offset-0.bin",
+					file:         diffSnap2Offset0,
 					fromSnapName: "",
 					toSnapName:   fmt.Sprintf("%s-offset-%d", midSnapName, 3*1024),
 				},
 				{
-					file:         "snap2-offset-3072.bin",
+					file:         diffSnap2Offset3072,
 					fromSnapName: fmt.Sprintf("%s-offset-%d", midSnapName, 3*1024),
 					toSnapName:   volumes[1].snapName,
 				},
 				{
-					file:         "snap3-from2-offset-0.bin",
+					file:         diffSnap3From2Offset0,
 					fromSnapName: volumes[1].snapName,
 					toSnapName:   fmt.Sprintf("%s-offset-%d", midSnapName, 3*1024),
 				},
 				{
-					file:         "snap3-from2-offset-3072.bin",
+					file:         diffSnap3From2Offset3072,
 					fromSnapName: fmt.Sprintf("%s-offset-%d", midSnapName, 3*1024),
 					toSnapName:   fmt.Sprintf("%s-offset-%d", midSnapName, 6*1024),
 				},
 				{
-					file:         "snap3-from2-offset-6144.bin",
+					file:         diffSnap3From2Offset6144,
 					fromSnapName: fmt.Sprintf("%s-offset-%d", midSnapName, 6*1024),
 					toSnapName:   volumes[2].snapName,
 				},
@@ -395,12 +407,12 @@ func testRBDRepository2_exportDiff(t *testing.T, rbdRepo *RBDRepository2, volume
 			name: "incremental backup skipping some history",
 			diffsToApply: []diffInfo{
 				{
-					file:         "snap1-all.bin",
+					file:         diffSnap1All,
 					fromSnapName: "",
 					toSnapName:   volumes[0].snapName,
 				},
 				{
-					file:         "snap3-from1-all.bin",
+					file:         diffSnap3From1All,
 					fromSnapName: volumes[0].snapName,
 					toSnapName:   volumes[2].snapName,
 				},
@@ -419,7 +431,7 @@ func testRBDRepository2_exportDiff(t *testing.T, rbdRepo *RBDRepository2, volume
 
 			// apply diffs to a new block device
 			for _, diff := range tc.diffsToApply {
-				diffFilePath := filepath.Join(workDir, diff.file)
+				diffFilePath := diffPaths[diff.file]
 				err := rbdRepo.ApplyDiffToRawImage(
 					rawImagePath,
 					diffFilePath,
