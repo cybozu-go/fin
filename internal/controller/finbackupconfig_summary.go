@@ -10,6 +10,7 @@ import (
 	"github.com/cybozu-go/fin/internal/finbackupbuilder"
 
 	"k8s.io/apimachinery/pkg/api/equality"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -25,10 +26,13 @@ func (r *FinBackupConfigReconciler) updateBackupSummary(ctx context.Context, fbc
 
 	related := relatedFinBackups(fbc, fbs.Items)
 	newStatus := fbc.Status.DeepCopy()
-	newStatus.LatestBackupRef, newStatus.LatestBackupSnapshotTime = refAndSnapshotTime(latestFinBackup(related))
+	latest := latestFinBackup(related)
+	newStatus.LatestBackupRef, newStatus.LatestBackupSnapshotTime = refAndSnapshotTime(latest)
 	newStatus.PendingBackups = countPendingFinBackups(related)
 	newStatus.LastSuccessfulBackupRef, newStatus.LastSuccessfulBackupSnapshotTime = refAndSnapshotTime(
 		lastSuccessfulFinBackup(related))
+	// SetStatusCondition keeps lastTransitionTime unless the status changes.
+	meta.SetStatusCondition(&newStatus.Conditions, latestBackupSucceededCondition(latest))
 	if equality.Semantic.DeepEqual(&fbc.Status, newStatus) {
 		return nil
 	}
@@ -115,7 +119,50 @@ func countPendingFinBackups(fbs []*finv1.FinBackup) int32 {
 func finBackupSucceeded(fb *finv1.FinBackup) bool {
 	return fb.IsStoredToNode() && fb.IsVerifiedTrue() &&
 		!fb.IsChecksumMismatched() && !fb.IsMetadataCorrupted() &&
-		fb.Status.SnapID != nil && !fb.Status.CreatedAt.IsZero()
+		snapshotRecorded(fb)
+}
+
+func snapshotRecorded(fb *finv1.FinBackup) bool {
+	return fb.Status.SnapID != nil && !fb.Status.CreatedAt.IsZero()
+}
+
+// A corruption comes first, since it overrides a past verification. ObservedGeneration
+// is unset, since a FinBackup does not record the generation it was created from.
+func latestBackupSucceededCondition(latest *finv1.FinBackup) metav1.Condition {
+	condition := metav1.Condition{
+		Type:   finv1.FinBackupConfigConditionLatestBackupSucceeded,
+		Status: metav1.ConditionUnknown,
+	}
+	// Reasons that mirror a FinBackup condition reuse its type.
+	switch {
+	case latest == nil:
+		condition.Reason, condition.Message = "NoBackups", "No FinBackup exists"
+	case latest.IsMetadataCorrupted():
+		condition.Status = metav1.ConditionFalse
+		condition.Reason, condition.Message = finv1.BackupConditionMetadataCorrupted, "The metadata of the latest FinBackup is corrupted"
+	case latest.IsChecksumMismatched():
+		condition.Status = metav1.ConditionFalse
+		condition.Reason, condition.Message = finv1.BackupConditionChecksumMismatched, "The data of the latest FinBackup has a checksum mismatch"
+	case latest.IsVerifiedFalse():
+		condition.Status = metav1.ConditionFalse
+		condition.Reason, condition.Message = "VerificationFailed", "The latest FinBackup failed its verification"
+	case latest.IsStoredToNode() && latest.IsVerifiedTrue() && !snapshotRecorded(latest):
+		condition.Reason, condition.Message = "SnapshotMetadataUnavailable",
+			"The latest FinBackup is verified, but its snapshot is not recorded"
+	case latest.IsStoredToNode() && latest.IsVerifiedTrue():
+		condition.Status = metav1.ConditionTrue
+		condition.Reason, condition.Message = "BackupSucceeded", "The latest FinBackup is stored and verified"
+	case latest.IsVerificationSkipped():
+		condition.Status = metav1.ConditionFalse
+		condition.Reason, condition.Message = finv1.BackupConditionVerificationSkipped, "The latest FinBackup skipped its verification"
+	case !snapshotRecorded(latest):
+		condition.Reason, condition.Message = "SnapshotPending", "The latest FinBackup has not taken its snapshot"
+	case !latest.IsStoredToNode():
+		condition.Reason, condition.Message = "BackupPending", "The latest FinBackup has not finished storing data"
+	default:
+		condition.Reason, condition.Message = "VerificationPending", "The latest FinBackup is waiting for its verification"
+	}
+	return condition
 }
 
 func finBackupFailedOrUnverified(fb *finv1.FinBackup) bool {
