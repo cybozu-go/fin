@@ -23,9 +23,10 @@ func (r *FinBackupConfigReconciler) updateBackupSummary(ctx context.Context, fbc
 		return fmt.Errorf("failed to list FinBackups: %w", err)
 	}
 
+	related := relatedFinBackups(fbc, fbs.Items)
 	newStatus := fbc.Status.DeepCopy()
-	newStatus.LatestBackupRef, newStatus.LatestBackupSnapshotTime = refAndSnapshotTime(
-		latestFinBackup(relatedFinBackups(fbc, fbs.Items)))
+	newStatus.LatestBackupRef, newStatus.LatestBackupSnapshotTime = refAndSnapshotTime(latestFinBackup(related))
+	newStatus.PendingBackups = countPendingFinBackups(related)
 	if equality.Semantic.DeepEqual(&fbc.Status, newStatus) {
 		return nil
 	}
@@ -77,6 +78,29 @@ func refAndSnapshotTime(fb *finv1.FinBackup) (*finv1.FinBackupReference, *metav1
 		return ref, nil
 	}
 	return ref, fb.Status.CreatedAt.DeepCopy()
+}
+
+// A long wait or a retried error is not a failure: only the FinBackup status decides.
+func countPendingFinBackups(fbs []*finv1.FinBackup) int32 {
+	var n int32
+	for _, fb := range fbs {
+		if !finBackupSucceeded(fb) && !finBackupFailedOrUnverified(fb) {
+			n++
+		}
+	}
+	return n
+}
+
+// Without the snapshot recorded, which snapshot the FinBackup holds cannot be told.
+func finBackupSucceeded(fb *finv1.FinBackup) bool {
+	return fb.IsStoredToNode() && fb.IsVerifiedTrue() &&
+		!fb.IsChecksumMismatched() && !fb.IsMetadataCorrupted() &&
+		fb.Status.SnapID != nil && !fb.Status.CreatedAt.IsZero()
+}
+
+func finBackupFailedOrUnverified(fb *finv1.FinBackup) bool {
+	return fb.IsVerifiedFalse() || fb.IsChecksumMismatched() || fb.IsMetadataCorrupted() ||
+		fb.IsVerificationSkipped()
 }
 
 // Only the annotations are read, so that a FinBackup event costs no API request.
