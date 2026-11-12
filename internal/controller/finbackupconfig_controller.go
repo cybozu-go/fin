@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"sync"
 	"time"
@@ -55,6 +56,8 @@ type FinBackupConfigReconciler struct {
 	nodeSelector         *nodeaffinity.NodeSelector
 	nodeFreeSpaceRepo    model.NodeFreeSpaceRepository
 	nodeFreeSpaceMargin  resource.Quantity
+	// jobPodLabels are the labels added to the Pods of the Jobs created by the CronJobs.
+	jobPodLabels map[string]string
 
 	// assignments holds the status.node this reconciler has written but the cache may
 	// not show yet, so FinBackupConfigs created together do not all land on one node.
@@ -72,6 +75,7 @@ func NewFinBackupConfigReconciler(
 	nodeSelector *nodeaffinity.NodeSelector,
 	nodeFreeSpaceRepo model.NodeFreeSpaceRepository,
 	nodeFreeSpaceMargin resource.Quantity,
+	jobPodLabels map[string]string,
 ) *FinBackupConfigReconciler {
 	return &FinBackupConfigReconciler{
 		Client:               client,
@@ -83,6 +87,7 @@ func NewFinBackupConfigReconciler(
 		nodeSelector:         nodeSelector,
 		nodeFreeSpaceRepo:    nodeFreeSpaceRepo,
 		nodeFreeSpaceMargin:  nodeFreeSpaceMargin,
+		jobPodLabels:         jobPodLabels,
 		assignments:          make(map[types.NamespacedName]string),
 	}
 }
@@ -459,6 +464,16 @@ func (r *FinBackupConfigReconciler) createOrUpdateCronJob(
 		cronJob.Spec.ConcurrencyPolicy = batchv1.ForbidConcurrent
 		var backoffLimit int32 = 65535
 		cronJob.Spec.JobTemplate.Spec.BackoffLimit = &backoffLimit
+
+		// Add the labels to the existing ones instead of replacing them all,
+		// so that the labels set by others are kept.
+		if len(r.jobPodLabels) > 0 {
+			podTemplate := &cronJob.Spec.JobTemplate.Spec.Template
+			if podTemplate.Labels == nil {
+				podTemplate.Labels = make(map[string]string, len(r.jobPodLabels))
+			}
+			maps.Copy(podTemplate.Labels, r.jobPodLabels)
+		}
 
 		podSpec := &cronJob.Spec.JobTemplate.Spec.Template.Spec
 		podSpec.ServiceAccountName = serviceAccountName

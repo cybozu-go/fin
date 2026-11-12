@@ -78,6 +78,7 @@ var _ = Describe("FinRestore Controller", func() {
 			cephNamespace,
 			podImage,
 			ptr.To(resource.MustParse("4096")),
+			nil,
 		)
 	})
 
@@ -194,6 +195,7 @@ var _ = Describe("FinRestore Controller Reconcile Test", Ordered, func() {
 			cephNamespace,
 			podImage,
 			ptr.To(resource.MustParse("4096")),
+			nil,
 		)
 	})
 
@@ -1177,7 +1179,7 @@ var _ = Describe("mapping a Node event to FinRestores", func() {
 
 	BeforeEach(func(ctx SpecContext) {
 		reconciler = NewFinRestoreReconciler(
-			k8sClient, scheme.Scheme, cephNamespace, podImage, ptr.To(resource.MustParse("4096")))
+			k8sClient, scheme.Scheme, cephNamespace, podImage, ptr.To(resource.MustParse("4096")), nil)
 
 		newRestore := func(prefix string) *finv1.FinRestore {
 			restore := NewFinRestore(workNamespace, utils.GetUniqueName(prefix), "backup", "pvc", userNamespace)
@@ -1579,6 +1581,46 @@ func Test_Reconcile_whenTheFinBackupIsRecreated(t *testing.T) {
 				require.NotNil(t, condition)
 				require.Equal(t, tt.wantReason, condition.Reason)
 			}
+		})
+	}
+}
+
+func Test_createOrUpdateRestoreJob_jobPodLabels(t *testing.T) {
+	tests := []struct {
+		name      string
+		podLabels map[string]string
+		want      map[string]string
+	}{
+		{
+			name:      "the labels are specified",
+			podLabels: map[string]string{testPodLabelKey: testPodLabelValue},
+			want:      map[string]string{testPodLabelKey: testPodLabelValue},
+		},
+		{
+			name:      "the labels are not specified",
+			podLabels: nil,
+			want:      nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			backup := NewFinBackup(workNamespace, "fb-labels", "pvc-labels", userNamespace, node0Name)
+			backup.Status.SnapID = ptr.To(1)
+			restore := NewFinRestore(workNamespace, "fr-labels", backup.Name, "pvc-labels", userNamespace)
+			restore.UID = "fr-labels-uid"
+			c := fake.NewClientBuilder().WithScheme(testScheme(t)).WithObjects(backup, restore).Build()
+			r := &FinRestoreReconciler{
+				Client: c, Scheme: testScheme(t), cephClusterNamespace: cephNamespace, jobPodLabels: tt.podLabels,
+			}
+
+			require.NoError(t, r.createOrUpdateRestoreJob(ctx, restore, backup, ptr.To(resource.MustParse("4096"))))
+
+			var job batchv1.Job
+			require.NoError(t, c.Get(ctx,
+				types.NamespacedName{Namespace: cephNamespace, Name: restoreJobName(restore)}, &job))
+			require.Equal(t, tt.want, job.Spec.Template.Labels)
 		})
 	}
 }

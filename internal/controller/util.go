@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"strings"
 
 	finv1 "github.com/cybozu-go/fin/api/v1"
@@ -23,6 +24,15 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
+
+// setJobPodLabels sets podLabels to the Pod template of job. The Pod template of
+// a Job is immutable, so call this only when the Job is being created.
+func setJobPodLabels(job *batchv1.Job, podLabels map[string]string) {
+	if len(podLabels) == 0 {
+		return
+	}
+	job.Spec.Template.Labels = maps.Clone(podLabels)
+}
 
 const (
 	// indexFinBackupNode lets a Node event be mapped back to the FinBackups pinned to it.
