@@ -8,7 +8,6 @@ import (
 	"math"
 	"slices"
 
-	"github.com/cybozu-go/fin/internal/infrastructure/nlv"
 	"github.com/cybozu-go/fin/internal/job"
 	"github.com/cybozu-go/fin/internal/job/input"
 	"github.com/cybozu-go/fin/internal/model"
@@ -257,8 +256,6 @@ func (b *Backup) loopExportDiff(
 ) error {
 	partCount := int(math.Ceil(float64(targetSnapshot.Size) / float64(b.maxPartSize)))
 	for i := privateData.NextStorePart; i < partCount; i++ {
-		diffPartPath := b.nodeLocalVolumeRepo.GetDiffPartPath(b.targetSnapshotID, i)
-		diffChecksumPath := b.nodeLocalVolumeRepo.GetDiffChecksumPath(b.targetSnapshotID, i)
 		stream, err := b.rbdRepo.ExportDiff(&model.ExportDiffInput{
 			PoolName:       b.targetRBDPool,
 			ReadOffset:     b.maxPartSize * uint64(i),
@@ -272,12 +269,8 @@ func (b *Backup) loopExportDiff(
 			return fmt.Errorf("failed to export diff: %w", err)
 		}
 
-		if err := nlv.WriteDiffPartAndCloseStream(stream, diffPartPath, diffChecksumPath, b.diffChecksumChunkSize); err != nil {
-			return fmt.Errorf("failed to write diff part: %w", err)
-		}
-
-		if err := fileio.SyncData(diffPartPath); err != nil {
-			return fmt.Errorf("failed to sync %q: %w", diffPartPath, err)
+		if err := b.nodeLocalVolumeRepo.StorePart(b.targetSnapshotID, i, stream, b.diffChecksumChunkSize); err != nil {
+			return err
 		}
 
 		privateData.NextStorePart = i + 1

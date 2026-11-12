@@ -180,6 +180,10 @@ type NodeLocalVolumeRepository interface {
 	// If the directory already exists, it returns `ErrAlreadyExists`.
 	MakeDiffDir(snapshotID int) error
 
+	// StorePart writes a diff part with its checksum file and syncs the part
+	// data. It always closes stream.
+	StorePart(snapshotID, partIndex int, stream io.ReadCloser, checksumChunkSize uint64) error
+
 	// RemoveDiffPartFile removes a diff part file.
 	RemoveDiffPartFile(snapshotID, partIndex int) error
 
