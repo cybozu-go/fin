@@ -25,6 +25,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	configv1 "sigs.k8s.io/controller-runtime/pkg/config"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 )
 
@@ -851,6 +852,29 @@ var _ = Describe("FinBackupConfig node selection", func() {
 				types.NamespacedName{Name: "fbc-" + string(updated.UID), Namespace: updated.Namespace},
 				&batchv1.CronJob{})).To(Succeed(), tc.fbc.Name)
 		}
+	})
+
+	It("should delete the info series when the FinBackupConfig is gone before the reconciler removes the finalizer", func(ctx SpecContext) {
+		// Arrange
+		fbc := createFBC(ctx, "fbc", "")
+		_, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(fbc)})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(infoMetricNodes(fbc)).NotTo(BeEmpty())
+
+		// The finalizer is removed by someone other than the reconciler.
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(fbc), fbc)).To(Succeed())
+		controllerutil.RemoveFinalizer(fbc, finBackupConfigFinalizerName)
+		Expect(k8sClient.Update(ctx, fbc)).To(Succeed())
+		Expect(k8sClient.Delete(ctx, fbc)).To(Succeed())
+		err = k8sClient.Get(ctx, client.ObjectKeyFromObject(fbc), &finv1.FinBackupConfig{})
+		Expect(k8serrors.IsNotFound(err)).To(BeTrue())
+
+		// Act
+		_, err = reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(fbc)})
+
+		// Assert
+		Expect(err).NotTo(HaveOccurred())
+		Expect(infoMetricNodes(fbc)).To(BeEmpty())
 	})
 
 	It("should fail when the free space cannot be queried", func(ctx SpecContext) {

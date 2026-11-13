@@ -8,6 +8,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/metrics"
 )
 
@@ -122,12 +123,9 @@ func SetFinBackupConfigInfo(fbc *finv1.FinBackupConfig, cephNamespace string) {
 	finbackupconfigInfoLabels[key] = labels
 }
 
-// DeleteFinBackupConfigInfo deletes the series of the FinBackupConfig.
-func DeleteFinBackupConfigInfo(fbc *finv1.FinBackupConfig, cephNamespace string) {
-	if fbc == nil {
-		return
-	}
-	key := finbackupconfigInfoKey{cephNamespace, fbc.Namespace, fbc.Name}
+// DeleteFinBackupConfigInfo deletes the series of the FinBackupConfig named by name.
+func DeleteFinBackupConfigInfo(name types.NamespacedName, cephNamespace string) {
+	key := finbackupconfigInfoKey{cephNamespace, name.Namespace, name.Name}
 
 	finbackupconfigInfoMu.Lock()
 	defer finbackupconfigInfoMu.Unlock()
