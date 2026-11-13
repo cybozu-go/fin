@@ -91,6 +91,7 @@ func NewFinBackupConfigReconciler(
 //+kubebuilder:rbac:groups=fin.cybozu.io,resources=finbackupconfigs/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=fin.cybozu.io,resources=finbackupconfigs/finalizers,verbs=update
 //+kubebuilder:rbac:groups=batch,resources=cronjobs,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=fin.cybozu.io,resources=finbackups,verbs=get;list;watch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -143,15 +144,23 @@ func (r *FinBackupConfigReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	// The metric is set even when no node can be selected yet, reporting an empty node.
 	err = r.maintainStatusNode(ctx, &fbc, &pvc)
 	metrics.SetFinBackupConfigInfo(&fbc, r.managedCephClusterID)
+	var scheduleErr error
 	if err != nil {
-		return ctrl.Result{}, fmt.Errorf("failed to maintain status node: %w", err)
+		scheduleErr = fmt.Errorf("failed to maintain status node: %w", err)
+	} else {
+		image := r.podImage
+		serviceAccountName := r.serviceAccountName
+		if err := r.createOrUpdateCronJob(ctx, &fbc, fbc.Namespace, serviceAccountName, image); err != nil {
+			scheduleErr = fmt.Errorf("failed to create or update CronJob: %w", err)
+		}
 	}
 
-	image := r.podImage
-	serviceAccountName := r.serviceAccountName
-	if err := r.createOrUpdateCronJob(ctx, &fbc, fbc.Namespace, serviceAccountName, image); err != nil {
-		return ctrl.Result{}, fmt.Errorf("failed to create or update CronJob: %w", err)
+	// Existing FinBackups still progress, so aggregate even when scheduling fails.
+	summaryErr := r.updateBackupSummary(ctx, &fbc)
+	if err := errors.Join(scheduleErr, summaryErr); err != nil {
+		return ctrl.Result{}, err
 	}
+
 	if fbc.Status.Node == "" {
 		return ctrl.Result{RequeueAfter: unassignedRequeueInterval}, nil
 	}
@@ -198,6 +207,9 @@ func (r *FinBackupConfigReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&finv1.FinBackupConfig{}).
 		Owns(&batchv1.CronJob{}).
+		// Not requeued periodically, since the summary depends only on watched objects.
+		Watches(&finv1.FinBackup{},
+			handler.EnqueueRequestsFromMapFunc(enqueueFinBackupConfigOfFinBackup)).
 		// OnlyMetadata shares the metadata informer with the FinBackup controller. The node
 		// selection looks at labels but not at conditions, so an update matters only when
 		// it changes the labels.
