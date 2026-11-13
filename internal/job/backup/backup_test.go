@@ -38,7 +38,7 @@ type setupOutput struct {
 	fullBackupInput, incrementalBackupInput, incrementalBackupInput2 *input.Backup
 	k8sClient                                                        kubernetes.Interface
 	finRepo                                                          model.FinRepository
-	nlvRepo                                                          model.NodeLocalVolumeRepository
+	nlvRepo                                                          *nlv.NodeLocalVolumeRepository
 	rbdRepo                                                          *fake.RBDRepository2
 	fullSnapshot, incrementalSnapshot                                *model.RBDSnapshot
 	fullData, incrementalData, incrementalData2                      []byte
@@ -345,12 +345,7 @@ func Test_FullBackup_Success_Resume(t *testing.T) {
 						TargetSnapName: cfg.fullSnapshot.Name,
 					})
 					require.NoError(t, err)
-					err = nlv.WriteDiffPartAndCloseStream(
-						stream,
-						cfg.nlvRepo.GetDiffPartPath(cfg.fullBackupInput.TargetSnapshotID, i),
-						cfg.nlvRepo.GetDiffChecksumPath(cfg.fullBackupInput.TargetSnapshotID, i),
-						cfg.fullBackupInput.DiffChecksumChunkSize,
-					)
+					err = cfg.nlvRepo.StorePart(cfg.fullBackupInput.TargetSnapshotID, i, stream, cfg.fullBackupInput.DiffChecksumChunkSize)
 					require.NoError(t, err)
 				}
 
@@ -804,12 +799,7 @@ func Test_FullBackup_Error_ChecksumMismatch(t *testing.T) {
 		TargetSnapName: cfg.fullSnapshot.Name,
 	})
 	require.NoError(t, err)
-	err = nlv.WriteDiffPartAndCloseStream(
-		stream,
-		cfg.nlvRepo.GetDiffPartPath(cfg.fullBackupInput.TargetSnapshotID, 0),
-		cfg.nlvRepo.GetDiffChecksumPath(cfg.fullBackupInput.TargetSnapshotID, 0),
-		cfg.fullBackupInput.DiffChecksumChunkSize,
-	)
+	err = cfg.nlvRepo.StorePart(cfg.fullBackupInput.TargetSnapshotID, 0, stream, cfg.fullBackupInput.DiffChecksumChunkSize)
 	require.NoError(t, err)
 
 	// Corrupt the diff file
@@ -882,12 +872,7 @@ func Test_loopApplyDiff_RemovesDiffPartFiles(t *testing.T) {
 			TargetSnapName: cfg.fullSnapshot.Name,
 		})
 		require.NoError(t, err)
-		err = nlv.WriteDiffPartAndCloseStream(
-			stream,
-			cfg.nlvRepo.GetDiffPartPath(cfg.fullBackupInput.TargetSnapshotID, i),
-			cfg.nlvRepo.GetDiffChecksumPath(cfg.fullBackupInput.TargetSnapshotID, i),
-			cfg.fullBackupInput.DiffChecksumChunkSize,
-		)
+		err = cfg.nlvRepo.StorePart(cfg.fullBackupInput.TargetSnapshotID, i, stream, cfg.fullBackupInput.DiffChecksumChunkSize)
 		require.NoError(t, err)
 	}
 
