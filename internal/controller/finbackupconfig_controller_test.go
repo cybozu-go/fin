@@ -523,6 +523,69 @@ var _ = Describe("FinBackupConfig backup summary", func() {
 		})
 		Expect(reconcileStatus(ctx, fbc).PendingBackups).To(Equal(int32(1)))
 	})
+
+	It("should report the succeeded FinBackup with the latest snapshot and its snapshot time", func(ctx SpecContext) {
+		// Arrange
+		fbc := &finv1.FinBackupConfig{
+			ObjectMeta: metav1.ObjectMeta{Name: testFBCName, Namespace: fbcNamespace},
+			Spec: finv1.FinBackupConfigSpec{
+				PVCNamespace: pvc.Namespace,
+				PVC:          pvc.Name,
+				Schedule:     testCronSchedule,
+			},
+		}
+		Expect(k8sClient.Create(ctx, fbc)).To(Succeed())
+		verified := map[string]metav1.ConditionStatus{
+			finv1.BackupConditionStoredToNode: metav1.ConditionTrue,
+			finv1.BackupConditionVerified:     metav1.ConditionTrue,
+		}
+		succeed := func(fb *finv1.FinBackup, snapshotTime time.Time) {
+			GinkgoHelper()
+			*fb = withConditions(withSnapshot(*fb), verified)
+			fb.Status.CreatedAt = metav1.NewTime(snapshotTime)
+			Expect(k8sClient.Status().Update(ctx, fb)).To(Succeed())
+		}
+		expectLastSuccessful := func(fb *finv1.FinBackup, snapshotTime time.Time) {
+			GinkgoHelper()
+			status := reconcileStatus(ctx, fbc)
+			Expect(status.LastSuccessfulBackupRef).To(Equal(&finv1.FinBackupReference{Name: fb.Name, UID: fb.UID}))
+			Expect(status.LastSuccessfulBackupSnapshotTime).NotTo(BeNil())
+			Expect(status.LastSuccessfulBackupSnapshotTime.Time).To(BeTemporally("==", snapshotTime))
+		}
+		firstSnapshot := time.Date(2026, 11, 12, 1, 0, 3, 0, time.UTC)
+		secondSnapshot := firstSnapshot.Add(time.Hour)
+
+		By("reporting nothing before any FinBackup succeeds")
+		first := createFinBackupOf(ctx, fbc, "fb-1")
+		status := reconcileStatus(ctx, fbc)
+		Expect(status.LastSuccessfulBackupRef).To(BeNil())
+		Expect(status.LastSuccessfulBackupSnapshotTime).To(BeNil())
+
+		By("reporting the first FinBackup once it succeeds")
+		succeed(first, firstSnapshot)
+		expectLastSuccessful(first, firstSnapshot)
+
+		By("keeping the first FinBackup while a later one is in progress")
+		second := createFinBackupOf(ctx, fbc, "fb-2")
+		expectLastSuccessful(first, firstSnapshot)
+
+		By("switching to the later FinBackup once it succeeds")
+		succeed(second, secondSnapshot)
+		expectLastSuccessful(second, secondSnapshot)
+
+		By("going back to the first FinBackup when the later one is found corrupted")
+		*second = withConditions(*second, map[string]metav1.ConditionStatus{
+			finv1.BackupConditionMetadataCorrupted: metav1.ConditionTrue,
+		})
+		Expect(k8sClient.Status().Update(ctx, second)).To(Succeed())
+		expectLastSuccessful(first, firstSnapshot)
+
+		By("reporting nothing once the first FinBackup is deleted")
+		Expect(k8sClient.Delete(ctx, first)).To(Succeed())
+		status = reconcileStatus(ctx, fbc)
+		Expect(status.LastSuccessfulBackupRef).To(BeNil())
+		Expect(status.LastSuccessfulBackupSnapshotTime).To(BeNil())
+	})
 })
 
 var _ = Describe("node ranking", func() {

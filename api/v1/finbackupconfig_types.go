@@ -55,6 +55,16 @@ type FinBackupConfigStatus struct {
 	// failed ones and those that skipped verification.
 	// +optional
 	PendingBackups int32 `json:"pendingBackups,omitempty"`
+
+	// LastSuccessfulBackupRef refers to the verified FinBackup with the latest
+	// snapshot. It falls back to an older one when this one is deleted or corrupted.
+	// +optional
+	LastSuccessfulBackupRef *FinBackupReference `json:"lastSuccessfulBackupRef,omitempty"`
+
+	// LastSuccessfulBackupSnapshotTime is the point in time lastSuccessfulBackupRef
+	// restores to, not the time the backup completed.
+	// +optional
+	LastSuccessfulBackupSnapshotTime *metav1.Time `json:"lastSuccessfulBackupSnapshotTime,omitempty"`
 }
 
 // FinBackupReference refers to a FinBackup in the same namespace.

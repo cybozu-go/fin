@@ -280,6 +280,91 @@ func Test_countPendingFinBackups(t *testing.T) {
 	})
 }
 
+func Test_lastSuccessfulFinBackup(t *testing.T) {
+	fbc := newSummaryTestFinBackupConfig()
+	earlier := time.Date(2026, 11, 12, 1, 0, 0, 0, time.UTC)
+	later := earlier.Add(time.Hour)
+	verified := map[string]metav1.ConditionStatus{
+		finv1.BackupConditionStoredToNode: metav1.ConditionTrue,
+		finv1.BackupConditionVerified:     metav1.ConditionTrue,
+	}
+	succeeded := func(name string, created, snapshot time.Time) finv1.FinBackup {
+		fb := withConditions(withSnapshot(newSummaryTestFinBackup(fbc, name, created)), verified)
+		fb.Status.CreatedAt = metav1.NewTime(snapshot)
+		return fb
+	}
+
+	tests := []struct {
+		name    string
+		fbs     []finv1.FinBackup
+		wantUID types.UID
+	}{
+		{
+			name: "no FinBackup has succeeded",
+			fbs: []finv1.FinBackup{
+				newSummaryTestFinBackup(fbc, "pending", later),
+				withConditions(withSnapshot(newSummaryTestFinBackup(fbc, "failed", earlier)), map[string]metav1.ConditionStatus{
+					finv1.BackupConditionStoredToNode: metav1.ConditionTrue,
+					finv1.BackupConditionVerified:     metav1.ConditionFalse,
+				}),
+			},
+		},
+		{
+			name: "a FinBackup created later and still pending does not hide an earlier success",
+			fbs: []finv1.FinBackup{
+				succeeded("a", earlier, earlier),
+				newSummaryTestFinBackup(fbc, "b", later),
+			},
+			wantUID: testFinBackupUID("a"),
+		},
+		{
+			name: "a corrupted FinBackup is not a success",
+			fbs: []finv1.FinBackup{
+				succeeded("a", earlier, earlier),
+				withConditions(succeeded("b", later, later), map[string]metav1.ConditionStatus{
+					finv1.BackupConditionChecksumMismatched: metav1.ConditionTrue,
+				}),
+			},
+			wantUID: testFinBackupUID("a"),
+		},
+		{
+			name: "the snapshot time decides rather than the creation time",
+			fbs: []finv1.FinBackup{
+				succeeded("a", later, earlier.Add(time.Minute)),
+				succeeded("b", earlier, earlier.Add(2*time.Minute)),
+			},
+			wantUID: testFinBackupUID("b"),
+		},
+		{
+			name: "the creation time breaks a tie of the snapshot time",
+			fbs: []finv1.FinBackup{
+				succeeded("a", later, later),
+				succeeded("b", earlier, later),
+			},
+			wantUID: testFinBackupUID("a"),
+		},
+	}
+	uidOf := func(fb *finv1.FinBackup) types.UID {
+		if fb == nil {
+			return ""
+		}
+		return fb.UID
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fbs := relatedFinBackups(fbc, tt.fbs)
+			require.Equal(t, tt.wantUID, uidOf(lastSuccessfulFinBackup(fbs)))
+
+			reversed := make([]*finv1.FinBackup, len(fbs))
+			for i, fb := range fbs {
+				reversed[len(fbs)-1-i] = fb
+			}
+			require.Equal(t, tt.wantUID, uidOf(lastSuccessfulFinBackup(reversed)),
+				"the order of the FinBackups should not matter")
+		})
+	}
+}
+
 func Test_updateBackupSummary(t *testing.T) {
 	fbc := newSummaryTestFinBackupConfig()
 	fb := newSummaryTestFinBackup(fbc, "fb", time.Date(2026, 11, 12, 2, 0, 0, 0, time.UTC))
