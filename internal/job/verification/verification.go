@@ -13,6 +13,7 @@ import (
 	"github.com/cybozu-go/fin/internal/job"
 	"github.com/cybozu-go/fin/internal/job/input"
 	"github.com/cybozu-go/fin/internal/model"
+	"github.com/cybozu-go/fin/internal/pkg/fileio"
 	corev1 "k8s.io/api/core/v1"
 )
 
@@ -255,7 +256,7 @@ func (v *Verification) loopApplyDiff(
 			return fmt.Errorf("failed to apply diff: %w", err)
 		}
 
-		if err := job.SyncData(instantVerifyImagePath); err != nil {
+		if err := fileio.SyncData(instantVerifyImagePath); err != nil {
 			return fmt.Errorf("failed to sync %q: %w", instantVerifyImagePath, err)
 		}
 

@@ -10,6 +10,7 @@ import (
 	"github.com/cybozu-go/fin/internal/job"
 	"github.com/cybozu-go/fin/internal/job/input"
 	"github.com/cybozu-go/fin/internal/model"
+	"github.com/cybozu-go/fin/internal/pkg/fileio"
 )
 
 // ErrInvalidSnapshotOrder is returned when raw.snapID is smaller than target snapshot ID
@@ -147,7 +148,7 @@ func (d *Deletion) applyAllDiffParts(
 			return fmt.Errorf("failed to apply diff part %d: %w", i, err)
 		}
 
-		if err := job.SyncData(rawImagePath); err != nil {
+		if err := fileio.SyncData(rawImagePath); err != nil {
 			return fmt.Errorf("failed to sync %q: %w", rawImagePath, err)
 		}
 
