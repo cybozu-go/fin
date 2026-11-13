@@ -8,6 +8,7 @@ import (
 
 	"github.com/cybozu-go/fin/internal/infrastructure/ceph"
 	"github.com/cybozu-go/fin/internal/infrastructure/fake"
+	"github.com/cybozu-go/fin/internal/infrastructure/nlv"
 	"github.com/cybozu-go/fin/internal/job"
 	"github.com/cybozu-go/fin/internal/job/backup"
 	"github.com/cybozu-go/fin/internal/job/input"
@@ -222,7 +223,7 @@ func TestDelete_RawAndDiffCase_Success(t *testing.T) {
 			TargetSnapName: targetSnap.Name,
 		})
 		require.NoError(t, err)
-		err = backup.WriteDiffPartAndCloseStream(
+		err = nlv.WriteDiffPartAndCloseStream(
 			stream,
 			nlvRepo.GetDiffPartPath(targetSnapshotID, i),
 			nlvRepo.GetDiffChecksumPath(targetSnapshotID, i),
@@ -722,7 +723,7 @@ func TestDelete_RawAndDiffCase_Error_ChecksumMismatch(t *testing.T) {
 		TargetSnapName: targetSnap.Name,
 	})
 	require.NoError(t, err)
-	err = backup.WriteDiffPartAndCloseStream(
+	err = nlv.WriteDiffPartAndCloseStream(
 		stream,
 		nlvRepo.GetDiffPartPath(targetSnapshotID, 0),
 		nlvRepo.GetDiffChecksumPath(targetSnapshotID, 0),

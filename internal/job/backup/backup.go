@@ -5,15 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"math"
-	"os"
 	"slices"
 
+	"github.com/cybozu-go/fin/internal/infrastructure/nlv"
 	"github.com/cybozu-go/fin/internal/job"
 	"github.com/cybozu-go/fin/internal/job/input"
 	"github.com/cybozu-go/fin/internal/model"
-	"github.com/cybozu-go/fin/internal/pkg/csumio"
 	"github.com/cybozu-go/fin/internal/pkg/fileio"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -274,7 +272,7 @@ func (b *Backup) loopExportDiff(
 			return fmt.Errorf("failed to export diff: %w", err)
 		}
 
-		if err := WriteDiffPartAndCloseStream(stream, diffPartPath, diffChecksumPath, b.diffChecksumChunkSize); err != nil {
+		if err := nlv.WriteDiffPartAndCloseStream(stream, diffPartPath, diffChecksumPath, b.diffChecksumChunkSize); err != nil {
 			return fmt.Errorf("failed to write diff part: %w", err)
 		}
 
@@ -421,53 +419,5 @@ func setBackupPrivateData(repo model.FinRepository, actionUID string, data *back
 	if err := repo.UpdateActionPrivateData(actionUID, privateData); err != nil {
 		return fmt.Errorf("failed to update private data: %w", err)
 	}
-	return nil
-}
-
-func WriteDiffPartAndCloseStream(stream io.ReadCloser, outputPath, checksumPath string, chunkSize uint64) (err error) {
-	defer func() {
-		if cerr := stream.Close(); cerr != nil && err == nil {
-			err = fmt.Errorf("failed to close diff stream: %w", cerr)
-		}
-	}()
-
-	outputFile, err := os.OpenFile(outputPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
-	if err != nil {
-		return fmt.Errorf("failed to open output file %s: %w", outputPath, err)
-	}
-	defer func() {
-		if cerr := outputFile.Close(); cerr != nil && err == nil {
-			err = fmt.Errorf("failed to close output file %s: %w", outputPath, cerr)
-		}
-	}()
-
-	checksumFile, err := os.OpenFile(checksumPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
-	if err != nil {
-		return fmt.Errorf("failed to create checksum file %s: %w", checksumPath, err)
-	}
-	defer func() {
-		if cerr := checksumFile.Close(); cerr != nil && err == nil {
-			err = fmt.Errorf("failed to close checksum file %s: %w", checksumPath, cerr)
-		}
-	}()
-
-	if chunkSize == 0 {
-		return errors.New("diffChecksumChunkSize must be greater than zero")
-	}
-
-	writer, err := csumio.NewWriter(outputFile, checksumFile, int(chunkSize))
-	if err != nil {
-		return fmt.Errorf("failed to create checksum writer: %w", err)
-	}
-	defer func() {
-		if cerr := writer.Close(); cerr != nil && err == nil {
-			err = fmt.Errorf("failed to close checksum writer: %w", cerr)
-		}
-	}()
-
-	if _, err := io.Copy(writer, stream); err != nil {
-		return fmt.Errorf("failed to write diff to %s: %w", outputPath, err)
-	}
-
 	return nil
 }
