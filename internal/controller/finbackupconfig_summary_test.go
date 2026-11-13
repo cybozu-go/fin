@@ -365,6 +365,111 @@ func Test_lastSuccessfulFinBackup(t *testing.T) {
 	}
 }
 
+func Test_latestBackupSucceededCondition(t *testing.T) {
+	fbc := newSummaryTestFinBackupConfig()
+	created := time.Date(2026, 11, 12, 2, 0, 0, 0, time.UTC)
+	fb := func() finv1.FinBackup { return newSummaryTestFinBackup(fbc, "fb", created) }
+	verified := map[string]metav1.ConditionStatus{
+		finv1.BackupConditionStoredToNode: metav1.ConditionTrue,
+		finv1.BackupConditionVerified:     metav1.ConditionTrue,
+	}
+	withCondition := func(fb finv1.FinBackup, conditionType string, status metav1.ConditionStatus) finv1.FinBackup {
+		return withConditions(fb, map[string]metav1.ConditionStatus{conditionType: status})
+	}
+
+	tests := []struct {
+		name       string
+		fb         *finv1.FinBackup
+		wantStatus metav1.ConditionStatus
+		wantReason string
+	}{
+		{
+			name:       "no FinBackup",
+			wantStatus: metav1.ConditionUnknown,
+			wantReason: "NoBackups",
+		},
+		{
+			name: "a FinBackup whose metadata is corrupted after its verification",
+			fb: ptr.To(withCondition(withConditions(withSnapshot(fb()), verified),
+				finv1.BackupConditionMetadataCorrupted, metav1.ConditionTrue)),
+			wantStatus: metav1.ConditionFalse,
+			wantReason: "MetadataCorrupted",
+		},
+		{
+			name: "a FinBackup whose checksum mismatched after its verification",
+			fb: ptr.To(withCondition(withConditions(withSnapshot(fb()), verified),
+				finv1.BackupConditionChecksumMismatched, metav1.ConditionTrue)),
+			wantStatus: metav1.ConditionFalse,
+			wantReason: "ChecksumMismatched",
+		},
+		{
+			name: "a FinBackup whose verification failed",
+			fb: ptr.To(withConditions(withSnapshot(fb()), map[string]metav1.ConditionStatus{
+				finv1.BackupConditionStoredToNode: metav1.ConditionTrue,
+				finv1.BackupConditionVerified:     metav1.ConditionFalse,
+			})),
+			wantStatus: metav1.ConditionFalse,
+			wantReason: "VerificationFailed",
+		},
+		{
+			name:       "a FinBackup stored and verified without its snapshot recorded",
+			fb:         ptr.To(withConditions(fb(), verified)),
+			wantStatus: metav1.ConditionUnknown,
+			wantReason: "SnapshotMetadataUnavailable",
+		},
+		{
+			name:       "a FinBackup stored and verified",
+			fb:         ptr.To(withConditions(withSnapshot(fb()), verified)),
+			wantStatus: metav1.ConditionTrue,
+			wantReason: "BackupSucceeded",
+		},
+		{
+			name: "a FinBackup verified with a VerificationSkipped condition left over",
+			fb: ptr.To(withCondition(withConditions(withSnapshot(fb()), verified),
+				finv1.BackupConditionVerificationSkipped, metav1.ConditionTrue)),
+			wantStatus: metav1.ConditionTrue,
+			wantReason: "BackupSucceeded",
+		},
+		{
+			name: "a FinBackup whose verification was skipped",
+			fb: ptr.To(withConditions(withSnapshot(fb()), map[string]metav1.ConditionStatus{
+				finv1.BackupConditionStoredToNode:        metav1.ConditionTrue,
+				finv1.BackupConditionVerificationSkipped: metav1.ConditionTrue,
+			})),
+			wantStatus: metav1.ConditionFalse,
+			wantReason: "VerificationSkipped",
+		},
+		{
+			name:       "a FinBackup that has not taken its snapshot",
+			fb:         ptr.To(fb()),
+			wantStatus: metav1.ConditionUnknown,
+			wantReason: "SnapshotPending",
+		},
+		{
+			name:       "a FinBackup storing its data",
+			fb:         ptr.To(withSnapshot(fb())),
+			wantStatus: metav1.ConditionUnknown,
+			wantReason: "BackupPending",
+		},
+		{
+			name: "a FinBackup stored and waiting for its verification",
+			fb: ptr.To(withCondition(withSnapshot(fb()),
+				finv1.BackupConditionStoredToNode, metav1.ConditionTrue)),
+			wantStatus: metav1.ConditionUnknown,
+			wantReason: "VerificationPending",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			condition := latestBackupSucceededCondition(tt.fb)
+			require.Equal(t, finv1.FinBackupConfigConditionLatestBackupSucceeded, condition.Type)
+			require.Equal(t, tt.wantStatus, condition.Status)
+			require.Equal(t, tt.wantReason, condition.Reason)
+			require.NotEmpty(t, condition.Message)
+		})
+	}
+}
+
 func Test_updateBackupSummary(t *testing.T) {
 	fbc := newSummaryTestFinBackupConfig()
 	fb := newSummaryTestFinBackup(fbc, "fb", time.Date(2026, 11, 12, 2, 0, 0, 0, time.UTC))
