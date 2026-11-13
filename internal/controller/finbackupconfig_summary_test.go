@@ -8,9 +8,11 @@ import (
 	finv1 "github.com/cybozu-go/fin/api/v1"
 	"github.com/cybozu-go/fin/internal/finbackupbuilder"
 	"github.com/stretchr/testify/require"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	fakeclient "sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -177,6 +179,105 @@ func Test_refAndSnapshotTime(t *testing.T) {
 	ref, snapshotTime = refAndSnapshotTime(&fb)
 	require.Equal(t, &finv1.FinBackupReference{Name: fb.Name, UID: fb.UID}, ref)
 	require.Equal(t, &fb.Status.CreatedAt, snapshotTime)
+}
+
+func withConditions(fb finv1.FinBackup, conditions map[string]metav1.ConditionStatus) finv1.FinBackup {
+	for conditionType, status := range conditions {
+		meta.SetStatusCondition(&fb.Status.Conditions, metav1.Condition{
+			Type: conditionType, Status: status, Reason: "Test",
+		})
+	}
+	return fb
+}
+
+func withSnapshot(fb finv1.FinBackup) finv1.FinBackup {
+	fb.Status.SnapID = ptr.To(1)
+	fb.Status.CreatedAt = metav1.NewTime(fb.CreationTimestamp.Add(3 * time.Second))
+	return fb
+}
+
+func Test_countPendingFinBackups(t *testing.T) {
+	fbc := newSummaryTestFinBackupConfig()
+	created := time.Date(2026, 11, 12, 2, 0, 0, 0, time.UTC)
+	stored := map[string]metav1.ConditionStatus{finv1.BackupConditionStoredToNode: metav1.ConditionTrue}
+	verified := map[string]metav1.ConditionStatus{
+		finv1.BackupConditionStoredToNode: metav1.ConditionTrue,
+		finv1.BackupConditionVerified:     metav1.ConditionTrue,
+	}
+
+	tests := []struct {
+		name    string
+		fb      finv1.FinBackup
+		pending bool
+	}{
+		{
+			name:    "a FinBackup just created",
+			fb:      newSummaryTestFinBackup(fbc, "fb", created),
+			pending: true,
+		},
+		{
+			name:    "a FinBackup that has taken its snapshot",
+			fb:      withSnapshot(newSummaryTestFinBackup(fbc, "fb", created)),
+			pending: true,
+		},
+		{
+			name:    "a FinBackup stored and waiting for its verification",
+			fb:      withConditions(withSnapshot(newSummaryTestFinBackup(fbc, "fb", created)), stored),
+			pending: true,
+		},
+		{
+			name: "a FinBackup stored and verified",
+			fb:   withConditions(withSnapshot(newSummaryTestFinBackup(fbc, "fb", created)), verified),
+		},
+		{
+			name:    "a FinBackup stored and verified without its snapshot recorded",
+			fb:      withConditions(newSummaryTestFinBackup(fbc, "fb", created), verified),
+			pending: true,
+		},
+		{
+			name: "a FinBackup whose verification failed",
+			fb: withConditions(withSnapshot(newSummaryTestFinBackup(fbc, "fb", created)), map[string]metav1.ConditionStatus{
+				finv1.BackupConditionStoredToNode: metav1.ConditionTrue,
+				finv1.BackupConditionVerified:     metav1.ConditionFalse,
+			}),
+		},
+		{
+			name: "a FinBackup whose checksum mismatched",
+			fb: withConditions(withSnapshot(newSummaryTestFinBackup(fbc, "fb", created)), map[string]metav1.ConditionStatus{
+				finv1.BackupConditionStoredToNode:       metav1.ConditionTrue,
+				finv1.BackupConditionChecksumMismatched: metav1.ConditionTrue,
+			}),
+		},
+		{
+			name: "a FinBackup whose metadata is corrupted after its verification",
+			fb: withConditions(withSnapshot(newSummaryTestFinBackup(fbc, "fb", created)), map[string]metav1.ConditionStatus{
+				finv1.BackupConditionStoredToNode:      metav1.ConditionTrue,
+				finv1.BackupConditionVerified:          metav1.ConditionTrue,
+				finv1.BackupConditionMetadataCorrupted: metav1.ConditionTrue,
+			}),
+		},
+		{
+			name: "a FinBackup whose verification was skipped",
+			fb: withConditions(withSnapshot(newSummaryTestFinBackup(fbc, "fb", created)), map[string]metav1.ConditionStatus{
+				finv1.BackupConditionStoredToNode:        metav1.ConditionTrue,
+				finv1.BackupConditionVerificationSkipped: metav1.ConditionTrue,
+			}),
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var want int32
+			if tt.pending {
+				want = 1
+			}
+			require.Equal(t, want, countPendingFinBackups([]*finv1.FinBackup{&tt.fb}))
+		})
+	}
+
+	t.Run("the FinBackups are summed up", func(t *testing.T) {
+		fbs := []*finv1.FinBackup{&tests[0].fb, &tests[2].fb, &tests[3].fb}
+		require.Equal(t, int32(2), countPendingFinBackups(fbs))
+	})
 }
 
 func Test_updateBackupSummary(t *testing.T) {

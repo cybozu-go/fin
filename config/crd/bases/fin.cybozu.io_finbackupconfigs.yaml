@@ -92,6 +92,12 @@ spec:
                   Node is the node the FinBackups of this config are taken on. It is
                   spec.node when set, and otherwise a node selected by the controller.
                 type: string
+              pendingBackups:
+                description: |-
+                  PendingBackups is the number of FinBackups still in progress, excluding
+                  failed ones and those that skipped verification.
+                format: int32
+                type: integer
             type: object
         type: object
     served: true

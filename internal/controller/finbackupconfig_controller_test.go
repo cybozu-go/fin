@@ -485,6 +485,44 @@ var _ = Describe("FinBackupConfig backup summary", func() {
 		Expect(status.LatestBackupRef).To(BeNil())
 		Expect(status.LatestBackupSnapshotTime).To(BeNil())
 	})
+
+	It("should count the FinBackups still in progress as status.pendingBackups", func(ctx SpecContext) {
+		// Arrange
+		fbc := &finv1.FinBackupConfig{
+			ObjectMeta: metav1.ObjectMeta{Name: testFBCName, Namespace: fbcNamespace},
+			Spec: finv1.FinBackupConfigSpec{
+				PVCNamespace: pvc.Namespace,
+				PVC:          pvc.Name,
+				Schedule:     testCronSchedule,
+			},
+		}
+		Expect(k8sClient.Create(ctx, fbc)).To(Succeed())
+		setStatus := func(fb *finv1.FinBackup, conditions map[string]metav1.ConditionStatus) {
+			GinkgoHelper()
+			*fb = withConditions(withSnapshot(*fb), conditions)
+			Expect(k8sClient.Status().Update(ctx, fb)).To(Succeed())
+		}
+
+		By("counting zero before any FinBackup is created")
+		Expect(reconcileStatus(ctx, fbc).PendingBackups).To(BeZero())
+
+		By("counting the FinBackups neither verified nor failed")
+		failed := createFinBackupOf(ctx, fbc, "fb-1")
+		setStatus(failed, map[string]metav1.ConditionStatus{
+			finv1.BackupConditionStoredToNode: metav1.ConditionTrue,
+			finv1.BackupConditionVerified:     metav1.ConditionFalse,
+		})
+		inProgress := createFinBackupOf(ctx, fbc, "fb-2")
+		createFinBackupOf(ctx, fbc, "fb-3")
+		Expect(reconcileStatus(ctx, fbc).PendingBackups).To(Equal(int32(2)))
+
+		By("not counting a FinBackup once it is verified")
+		setStatus(inProgress, map[string]metav1.ConditionStatus{
+			finv1.BackupConditionStoredToNode: metav1.ConditionTrue,
+			finv1.BackupConditionVerified:     metav1.ConditionTrue,
+		})
+		Expect(reconcileStatus(ctx, fbc).PendingBackups).To(Equal(int32(1)))
+	})
 })
 
 var _ = Describe("node ranking", func() {

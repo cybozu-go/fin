@@ -50,6 +50,11 @@ type FinBackupConfigStatus struct {
 	// LatestBackupSnapshotTime is the snapshot time of latestBackupRef.
 	// +optional
 	LatestBackupSnapshotTime *metav1.Time `json:"latestBackupSnapshotTime,omitempty"`
+
+	// PendingBackups is the number of FinBackups still in progress, excluding
+	// failed ones and those that skipped verification.
+	// +optional
+	PendingBackups int32 `json:"pendingBackups,omitempty"`
 }
 
 // FinBackupReference refers to a FinBackup in the same namespace.
