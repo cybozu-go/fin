@@ -15,6 +15,7 @@ import (
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -106,7 +107,11 @@ func (r *FinBackupConfigReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 
 	var fbc finv1.FinBackupConfig
 	if err := r.Get(ctx, req.NamespacedName, &fbc); err != nil {
-		return ctrl.Result{}, client.IgnoreNotFound(err)
+		if k8serrors.IsNotFound(err) {
+			metrics.DeleteFinBackupConfigInfo(req.NamespacedName, r.managedCephClusterID)
+			return ctrl.Result{}, nil
+		}
+		return ctrl.Result{}, err
 	}
 	if !fbc.DeletionTimestamp.IsZero() {
 		if controllerutil.ContainsFinalizer(&fbc, finBackupConfigFinalizerName) {
@@ -115,7 +120,7 @@ func (r *FinBackupConfigReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 				return ctrl.Result{}, fmt.Errorf("failed to remove finalizer from FinBackupConfig: %w", err)
 			}
 		}
-		metrics.DeleteFinBackupConfigInfo(&fbc, r.managedCephClusterID)
+		metrics.DeleteFinBackupConfigInfo(req.NamespacedName, r.managedCephClusterID)
 		return ctrl.Result{}, nil
 	}
 
