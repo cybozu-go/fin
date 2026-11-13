@@ -8,6 +8,7 @@ import (
 	finv1 "github.com/cybozu-go/fin/api/v1"
 	"github.com/cybozu-go/fin/internal/finbackupbuilder"
 	"github.com/stretchr/testify/require"
+	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -17,6 +18,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	fakeclient "sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 )
 
 const testFBCName = "fbc"
@@ -500,6 +502,138 @@ func Test_updateBackupSummary(t *testing.T) {
 	require.NoError(t, c.Get(t.Context(), client.ObjectKeyFromObject(fbc), &current))
 	require.NoError(t, r.updateBackupSummary(t.Context(), &current))
 	require.Equal(t, 1, statusUpdates, "the status should not be written when the summary does not change")
+}
+
+func Test_finBackupSummaryInputChanged(t *testing.T) {
+	const another = "another"
+	fbc := newSummaryTestFinBackupConfig()
+	old := withConditions(newSummaryTestFinBackup(fbc, "fb", time.Date(2026, 11, 12, 2, 0, 0, 0, time.UTC)),
+		map[string]metav1.ConditionStatus{finv1.BackupConditionStoredToNode: metav1.ConditionFalse})
+	setCondition := func(conditionType string, status metav1.ConditionStatus) func(*finv1.FinBackup) {
+		return func(fb *finv1.FinBackup) {
+			*fb = withConditions(*fb, map[string]metav1.ConditionStatus{conditionType: status})
+		}
+	}
+
+	tests := []struct {
+		name   string
+		modify func(*finv1.FinBackup)
+		want   bool
+	}{
+		{name: "nothing changes", modify: func(*finv1.FinBackup) {}},
+		{name: "an unrelated label is added", modify: func(fb *finv1.FinBackup) { fb.Labels["other"] = "value" }},
+		{name: "a finalizer is added", modify: func(fb *finv1.FinBackup) { fb.Finalizers = []string{"example.com/test"} }},
+		{name: "an unrelated status field changes", modify: func(fb *finv1.FinBackup) { fb.Status.PVCManifest = "manifest" }},
+		{
+			name:   "an unrelated condition is added",
+			modify: setCondition(finv1.BackupConditionAutoDeleteCompleted, metav1.ConditionTrue),
+		},
+		{
+			name: "only the message of a read condition changes",
+			modify: func(fb *finv1.FinBackup) {
+				fb.Status.Conditions[0].Message = "retrying"
+			},
+		},
+		{
+			name: "the FinBackupConfig UID label changes",
+			modify: func(fb *finv1.FinBackup) {
+				fb.Labels[finbackupbuilder.LabelFinBackupConfigUID] = another
+			},
+			want: true,
+		},
+		{
+			name: "the FinBackupConfig name annotation changes",
+			modify: func(fb *finv1.FinBackup) {
+				fb.Annotations[finbackupbuilder.AnnotationFinBackupConfigName] = another
+			},
+			want: true,
+		},
+		{
+			name: "the FinBackupConfig namespace annotation changes",
+			modify: func(fb *finv1.FinBackup) {
+				fb.Annotations[finbackupbuilder.AnnotationFinBackupConfigNamespace] = another
+			},
+			want: true,
+		},
+		{
+			name:   "the deletion starts",
+			modify: func(fb *finv1.FinBackup) { fb.DeletionTimestamp = ptr.To(metav1.Now()) },
+			want:   true,
+		},
+		{
+			name:   "the snapshot time is recorded",
+			modify: func(fb *finv1.FinBackup) { fb.Status.CreatedAt = metav1.Now() },
+			want:   true,
+		},
+		{
+			name:   "the snapshot ID is recorded",
+			modify: func(fb *finv1.FinBackup) { fb.Status.SnapID = ptr.To(1) },
+			want:   true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			current := old.DeepCopy()
+			tt.modify(current)
+			require.Equal(t, tt.want, finBackupSummaryInputChanged(event.UpdateEvent{ObjectOld: &old, ObjectNew: current}))
+		})
+	}
+	for _, conditionType := range summaryConditionTypes {
+		t.Run("the status of "+conditionType+" changes", func(t *testing.T) {
+			current := old.DeepCopy()
+			setCondition(conditionType, metav1.ConditionTrue)(current)
+			require.True(t, finBackupSummaryInputChanged(event.UpdateEvent{ObjectOld: &old, ObjectNew: current}))
+		})
+	}
+}
+
+func Test_finBackupSummaryInputChanged_passesEveryChangeOfTheSummary(t *testing.T) {
+	fbc := newSummaryTestFinBackupConfig()
+	base := withSnapshot(newSummaryTestFinBackup(fbc, "fb", time.Date(2026, 11, 12, 2, 0, 0, 0, time.UTC)))
+	summarize := func(fb *finv1.FinBackup) []any {
+		fbs := []*finv1.FinBackup{fb}
+		latestRef, latestTime := refAndSnapshotTime(latestFinBackup(fbs))
+		successfulRef, successfulTime := refAndSnapshotTime(lastSuccessfulFinBackup(fbs))
+		condition := latestBackupSucceededCondition(latestFinBackup(fbs))
+		return []any{latestRef, latestTime, countPendingFinBackups(fbs), successfulRef, successfulTime,
+			condition.Status, condition.Reason}
+	}
+	allConditionTypes := []string{
+		finv1.BackupConditionStoredToNode,
+		finv1.BackupConditionVerified,
+		finv1.BackupConditionVerificationSkipped,
+		finv1.BackupConditionChecksumMismatched,
+		finv1.BackupConditionAutoDeleteCompleted,
+		finv1.BackupConditionMetadataCorrupted,
+	}
+	statuses := []metav1.ConditionStatus{"", metav1.ConditionTrue, metav1.ConditionFalse}
+	var fbs []finv1.FinBackup
+	var build func(fb finv1.FinBackup, rest []string)
+	build = func(fb finv1.FinBackup, rest []string) {
+		if len(rest) == 0 {
+			fbs = append(fbs, fb)
+			return
+		}
+		for _, status := range statuses {
+			next := *fb.DeepCopy()
+			if status != "" {
+				next = withConditions(next, map[string]metav1.ConditionStatus{rest[0]: status})
+			}
+			build(next, rest[1:])
+		}
+	}
+	build(base, allConditionTypes)
+
+	for i := range fbs {
+		for j := range fbs {
+			old, current := &fbs[i], &fbs[j]
+			if equality.Semantic.DeepEqual(summarize(old), summarize(current)) {
+				continue
+			}
+			require.True(t, finBackupSummaryInputChanged(event.UpdateEvent{ObjectOld: old, ObjectNew: current}),
+				"an update from %v to %v changes the summary", old.Status.Conditions, current.Status.Conditions)
+		}
+	}
 }
 
 func Test_enqueueFinBackupConfigOfFinBackup(t *testing.T) {

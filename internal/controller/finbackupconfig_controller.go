@@ -208,8 +208,10 @@ func (r *FinBackupConfigReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&finv1.FinBackupConfig{}).
 		Owns(&batchv1.CronJob{}).
 		// Not requeued periodically, since the summary depends only on watched objects.
+		// The predicate drops FinBackup resyncs, but FinBackupConfig resyncs still aggregate.
 		Watches(&finv1.FinBackup{},
-			handler.EnqueueRequestsFromMapFunc(enqueueFinBackupConfigOfFinBackup)).
+			handler.EnqueueRequestsFromMapFunc(enqueueFinBackupConfigOfFinBackup),
+			builder.WithPredicates(predicate.Funcs{UpdateFunc: finBackupSummaryInputChanged})).
 		// OnlyMetadata shares the metadata informer with the FinBackup controller. The node
 		// selection looks at labels but not at conditions, so an update matters only when
 		// it changes the labels.
