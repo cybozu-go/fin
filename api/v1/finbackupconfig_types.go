@@ -47,6 +47,13 @@ type FinBackupConfigStatus struct {
 	// when timestamps are equal. It is unset if no eligible FinBackup exists.
 	// +optional
 	LatestBackup *FinBackupSummary `json:"latestBackup,omitempty"`
+
+	// LatestVerifiedBackup summarizes the FinBackup with the latest snapshot time
+	// among the FinBackups of this config whose Verified condition is True,
+	// excluding backups being deleted. The greatest UID wins when snapshot times
+	// are equal. It is unset if no eligible FinBackup exists.
+	// +optional
+	LatestVerifiedBackup *FinBackupSummary `json:"latestVerifiedBackup,omitempty"`
 }
 
 // FinBackupSummary summarizes a FinBackup reported in FinBackupConfig status.
