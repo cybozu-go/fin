@@ -42,10 +42,11 @@ func (r *FinBackupConfigReconciler) updateStatus(ctx context.Context, fbc *finv1
 // calculateFinBackupConfigStatus returns the status of fbc with the fields
 // aggregated from fbs replaced. The other fields, such as node, are kept.
 func calculateFinBackupConfigStatus(fbc *finv1.FinBackupConfig, fbs []finv1.FinBackup) finv1.FinBackupConfigStatus {
-	latest := latestFinBackup(relatedFinBackups(fbc, fbs))
+	related := relatedFinBackups(fbc, fbs)
 
 	status := *fbc.Status.DeepCopy()
-	status.LatestBackup = finBackupSummary(latest)
+	status.LatestBackup = finBackupSummary(latestFinBackup(related))
+	status.LatestVerifiedBackup = finBackupSummary(latestVerifiedFinBackup(related))
 	return status
 }
 
@@ -80,6 +81,25 @@ func latestFinBackup(fbs []*finv1.FinBackup) *finv1.FinBackup {
 	return slices.MaxFunc(fbs, func(a, b *finv1.FinBackup) int {
 		return cmp.Or(
 			a.CreationTimestamp.Compare(b.CreationTimestamp.Time),
+			cmp.Compare(a.UID, b.UID),
+		)
+	})
+}
+
+// latestVerifiedFinBackup returns the FinBackup in fbs with the latest snapshot among
+// those whose Verified condition is true, or nil when none is. The snapshot time
+// decides rather than the creation time, so that the reported snapshot time is the
+// newest among the verified FinBackups.
+func latestVerifiedFinBackup(fbs []*finv1.FinBackup) *finv1.FinBackup {
+	verified := slices.DeleteFunc(slices.Clone(fbs), func(fb *finv1.FinBackup) bool {
+		return !fb.IsVerifiedTrue()
+	})
+	if len(verified) == 0 {
+		return nil
+	}
+	return slices.MaxFunc(verified, func(a, b *finv1.FinBackup) int {
+		return cmp.Or(
+			a.Status.CreatedAt.Compare(b.Status.CreatedAt.Time),
 			cmp.Compare(a.UID, b.UID),
 		)
 	})
