@@ -1,6 +1,7 @@
 package input
 
 import (
+	"github.com/cybozu-go/fin/internal/diffexport"
 	"github.com/cybozu-go/fin/internal/model"
 	"k8s.io/client-go/kubernetes"
 )
@@ -23,4 +24,8 @@ type Backup struct {
 	RawChecksumChunkSize      uint64
 	DiffChecksumChunkSize     uint64
 	EnableChecksumVerify      bool
+
+	// DiffPartStore must store parts where NodeLocalVolumeRepo reads them to
+	// apply. It is separate so that tests can inject store failures.
+	DiffPartStore diffexport.PartStore
 }
