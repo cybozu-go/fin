@@ -9,6 +9,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 const testCephNS = "ceph"
@@ -64,6 +65,6 @@ func TestFinBackupConfigInfo(t *testing.T) {
 	requireFinBackupConfigInfo(t, fbc, other)
 
 	// Only the series of the deleted FinBackupConfig goes away.
-	DeleteFinBackupConfigInfo(fbc, testCephNS)
+	DeleteFinBackupConfigInfo(client.ObjectKeyFromObject(fbc), testCephNS)
 	requireFinBackupConfigInfo(t, other)
 }
