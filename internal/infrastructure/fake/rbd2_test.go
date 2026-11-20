@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/cybozu-go/fin/internal/infrastructure/nlv"
-	"github.com/cybozu-go/fin/internal/job/backup"
 	"github.com/cybozu-go/fin/internal/model"
 	"github.com/cybozu-go/fin/test/utils"
 	"github.com/stretchr/testify/require"
@@ -315,7 +314,7 @@ func testRBDRepository2_exportDiff(t *testing.T, rbdRepo *RBDRepository2, volume
 		stream, err := rbdRepo.ExportDiff(e)
 		require.NoError(t, err, "failed to export diff for snapshot %s", e.TargetSnapName)
 
-		err = backup.WriteDiffPartAndCloseStream(
+		err = nlv.WriteDiffPartAndCloseStream(
 			stream,
 			outputFiles[i],
 			nlv.ChecksumFilePath(outputFiles[i]),

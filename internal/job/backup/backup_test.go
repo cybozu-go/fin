@@ -11,6 +11,7 @@ import (
 
 	"github.com/cybozu-go/fin/internal/infrastructure/ceph"
 	"github.com/cybozu-go/fin/internal/infrastructure/fake"
+	"github.com/cybozu-go/fin/internal/infrastructure/nlv"
 	"github.com/cybozu-go/fin/internal/job"
 	"github.com/cybozu-go/fin/internal/job/input"
 	"github.com/cybozu-go/fin/internal/job/testutil"
@@ -339,7 +340,7 @@ func Test_FullBackup_Success_Resume(t *testing.T) {
 						TargetSnapName: cfg.fullSnapshot.Name,
 					})
 					require.NoError(t, err)
-					err = WriteDiffPartAndCloseStream(
+					err = nlv.WriteDiffPartAndCloseStream(
 						stream,
 						cfg.nlvRepo.GetDiffPartPath(cfg.fullBackupInput.TargetSnapshotID, i),
 						cfg.nlvRepo.GetDiffChecksumPath(cfg.fullBackupInput.TargetSnapshotID, i),
@@ -798,7 +799,7 @@ func Test_FullBackup_Error_ChecksumMismatch(t *testing.T) {
 		TargetSnapName: cfg.fullSnapshot.Name,
 	})
 	require.NoError(t, err)
-	err = WriteDiffPartAndCloseStream(
+	err = nlv.WriteDiffPartAndCloseStream(
 		stream,
 		cfg.nlvRepo.GetDiffPartPath(cfg.fullBackupInput.TargetSnapshotID, 0),
 		cfg.nlvRepo.GetDiffChecksumPath(cfg.fullBackupInput.TargetSnapshotID, 0),
@@ -876,7 +877,7 @@ func Test_loopApplyDiff_RemovesDiffPartFiles(t *testing.T) {
 			TargetSnapName: cfg.fullSnapshot.Name,
 		})
 		require.NoError(t, err)
-		err = WriteDiffPartAndCloseStream(
+		err = nlv.WriteDiffPartAndCloseStream(
 			stream,
 			cfg.nlvRepo.GetDiffPartPath(cfg.fullBackupInput.TargetSnapshotID, i),
 			cfg.nlvRepo.GetDiffChecksumPath(cfg.fullBackupInput.TargetSnapshotID, i),
