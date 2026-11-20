@@ -47,6 +47,12 @@ type FinBackupConfigStatus struct {
 	// creation order.
 	// +optional
 	LatestBackup *FinBackupSummary `json:"latestBackup,omitempty"`
+
+	// LatestVerifiedBackup summarizes the FinBackup with the latest snapshot among
+	// those whose Verified condition is true. Ties within the same second are broken
+	// by the UID.
+	// +optional
+	LatestVerifiedBackup *FinBackupSummary `json:"latestVerifiedBackup,omitempty"`
 }
 
 // FinBackupSummary summarizes a FinBackup reported in FinBackupConfig status.

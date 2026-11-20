@@ -97,6 +97,35 @@ spec:
                 required:
                 - ref
                 type: object
+              latestVerifiedBackup:
+                description: |-
+                  LatestVerifiedBackup summarizes the FinBackup with the latest snapshot among
+                  those whose Verified condition is true. Ties within the same second are broken
+                  by the UID.
+                properties:
+                  ref:
+                    description: FinBackupReference refers to a FinBackup in the same
+                      namespace.
+                    properties:
+                      name:
+                        type: string
+                      uid:
+                        description: UID tells a FinBackup recreated with the same
+                          name apart.
+                        type: string
+                    required:
+                    - name
+                    - uid
+                    type: object
+                  snapshotTime:
+                    description: |-
+                      SnapshotTime is the point in time the FinBackup restores to. It is unset until
+                      the snapshot is taken.
+                    format: date-time
+                    type: string
+                required:
+                - ref
+                type: object
               node:
                 description: |-
                   Node is the node the FinBackups of this config are taken on. It is

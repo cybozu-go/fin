@@ -20,6 +20,7 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -490,6 +491,61 @@ var _ = Describe("FinBackupConfig FinBackup aggregate", func() {
 		Expect(k8sClient.Delete(ctx, first)).To(Succeed())
 		status = reconcileStatus(ctx, fbc)
 		Expect(status.LatestBackup).To(BeNil())
+	})
+
+	It("should report the verified FinBackup with the latest snapshot", func(ctx SpecContext) {
+		// Arrange
+		fbc := &finv1.FinBackupConfig{
+			ObjectMeta: metav1.ObjectMeta{Name: testFBCName, Namespace: fbcNamespace},
+			Spec: finv1.FinBackupConfigSpec{
+				PVCNamespace: pvc.Namespace,
+				PVC:          pvc.Name,
+				Schedule:     testCronSchedule,
+			},
+		}
+		Expect(k8sClient.Create(ctx, fbc)).To(Succeed())
+		verify := func(fb *finv1.FinBackup, snapshotTime time.Time) {
+			GinkgoHelper()
+			fb.Status.CreatedAt = metav1.NewTime(snapshotTime)
+			meta.SetStatusCondition(&fb.Status.Conditions, metav1.Condition{
+				Type: finv1.BackupConditionVerified, Status: metav1.ConditionTrue, Reason: "VerificationComplete",
+			})
+			Expect(k8sClient.Status().Update(ctx, fb)).To(Succeed())
+		}
+		expectLatestVerified := func(fb *finv1.FinBackup, snapshotTime time.Time) {
+			GinkgoHelper()
+			status := reconcileStatus(ctx, fbc)
+			Expect(status.LatestVerifiedBackup).NotTo(BeNil())
+			Expect(status.LatestVerifiedBackup.Ref).To(Equal(finv1.FinBackupReference{Name: fb.Name, UID: fb.UID}))
+			Expect(status.LatestVerifiedBackup.SnapshotTime).NotTo(BeNil())
+			Expect(status.LatestVerifiedBackup.SnapshotTime.Time).To(BeTemporally("==", snapshotTime))
+		}
+		firstSnapshot := time.Date(2026, 11, 12, 1, 0, 3, 0, time.UTC)
+		secondSnapshot := firstSnapshot.Add(time.Hour)
+
+		By("reporting nothing before any FinBackup is verified")
+		first := createFinBackupOf(ctx, fbc, "fb-1")
+		Expect(reconcileStatus(ctx, fbc).LatestVerifiedBackup).To(BeNil())
+
+		By("reporting the first FinBackup once it is verified")
+		verify(first, firstSnapshot)
+		expectLatestVerified(first, firstSnapshot)
+
+		By("keeping the first FinBackup while a later one is not verified yet")
+		second := createFinBackupOf(ctx, fbc, "fb-2")
+		expectLatestVerified(first, firstSnapshot)
+
+		By("switching to the later FinBackup once it is verified")
+		verify(second, secondSnapshot)
+		expectLatestVerified(second, secondSnapshot)
+
+		By("going back to the first FinBackup when the later one is deleted")
+		Expect(k8sClient.Delete(ctx, second)).To(Succeed())
+		expectLatestVerified(first, firstSnapshot)
+
+		By("reporting nothing after every verified FinBackup is deleted")
+		Expect(k8sClient.Delete(ctx, first)).To(Succeed())
+		Expect(reconcileStatus(ctx, fbc).LatestVerifiedBackup).To(BeNil())
 	})
 })
 
