@@ -3,6 +3,7 @@ package v1
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 )
 
 // EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
@@ -40,6 +41,30 @@ type FinBackupConfigStatus struct {
 	// spec.node when set, and otherwise a node selected by the controller.
 	// +optional
 	Node string `json:"node,omitempty"`
+
+	// LatestBackup summarizes the FinBackup with the latest creationTimestamp.
+	// Ties within the same second are broken by the UID, which does not follow the
+	// creation order.
+	// +optional
+	LatestBackup *FinBackupSummary `json:"latestBackup,omitempty"`
+}
+
+// FinBackupSummary summarizes a FinBackup reported in FinBackupConfig status.
+type FinBackupSummary struct {
+	Ref FinBackupReference `json:"ref"`
+
+	// SnapshotTime is the point in time the FinBackup restores to. It is unset until
+	// the snapshot is taken.
+	// +optional
+	SnapshotTime *metav1.Time `json:"snapshotTime,omitempty"`
+}
+
+// FinBackupReference refers to a FinBackup in the same namespace.
+type FinBackupReference struct {
+	Name string `json:"name"`
+
+	// UID tells a FinBackup recreated with the same name apart.
+	UID types.UID `json:"uid"`
 }
 
 //+kubebuilder:object:root=true
