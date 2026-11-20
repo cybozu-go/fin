@@ -14,6 +14,7 @@ import (
 	"github.com/cybozu-go/fin/internal/job/input"
 	"github.com/cybozu-go/fin/internal/model"
 	"github.com/cybozu-go/fin/internal/pkg/csumio"
+	"github.com/cybozu-go/fin/internal/pkg/fileio"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 )
@@ -277,7 +278,7 @@ func (b *Backup) loopExportDiff(
 			return fmt.Errorf("failed to write diff part: %w", err)
 		}
 
-		if err := job.SyncData(diffPartPath); err != nil {
+		if err := fileio.SyncData(diffPartPath); err != nil {
 			return fmt.Errorf("failed to sync %q: %w", diffPartPath, err)
 		}
 
@@ -353,7 +354,7 @@ func (b *Backup) loopApplyDiff(privateData *backupPrivateData, targetSnapshot *m
 			return fmt.Errorf("failed to apply diff: %w", err)
 		}
 
-		if err := job.SyncData(rawImagePath); err != nil {
+		if err := fileio.SyncData(rawImagePath); err != nil {
 			return fmt.Errorf("failed to sync %q: %w", rawImagePath, err)
 		}
 
