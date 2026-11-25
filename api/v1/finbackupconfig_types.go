@@ -77,6 +77,14 @@ type FinBackupReference struct {
 
 //+kubebuilder:object:root=true
 //+kubebuilder:subresource:status
+//+kubebuilder:printcolumn:name="SCHEDULE",type="string",JSONPath=".spec.schedule"
+//+kubebuilder:printcolumn:name="SUSPEND",type="boolean",JSONPath=".spec.suspend"
+//+kubebuilder:printcolumn:name="NODE",type="string",JSONPath=".status.node"
+//+kubebuilder:printcolumn:name="LATEST BACKUP",type="date",JSONPath=".status.latestBackup.snapshotTime"
+//+kubebuilder:printcolumn:name="LATEST VERIFIED",type="date",JSONPath=".status.latestVerifiedBackup.snapshotTime"
+//+kubebuilder:printcolumn:name="AGE",type="date",JSONPath=".metadata.creationTimestamp"
+//+kubebuilder:printcolumn:name="PVC",type="string",JSONPath=".spec.pvc",priority=1
+//+kubebuilder:printcolumn:name="PVC NAMESPACE",type="string",JSONPath=".spec.pvcNamespace",priority=1
 
 // FinBackupConfig is the Schema for the finbackupconfigs API
 type FinBackupConfig struct {
