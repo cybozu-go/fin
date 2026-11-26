@@ -2,12 +2,14 @@ package controller
 
 import (
 	"context"
+	"slices"
 	"testing"
 	"time"
 
 	finv1 "github.com/cybozu-go/fin/api/v1"
 	"github.com/cybozu-go/fin/internal/finbackupbuilder"
 	"github.com/stretchr/testify/require"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -36,15 +38,28 @@ func newAggregateTestFinBackup(fbc *finv1.FinBackupConfig, name string, created 
 	return fb
 }
 
+func withUID(fb *finv1.FinBackup, uid types.UID) *finv1.FinBackup {
+	fb.UID = uid
+	return fb
+}
+
+func uidOf(fb *finv1.FinBackup) types.UID {
+	if fb == nil {
+		return ""
+	}
+	return fb.UID
+}
+
+func reversed(fbs []*finv1.FinBackup) []*finv1.FinBackup {
+	r := slices.Clone(fbs)
+	slices.Reverse(r)
+	return r
+}
+
 func Test_latestFinBackup(t *testing.T) {
 	fbc := newAggregateTestFinBackupConfig()
 	earlier := time.Date(2026, 11, 12, 1, 0, 0, 0, time.UTC)
 	later := earlier.Add(time.Hour)
-
-	withUID := func(fb *finv1.FinBackup, uid types.UID) *finv1.FinBackup {
-		fb.UID = uid
-		return fb
-	}
 
 	tests := []struct {
 		name    string
@@ -71,21 +86,73 @@ func Test_latestFinBackup(t *testing.T) {
 			wantUID: "uid-2",
 		},
 	}
-	uidOf := func(fb *finv1.FinBackup) types.UID {
-		if fb == nil {
-			return ""
-		}
-		return fb.UID
-	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			require.Equal(t, tt.wantUID, uidOf(latestFinBackup(tt.fbs)))
+			require.Equal(t, tt.wantUID, uidOf(latestFinBackup(reversed(tt.fbs))),
+				"the order of the FinBackups should not matter")
+		})
+	}
+}
 
-			reversed := make([]*finv1.FinBackup, len(tt.fbs))
-			for i, fb := range tt.fbs {
-				reversed[len(tt.fbs)-1-i] = fb
-			}
-			require.Equal(t, tt.wantUID, uidOf(latestFinBackup(reversed)), "the order of the FinBackups should not matter")
+func Test_latestVerifiedFinBackup(t *testing.T) {
+	fbc := newAggregateTestFinBackupConfig()
+	earlier := time.Date(2026, 11, 12, 1, 0, 0, 0, time.UTC)
+	later := earlier.Add(time.Hour)
+	withVerified := func(fb *finv1.FinBackup, status metav1.ConditionStatus, reason string) *finv1.FinBackup {
+		meta.SetStatusCondition(&fb.Status.Conditions, metav1.Condition{
+			Type: finv1.BackupConditionVerified, Status: status, Reason: reason,
+		})
+		return fb
+	}
+	verified := func(name string, created, snapshot time.Time) *finv1.FinBackup {
+		fb := withVerified(newAggregateTestFinBackup(fbc, name, created), metav1.ConditionTrue, "VerificationComplete")
+		fb.Status.CreatedAt = metav1.NewTime(snapshot)
+		return fb
+	}
+
+	tests := []struct {
+		name    string
+		fbs     []*finv1.FinBackup
+		wantUID types.UID
+	}{
+		{
+			name: "no FinBackup is verified",
+			fbs: []*finv1.FinBackup{
+				newAggregateTestFinBackup(fbc, "in-progress", later),
+				withVerified(newAggregateTestFinBackup(fbc, "failed", earlier), metav1.ConditionFalse, "VerificationFailed"),
+			},
+		},
+		{
+			name: "a FinBackup created later and not verified yet does not hide a verified one",
+			fbs: []*finv1.FinBackup{
+				verified("a", earlier, earlier),
+				newAggregateTestFinBackup(fbc, "b", later),
+			},
+			wantUID: testFinBackupUID("a"),
+		},
+		{
+			name: "the snapshot time decides rather than the creation time",
+			fbs: []*finv1.FinBackup{
+				verified("a", later, earlier.Add(time.Minute)),
+				verified("b", earlier, earlier.Add(2*time.Minute)),
+			},
+			wantUID: testFinBackupUID("b"),
+		},
+		{
+			name: "the UID, not the creation time or the name, breaks a tie of the snapshot time",
+			fbs: []*finv1.FinBackup{
+				withUID(verified("b", later, later), "uid-1"),
+				withUID(verified("a", earlier, later), "uid-2"),
+			},
+			wantUID: "uid-2",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.wantUID, uidOf(latestVerifiedFinBackup(tt.fbs)))
+			require.Equal(t, tt.wantUID, uidOf(latestVerifiedFinBackup(reversed(tt.fbs))),
+				"the order of the FinBackups should not matter")
 		})
 	}
 }
