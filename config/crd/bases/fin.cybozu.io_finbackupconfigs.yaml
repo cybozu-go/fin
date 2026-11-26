@@ -14,7 +14,34 @@ spec:
     singular: finbackupconfig
   scope: Namespaced
   versions:
-  - name: v1
+  - additionalPrinterColumns:
+    - jsonPath: .spec.schedule
+      name: SCHEDULE
+      type: string
+    - jsonPath: .spec.suspend
+      name: SUSPEND
+      type: boolean
+    - jsonPath: .status.node
+      name: NODE
+      type: string
+    - jsonPath: .status.latestBackup.snapshotTime
+      name: LATEST BACKUP
+      type: date
+    - jsonPath: .status.latestVerifiedBackup.snapshotTime
+      name: LATEST VERIFIED
+      type: date
+    - jsonPath: .metadata.creationTimestamp
+      name: AGE
+      type: date
+    - jsonPath: .spec.pvc
+      name: PVC
+      priority: 1
+      type: string
+    - jsonPath: .spec.pvcNamespace
+      name: PVC NAMESPACE
+      priority: 1
+      type: string
+    name: v1
     schema:
       openAPIV3Schema:
         description: FinBackupConfig is the Schema for the finbackupconfigs API
