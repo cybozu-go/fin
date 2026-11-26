@@ -2,12 +2,14 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"testing"
 	"time"
 
 	finv1 "github.com/cybozu-go/fin/api/v1"
+	"github.com/cybozu-go/fin/internal/finbackupbuilder"
 	"github.com/cybozu-go/fin/internal/infrastructure/fake"
 	"github.com/cybozu-go/fin/internal/pkg/metrics"
 	"github.com/cybozu-go/fin/test/utils"
@@ -52,6 +54,13 @@ func newTestFinBackupConfigReconciler(overwriteFBCSchedule string) *FinBackupCon
 	)
 }
 
+func createFinBackupOf(ctx context.Context, fbc *finv1.FinBackupConfig, name string) *finv1.FinBackup {
+	GinkgoHelper()
+	fb := finbackupbuilder.Build(fbc, name)
+	Expect(k8sClient.Create(ctx, fb)).To(Succeed())
+	return fb
+}
+
 func findEnvVar(envVars []corev1.EnvVar, name string) *corev1.EnvVar {
 	for i := range envVars {
 		if envVars[i].Name == name {
@@ -83,6 +92,8 @@ var _ = Describe("FinBackupConfig Controller under Manager", Ordered, func() {
 
 		mgr, err := ctrl.NewManager(cfg, ctrl.Options{Scheme: scheme.Scheme})
 		Expect(err).ToNot(HaveOccurred())
+		// Reads go through the cache as in production.
+		reconciler.Client = mgr.GetClient()
 		err = reconciler.SetupWithManager(mgr)
 		Expect(err).ToNot(HaveOccurred())
 
@@ -93,6 +104,11 @@ var _ = Describe("FinBackupConfig Controller under Manager", Ordered, func() {
 			err := mgr.Start(ctx)
 			Expect(err).ToNot(HaveOccurred(), "failed to run controller")
 		}()
+		// Without the FinBackup watch, the first reconcile would start this informer and
+		// wait long enough to list a FinBackup created after the reconcile began, which
+		// would hide the missing watch.
+		_, err = mgr.GetCache().GetInformer(ctx, &finv1.FinBackup{})
+		Expect(err).NotTo(HaveOccurred())
 	})
 
 	AfterAll(func(ctx SpecContext) {
@@ -131,6 +147,46 @@ var _ = Describe("FinBackupConfig Controller under Manager", Ordered, func() {
 			err := k8sClient.Get(ctx, client.ObjectKeyFromObject(fbc), &finv1.FinBackupConfig{})
 			g.Expect(k8serrors.IsNotFound(err)).To(BeTrue())
 		}, "5s", "1s").Should(Succeed())
+	})
+
+	It("should update status.latestBackup on a FinBackup event", func(ctx SpecContext) {
+		// Arrange
+		fbc := &finv1.FinBackupConfig{
+			ObjectMeta: metav1.ObjectMeta{Name: "test-fbc-aggregate", Namespace: fbcNS.Name},
+			Spec: finv1.FinBackupConfigSpec{
+				PVCNamespace: pvc.Namespace,
+				PVC:          pvc.Name,
+				Schedule:     testCronSchedule,
+			},
+		}
+		Expect(k8sClient.Create(ctx, fbc)).To(Succeed())
+		// A reconcile still running, or triggered by the writes of an earlier one, would
+		// aggregate a FinBackup created meanwhile even without the FinBackup watch. The
+		// CronJob keeps the check from passing before the first reconcile writes anything.
+		var lastResourceVersion string
+		Eventually(func(g Gomega) {
+			var updated finv1.FinBackupConfig
+			g.Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(fbc), &updated)).To(Succeed())
+			resourceVersion := updated.ResourceVersion
+			defer func() { lastResourceVersion = resourceVersion }()
+			g.Expect(k8sClient.Get(ctx, types.NamespacedName{Namespace: fbc.Namespace, Name: "fbc-" + string(updated.UID)},
+				&batchv1.CronJob{})).To(Succeed())
+			g.Expect(resourceVersion).To(Equal(lastResourceVersion))
+		}, "5s", "500ms").Should(Succeed())
+
+		// Act
+		fb := createFinBackupOf(ctx, fbc, "fb")
+
+		// Assert
+		// Far shorter than the unassigned-node retry interval, so the periodic retry cannot
+		// be what triggers it.
+		Eventually(func(g Gomega) {
+			var updated finv1.FinBackupConfig
+			g.Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(fbc), &updated)).To(Succeed())
+			g.Expect(updated.Status.LatestBackup).To(Equal(&finv1.FinBackupSummary{
+				Ref: finv1.FinBackupReference{Name: fb.Name, UID: fb.UID},
+			}))
+		}, "5s", "100ms").Should(Succeed())
 	})
 })
 
@@ -350,6 +406,167 @@ var _ = Describe("FinBackupConfig Controller", func() {
 			Expect(cronJob.OwnerReferences).To(HaveLen(1))
 			Expect(cronJob.OwnerReferences[0].Name).To(Equal(fbc.Name))
 		})
+	})
+})
+
+var _ = Describe("FinBackupConfig FinBackup aggregate", func() {
+	var (
+		fbcNamespace string
+		pvc          *corev1.PersistentVolumeClaim
+		reconciler   *FinBackupConfigReconciler
+	)
+
+	BeforeEach(func(ctx SpecContext) {
+		fbcNamespace = utils.GetUniqueName("fbc-namespace")
+		Expect(k8sClient.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: fbcNamespace}})).To(Succeed())
+		DeferCleanup(func(ctx SpecContext) {
+			_ = k8sClient.Delete(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: fbcNamespace}})
+		})
+
+		var pv *corev1.PersistentVolume
+		pvc, pv = NewPVCAndPV(normalSC, userNamespace,
+			utils.GetUniqueName("pvc-aggregate"), utils.GetUniqueName("pv-aggregate"), rbdImageName)
+		Expect(k8sClient.Create(ctx, pvc)).To(Succeed())
+		Expect(k8sClient.Create(ctx, pv)).To(Succeed())
+		DeferCleanup(func(ctx SpecContext) { DeletePVCAndPV(ctx, pvc.Namespace, pvc.Name) })
+
+		reconciler = newTestFinBackupConfigReconciler("")
+	})
+
+	reconcileStatus := func(ctx SpecContext, fbc *finv1.FinBackupConfig) finv1.FinBackupConfigStatus {
+		GinkgoHelper()
+		_, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(fbc)})
+		Expect(err).NotTo(HaveOccurred())
+		var updated finv1.FinBackupConfig
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(fbc), &updated)).To(Succeed())
+		return updated.Status
+	}
+
+	It("should report the FinBackup created last and its snapshot time", func(ctx SpecContext) {
+		// Arrange
+		fbc := &finv1.FinBackupConfig{
+			ObjectMeta: metav1.ObjectMeta{Name: testFBCName, Namespace: fbcNamespace},
+			Spec: finv1.FinBackupConfigSpec{
+				PVCNamespace: pvc.Namespace,
+				PVC:          pvc.Name,
+				Schedule:     testCronSchedule,
+			},
+		}
+		Expect(k8sClient.Create(ctx, fbc)).To(Succeed())
+
+		By("reporting nothing before any FinBackup is created")
+		status := reconcileStatus(ctx, fbc)
+		Expect(status.LatestBackup).To(BeNil())
+
+		By("reporting the first FinBackup without a snapshot time")
+		first := createFinBackupOf(ctx, fbc, "fb-1")
+		status = reconcileStatus(ctx, fbc)
+		Expect(status.LatestBackup.Ref).To(Equal(finv1.FinBackupReference{Name: first.Name, UID: first.UID}))
+		Expect(status.LatestBackup.SnapshotTime).To(BeNil())
+
+		By("reporting the snapshot time once the snapshot is taken")
+		snapshotTime := metav1.NewTime(time.Date(2026, 11, 12, 2, 0, 3, 0, time.UTC))
+		first.Status.CreatedAt = snapshotTime
+		Expect(k8sClient.Status().Update(ctx, first)).To(Succeed())
+		status = reconcileStatus(ctx, fbc)
+		Expect(status.LatestBackup.Ref).To(Equal(finv1.FinBackupReference{Name: first.Name, UID: first.UID}))
+		Expect(status.LatestBackup.SnapshotTime).NotTo(BeNil())
+		Expect(status.LatestBackup.SnapshotTime.Time).To(BeTemporally("==", snapshotTime.Time))
+
+		By("switching to a FinBackup created later, and dropping the snapshot time of the earlier one")
+		// creationTimestamp has only second precision, and a tie is broken by the random UID.
+		time.Sleep(time.Until(first.CreationTimestamp.Add(time.Second)))
+		second := createFinBackupOf(ctx, fbc, "fb-2")
+		status = reconcileStatus(ctx, fbc)
+		Expect(status.LatestBackup.Ref).To(Equal(finv1.FinBackupReference{Name: second.Name, UID: second.UID}))
+		Expect(status.LatestBackup.SnapshotTime).To(BeNil())
+
+		By("ignoring a FinBackup of another FinBackupConfig")
+		other := finbackupbuilder.Build(fbc, "fb-3")
+		other.Labels[finbackupbuilder.LabelFinBackupConfigUID] = "another-fbc-uid"
+		other.Spec.Node = first.Spec.Node
+		Expect(k8sClient.Create(ctx, other)).To(Succeed())
+		status = reconcileStatus(ctx, fbc)
+		Expect(status.LatestBackup.Ref.Name).To(Equal(second.Name))
+
+		By("going back to the remaining FinBackup when the latest one is being deleted")
+		second.Finalizers = []string{"test.fin.cybozu.io/keep"}
+		Expect(k8sClient.Update(ctx, second)).To(Succeed())
+		Expect(k8sClient.Delete(ctx, second)).To(Succeed())
+		status = reconcileStatus(ctx, fbc)
+		Expect(status.LatestBackup.Ref).To(Equal(finv1.FinBackupReference{Name: first.Name, UID: first.UID}))
+		Expect(status.LatestBackup.SnapshotTime).NotTo(BeNil())
+		Expect(status.LatestBackup.SnapshotTime.Time).To(BeTemporally("==", snapshotTime.Time))
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(second), second)).To(Succeed())
+		second.Finalizers = nil
+		Expect(k8sClient.Update(ctx, second)).To(Succeed())
+
+		By("reporting nothing after every FinBackup is deleted")
+		Expect(k8sClient.Delete(ctx, first)).To(Succeed())
+		status = reconcileStatus(ctx, fbc)
+		Expect(status.LatestBackup).To(BeNil())
+	})
+
+	It("should update status.latestBackup after the PVC is deleted", func(ctx SpecContext) {
+		// Arrange
+		fbc := &finv1.FinBackupConfig{
+			ObjectMeta: metav1.ObjectMeta{Name: testFBCName, Namespace: fbcNamespace},
+			Spec: finv1.FinBackupConfigSpec{
+				PVCNamespace: pvc.Namespace,
+				PVC:          pvc.Name,
+				Schedule:     testCronSchedule,
+			},
+		}
+		Expect(k8sClient.Create(ctx, fbc)).To(Succeed())
+		manifest, err := json.Marshal(pvc)
+		Expect(err).NotTo(HaveOccurred())
+		createFinBackupWithManifest := func(name string) *finv1.FinBackup {
+			GinkgoHelper()
+			fb := createFinBackupOf(ctx, fbc, name)
+			fb.Status.PVCManifest = string(manifest)
+			Expect(k8sClient.Status().Update(ctx, fb)).To(Succeed())
+			// Keeps the FinBackup readable after its deletion, as the FinBackup controller
+			// does until the backup data is removed.
+			fb.Finalizers = []string{"test.fin.cybozu.io/keep"}
+			Expect(k8sClient.Update(ctx, fb)).To(Succeed())
+			DeferCleanup(func(ctx SpecContext) {
+				Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(fb), fb)).To(Succeed())
+				fb.Finalizers = nil
+				Expect(k8sClient.Update(ctx, fb)).To(Succeed())
+			})
+			return fb
+		}
+		first := createFinBackupWithManifest("fb-1")
+		// creationTimestamp has only second precision, and a tie is broken by the random UID.
+		time.Sleep(time.Until(first.CreationTimestamp.Add(time.Second)))
+		second := createFinBackupWithManifest("fb-2")
+		Expect(reconcileStatus(ctx, fbc).LatestBackup.Ref.Name).To(Equal(second.Name))
+		DeletePVCAndPV(ctx, pvc.Namespace, pvc.Name)
+		reconcileWithoutPVC := func(r *FinBackupConfigReconciler) finv1.FinBackupConfigStatus {
+			GinkgoHelper()
+			_, err := r.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(fbc)})
+			Expect(k8serrors.IsNotFound(err)).To(BeTrue(), "the missing PVC should still be reported: %v", err)
+			var updated finv1.FinBackupConfig
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(fbc), &updated)).To(Succeed())
+			return updated.Status
+		}
+
+		// Act
+		Expect(k8sClient.Delete(ctx, second)).To(Succeed())
+
+		// Assert
+		By("leaving the status alone in an instance managing another Ceph cluster")
+		other := newTestFinBackupConfigReconciler("")
+		other.managedCephClusterID = "another-ceph-cluster"
+		Expect(reconcileWithoutPVC(other).LatestBackup.Ref.Name).To(Equal(second.Name))
+
+		By("going back to the remaining FinBackup")
+		Expect(reconcileWithoutPVC(reconciler).LatestBackup.Ref).
+			To(Equal(finv1.FinBackupReference{Name: first.Name, UID: first.UID}))
+
+		By("reporting nothing when the last FinBackup is being deleted")
+		Expect(k8sClient.Delete(ctx, first)).To(Succeed())
+		Expect(reconcileWithoutPVC(reconciler).LatestBackup).To(BeNil())
 	})
 })
 
@@ -895,6 +1112,22 @@ var _ = Describe("FinBackupConfig node selection", func() {
 		// Assert
 		Expect(err).To(HaveOccurred())
 		Expect(node).To(BeEmpty())
+	})
+
+	It("should update status.latestBackup even when the node selection fails", func(ctx SpecContext) {
+		// Arrange
+		freeSpaceRepo.SetError(errors.New("prometheus is down"))
+		fbc := createFBC(ctx, testFBCName, "")
+		fb := createFinBackupOf(ctx, fbc, "fb")
+
+		// Act
+		_, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(fbc)})
+
+		// Assert
+		Expect(err).To(HaveOccurred())
+		var updated finv1.FinBackupConfig
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(fbc), &updated)).To(Succeed())
+		Expect(updated.Status.LatestBackup.Ref).To(Equal(finv1.FinBackupReference{Name: fb.Name, UID: fb.UID}))
 	})
 
 	It("should count recorded assignments the cache does not show yet", func(ctx SpecContext) {

@@ -68,6 +68,36 @@ spec:
           status:
             description: FinBackupConfigStatus defines the observed state of FinBackupConfig
             properties:
+              latestBackup:
+                description: |-
+                  LatestBackup summarizes the FinBackup with the latest creation timestamp
+                  for this config, excluding backups being deleted. The greatest UID wins
+                  when timestamps are equal. It is unset if no eligible FinBackup exists.
+                properties:
+                  ref:
+                    description: FinBackupReference refers to a FinBackup in the same
+                      namespace.
+                    properties:
+                      name:
+                        description: Name is the name of the referenced FinBackup.
+                        type: string
+                      uid:
+                        description: UID identifies the referenced FinBackup even
+                          if its name is reused.
+                        type: string
+                    required:
+                    - name
+                    - uid
+                    type: object
+                  snapshotTime:
+                    description: |-
+                      SnapshotTime is the source snapshot's creation time.
+                      It is unset until the FinBackup reports the timestamp in status.createdAt.
+                    format: date-time
+                    type: string
+                required:
+                - ref
+                type: object
               node:
                 description: |-
                   Node is the node the FinBackups of this config are taken on. It is
